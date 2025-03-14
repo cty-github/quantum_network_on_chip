@@ -390,6 +390,7 @@ class Package():
         die: {'type': CellType, 'left': int, 'top': int, 'right': int, 'bottom': int}
         '''
 
+        # TODO: set the topology of compute dies according to the fabricate model
         compute_dies = []
         for area in self.compute_areas:
             area_x_size = area['right'] - area['left'] + 1
@@ -439,6 +440,7 @@ class Package():
         gap: {'id': str, 'axis': int, 'edges': dict}
         '''
 
+        # TODO: set the fidelity of intra-die couplers according to the die size
         for compute_die in self.compute_dies:
             for i in range(compute_die['left'], compute_die['right']+1):
                 for j in range(compute_die['top'], compute_die['bottom']+1):
@@ -578,6 +580,11 @@ class Package():
         return np.mean(fidelity_list), path_list, fidelity_list
     
     def die_yield(self, die_size):
+        '''
+        Estimate the yield rate of a die with certain size.
+        '''
+
+        # TODO: change to the real yield model
         qubit_num = die_size[0] * die_size[1]
         return self.fabricate_model.yield_rate * np.exp(-qubit_num * np.log(1-self.fabricate_model.single_gate_fide))
     

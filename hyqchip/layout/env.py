@@ -61,15 +61,3 @@ class QuantumChipletEnv(gym.Env):
     
     def render(self, mode='human'):
         self.package.draw()
-
-class StripQuChipEnv(QuantumChipletEnv):
-    def __init__(self, package_size=(22, 11), fabricate_model=FabricateModel(), template='string', patience=100):
-        super(StripQuChipEnv, self).__init__(package_size, fabricate_model, template, patience)
-
-class RadialQuChipEnv(QuantumChipletEnv):
-    def __init__(self, package_size=(22, 11), fabricate_model=FabricateModel(), template='string', patience=100):
-        super(RadialQuChipEnv, self).__init__(package_size, fabricate_model, template, patience)    
-
-class GridQuChipEnv(QuantumChipletEnv):
-    def __init__(self, package_size=(22, 11), fabricate_model=FabricateModel(), template='string', patience=100):
-        super(GridQuChipEnv, self).__init__(package_size, fabricate_model, template, patience)
