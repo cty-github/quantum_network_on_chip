@@ -40,7 +40,7 @@ class QuantumChipletEnv(gym.Env):
                 if action[i, j]:
                     self.state[i, j] = action[i, j]
         self.package.update_all_cells(self.state)
-        self.package.determine_die_and_coupler()
+        self.package.complete_package()
 
         new_score, _, _ = self.package.estimate_transfer()
         reward = new_score - self.score
@@ -60,4 +60,4 @@ class QuantumChipletEnv(gym.Env):
         return self.package.estimate_transfer()[0]
     
     def render(self, mode='human'):
-        self.package.draw()
+        self.package.draw_qubits()

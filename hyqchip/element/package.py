@@ -4,6 +4,7 @@ import random
 import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
+from scipy.optimize import curve_fit
 
 from ..utils.utils import color_pool
 
@@ -25,10 +26,11 @@ class CouplerType(Enum):
 
 
 class FabricateModel():
-    def __init__(self, max_die_size=(10, 10), max_chain_length=50, 
+    def __init__(self, max_die_size=(5, 5), max_chain_length=20, 
                  compute_geometry='square', inter_die_sparsity=2, 
-                 single_gate_fide=0.9999, intra_die_fide=0.999, inter_die_fide=0.99, enhanced_fide=0.9999, 
-                 wafer_size=100, yield_rate=0.99):
+                 single_gate_fide=0.9999, intra_die_fide_dict={27: 0.993, 65: 0.989, 127: 0.988},
+                 enhanced_fide=0.9999, inter_die_fide=0.99, 
+                 wafer_size=100, yield_5=0.99, yield_decay=2):
         '''
         The model for fabrication parameters.
         max_die_size: (int, int), the maximum size of a die
@@ -36,9 +38,9 @@ class FabricateModel():
         compute_geometry: str, 'square', 'hexagon', 'heavy square', 'heavy hexagon'
         inter_die_sparsity: int, the sparsity of coupler between two dies
         single_gate_fide: float, the fidelity of single gate
-        intra_die_fide: float, the fidelity of intra-die coupler
-        inter_die_fide: float, the fidelity of inter-die coupler
+        intra_die_fide_dict: dict, the fidelity of intra-die coupler according to the number of qubits
         enhanced_fide: float, the unit fidelity of enhanced transfer
+        inter_die_fide: float, the fidelity of inter-die coupler
         wafer_size: int, the size of wafer
         yield_rate: float, the yield rate of fabrication
         '''
@@ -50,22 +52,55 @@ class FabricateModel():
         self.inter_die_sparsity = inter_die_sparsity
 
         self.single_gate_fide = single_gate_fide
-        self.intra_die_fide = intra_die_fide
-        self.inter_die_fide = inter_die_fide
+        self.intra_die_fide_dict = intra_die_fide_dict
+        def log_decay(x, a, b):
+            return 1 - a * np.log(1 + b * x)
+        params, _ = curve_fit(log_decay, np.array(list(intra_die_fide_dict.keys())), np.array(list(intra_die_fide_dict.values())), p0=[0.01, 0.01])
+        self.intra_die_fide_a, self.intra_die_fide_b = params
+        self.intra_die_fide_log_decay = log_decay
+        
         self.enhanced_fide = enhanced_fide
+        self.inter_die_fide = inter_die_fide
 
         self.wafer_size = wafer_size
-        self.yield_rate = yield_rate
+        self.yield_5 = yield_5
+        self.yield_decay = yield_decay
+
+    def get_intra_die_fide(self, die_size):
+        '''
+        Get the fidelity of intra-die coupler according to the die size.
+        die_size: (int, int), the size of die
+        '''
+
+        qubit_num = die_size[0]*die_size[1]
+        return self.intra_die_fide_log_decay(qubit_num, self.intra_die_fide_a, self.intra_die_fide_b)
+    
+    def get_die_yield(self, die_size):
+        '''
+        Get the yield of a die according to the die size.
+        die_size: (int, int), the size of die
+        '''
+        
+        qubit_num = die_size[0]*die_size[1]
+        return self.yield_5*(1-np.tanh(self.yield_decay*(np.log10(qubit_num)-2)))/2
+    
+    def get_die_cost(self, die_size):
+        '''
+        Get the cost of a die according to the die size.
+        die_size: (int, int), the size of die
+        '''
+        
+        return die_size[0]*die_size[1]/self.get_die_yield(die_size)
 
 
 class Package():
-    def __init__(self, package_size=(22, 11), fabricate_model=FabricateModel(), design_scheme='top_down', design_steps=10, design_strategy = 'random', type_matrix=None, template='string'):
+    def __init__(self, package_size=(30, 10), fabricate_model=FabricateModel(), design_scheme='top_down', design_steps=10, design_strategy = 'heuristic', type_matrix=None, template='string'):
         '''
         package_size: (int, int), the size of package
         fabricate_model: FabricateModel, the model of fabrication
         design_scheme: str, 'top_down' or 'bottom_up', the design scheme of package
         design_steps: int, the number of design steps
-        design_strategy: str, 'random' or 'greedy' or 'rl', the design strategy of package
+        design_strategy: str, 'heuristic' or 'greedy' or 'rl', the design strategy of package
         type_matrix: np.ndarray, the matrix of cell types
         template: str, 'string' or 'random', the template of partition
 
@@ -89,17 +124,41 @@ class Package():
         if self.design_scheme == 'top_down':
             self.compute_areas = [{'type': CellType.Compute, 'left': 0, 'top': 0, 'right': self.package_size[0]-1, 'bottom': self.package_size[1]-1}]
             self.transfer_lines = []
-            if self.design_strategy == 'random':
-                for i in range(self.design_steps):
-                    partition_area = random.choice(self.compute_areas)
-                    partition_type = random.choice(partition_types)
-                    partition_interval = self.fabricate_model.max_die_size[0]*random.choice(range(2, 5))
-                    partition_orient = random.choice(partition_orientations)
-                    print(f'Partition round {i}: {partition_area}, {partition_type}, {partition_interval}, {partition_orient}')
-                    new_compute_areas, new_transfer_lines = self.partition_area(partition_area, partition_type, partition_interval, partition_orient)
-                    self.compute_areas.remove(partition_area)
+            if self.design_strategy == 'heuristic':
+                area2design = self.compute_areas[0]
+                length_width_ratio = max(self.package_size) / min(self.package_size)
+                if length_width_ratio > 1:
+                    if self.package_size[0] > self.package_size[1]:
+                        new_compute_areas, new_transfer_lines = self.design_area(area2design, 'strip', self.package_size[1]-1, 'y')
+                    else:
+                        new_compute_areas, new_transfer_lines = self.design_area(area2design, 'strip', self.package_size[0]-1, 'x')
+                    self.compute_areas.remove(area2design)
                     self.compute_areas.extend(new_compute_areas)
                     self.transfer_lines.extend(new_transfer_lines)
+                    area2design = self.compute_areas[len(self.compute_areas)//2]
+                grid_round = len(self.compute_areas) - 1
+                radial_round = min(self.package_size) // (4*max(self.fabricate_model.max_die_size))
+                for i in range(radial_round):
+                    new_compute_areas, new_transfer_lines = self.design_area(area2design, 'radial', 2*max(self.fabricate_model.max_die_size)-1, 'x')
+                    self.compute_areas.remove(area2design)
+                    self.compute_areas.extend(new_compute_areas)
+                    self.transfer_lines.extend(new_transfer_lines)
+                    area2design = self.compute_areas[-1]
+                for i in range(grid_round):
+                    area2design = self.compute_areas[0]
+                    if self.package_size[0] > self.package_size[1]:
+                        new_compute_areas, new_transfer_lines = self.design_area(area2design, 'grid', 3*max(self.fabricate_model.max_die_size)-1, 'x')
+                    else:
+                        new_compute_areas, new_transfer_lines = self.design_area(area2design, 'grid', 3*max(self.fabricate_model.max_die_size)-1, 'y')
+                    self.compute_areas.remove(area2design)
+                    self.compute_areas.extend(new_compute_areas)
+                    self.transfer_lines.extend(new_transfer_lines)
+            elif self.design_strategy == 'greedy':
+                # TODO: Implement greedy strategy
+                pass
+            elif self.design_strategy == 'rl':
+                # TODO: Implement reinforcement learning strategy
+                pass
             self.cell_graph: nx.Graph = nx.grid_2d_graph(*self.package_size)
             self.type_matrix = np.zeros(self.package_size, dtype=np.int8)
             self.compute_cells = []
@@ -154,7 +213,7 @@ class Package():
         else:
             raise ValueError('Invalid design scheme: {}'.format(design_scheme))
 
-        self.determine_die_and_coupler()
+        self.complete_package()
 
     def determine_transfer_cell(self):
         '''
@@ -235,7 +294,8 @@ class Package():
                 raise ValueError('Invalid transfer area: {}'.format(area))
         return transfer_lines
 
-    def partition_area(self, area, type, interval, orient):
+    def design_area(self, area, type, interval, orient):
+        print('Partition area:', area, type, interval, orient)
         new_compute_areas = []
         new_transfer_lines = []
         if type == 'strip':
@@ -274,6 +334,8 @@ class Package():
             else:
                 raise ValueError('Invalid partition orientation: {}'.format(orient))
         elif type == 'radial':
+            assert area['bottom'] - area['top'] + 1 > 4
+            assert area['right'] - area['left'] + 1 > 4
             if orient == 'x':
                 if area['bottom'] - area['top'] + 1 <= 3 * interval + 2:
                     interval = (area['bottom'] - area['top'] - 1) // 3
@@ -408,6 +470,7 @@ class Package():
                                          'top': area['top']+j*die_y_size+min(j, large_die_y_num),
                                          'right': area['left']+(i+1)*die_x_size+min(i+1, large_die_x_num)-1, 
                                          'bottom': area['top']+(j+1)*die_y_size+min(j+1, large_die_y_num)-1})
+                    compute_dies[-1]['id'] = 'c_'+str(compute_dies[-1]['left'])+'_'+str(compute_dies[-1]['top'])+'_'+str(compute_dies[-1]['right'])+'_'+str(compute_dies[-1]['bottom'])
         return compute_dies
         
     def divide_transfer_lines(self):
@@ -427,8 +490,9 @@ class Package():
             long_chain_num = area_length - chain_num * chain_length
             for i in range(chain_num):
                 transfer_dies.append({'type': CellType.Transfer, 'orient': line['orient'], 'pos': line['pos'], 
-                                        'start': line['start']+i*chain_length+min(i, long_chain_num), 
-                                        'end': line['start']+(i+1)*chain_length+min(i+1, long_chain_num)-1})
+                                      'start': line['start']+i*chain_length+min(i, long_chain_num), 
+                                      'end': line['start']+(i+1)*chain_length+min(i+1, long_chain_num)-1})
+                transfer_dies[-1]['id'] = 't_'+transfer_dies[-1]['orient']+'_'+str(transfer_dies[-1]['pos'])+'_'+str(transfer_dies[-1]['start'])+'_'+str(transfer_dies[-1]['end'])
         return transfer_dies
 
     def determine_inter_die_coupler(self):
@@ -440,18 +504,17 @@ class Package():
         gap: {'id': str, 'axis': int, 'edges': dict}
         '''
 
-        # TODO: set the fidelity of intra-die couplers according to the die size
         for compute_die in self.compute_dies:
             for i in range(compute_die['left'], compute_die['right']+1):
                 for j in range(compute_die['top'], compute_die['bottom']+1):
-                    self.cell_graph.nodes[(i, j)]['die'] = 'c_' + str(compute_die['left']) + '_' + str(compute_die['top']) + '_' + str(compute_die['right']) + '_' + str(compute_die['bottom'])
+                    self.cell_graph.nodes[(i, j)]['die'] = compute_die['id']
         for transfer_die in self.transfer_dies:
             if transfer_die['orient'] == 'x':
                 for i in range(transfer_die['start'], transfer_die['end']+1):
-                    self.cell_graph.nodes[(i, transfer_die['pos'])]['die'] = 't_x_' + str(transfer_die['pos']) + '_' + str(transfer_die['start']) + '_' + str(transfer_die['end'])
+                    self.cell_graph.nodes[(i, transfer_die['pos'])]['die'] = transfer_die['id']
             elif transfer_die['orient'] == 'y':
                 for j in range(transfer_die['start'], transfer_die['end']+1):
-                    self.cell_graph.nodes[(transfer_die['pos'], j)]['die'] = 't_y_' + str(transfer_die['pos']) + '_' + str(transfer_die['start']) + '_' + str(transfer_die['end'])
+                    self.cell_graph.nodes[(transfer_die['pos'], j)]['die'] = transfer_die['id']
 
         die_gaps = dict()
         for edge in self.cell_graph.edges:
@@ -461,7 +524,13 @@ class Package():
             elif self.cell_graph.nodes[edge[0]]['die'] == self.cell_graph.nodes[edge[1]]['die']:
                 self.cell_graph.edges[edge]['type'] = CouplerType.IntraDie
                 if self.cell_graph.nodes[edge[0]]['type'] == CellType.Compute:
-                    self.cell_graph.edges[edge]['fide'] = self.fabricate_model.intra_die_fide
+                    die_id = self.cell_graph.nodes[edge[0]]['die']
+                    die_left = int(die_id.split('_')[1])
+                    die_top = int(die_id.split('_')[2])
+                    die_right = int(die_id.split('_')[3])
+                    die_bottom = int(die_id.split('_')[4])
+                    die_size = (die_right-die_left+1, die_bottom-die_top+1)
+                    self.cell_graph.edges[edge]['fide'] = self.fabricate_model.get_intra_die_fide(die_size)
                 else:
                     self.cell_graph.edges[edge]['fide'] = self.fabricate_model.enhanced_fide
             else:
@@ -483,15 +552,13 @@ class Package():
                     die_gaps[gap_name]['edges'][edge[0][gap_axis]] = edge
                 self.cell_graph.edges[edge]['type'] = CouplerType.Empty
                 self.cell_graph.edges[edge]['fide'] = None
-        
-        for gap in die_gaps.values():
-            for _, edge in list(sorted(gap['edges'].items()))[::self.fabricate_model.inter_die_sparsity]:
+        for die_gap in die_gaps.values():
+            for _, edge in list(sorted(die_gap['edges'].items()))[::self.fabricate_model.inter_die_sparsity]:
                 self.cell_graph.edges[edge]['type'] = CouplerType.InterDie
                 self.cell_graph.edges[edge]['fide'] = self.fabricate_model.inter_die_fide
-
         return die_gaps
         
-    def determine_die_and_coupler(self):
+    def complete_package(self):
         '''
         Complete the package graph.
         '''
@@ -500,13 +567,27 @@ class Package():
         self.transfer_dies = self.divide_transfer_lines()
         self.die_gaps = self.determine_inter_die_coupler()
 
-        self.topology: nx.Graph = self.cell_graph.copy()
-        for node in self.topology.nodes:
-            if self.topology.nodes[node]['type'] == CellType.Empty:
-                self.topology.remove_node(node)
-        for edge in self.topology.edges:
-            if self.topology.edges[edge]['type'] == CouplerType.Empty:
-                self.topology.remove_edge(*edge)
+        self.qubit_topology: nx.Graph = self.cell_graph.copy()
+        for node in self.qubit_topology.nodes:
+            if self.qubit_topology.nodes[node]['type'] == CellType.Empty:
+                self.qubit_topology.remove_node(node)
+        for edge in self.qubit_topology.edges:
+            if self.qubit_topology.edges[edge]['type'] == CouplerType.Empty:
+                self.qubit_topology.remove_edge(*edge)
+
+        self.die_topology = nx.Graph()
+        for compute_die in self.compute_dies:
+            self.die_topology.add_node(compute_die['id'], die=compute_die, type=compute_die['type'], 
+                                       pos=((compute_die['left']+compute_die['right'])/2, (compute_die['top']+compute_die['bottom'])/2))
+        for transfer_die in self.transfer_dies:
+            if transfer_die['orient'] == 'x':
+                self.die_topology.add_node(transfer_die['id'], die=transfer_die, type=compute_die['type'], 
+                                           pos=((transfer_die['start']+transfer_die['end'])/2, transfer_die['pos']))
+            elif transfer_die['orient'] == 'y':
+                self.die_topology.add_node(transfer_die['id'], die=transfer_die, type=compute_die['type'], 
+                                           pos=(transfer_die['pos'], (transfer_die['start']+transfer_die['end'])/2))
+        for die_gap in self.die_gaps.values():
+            self.die_topology.add_edge(die_gap['id'].split(', ')[0], die_gap['id'].split(', ')[1], gap=die_gap)
     
     def update_cell(self, x, y, cell_type):
         '''
@@ -556,10 +637,10 @@ class Package():
     
     def shortest_path(self, transfer_pair):
         source, target = transfer_pair
-        path = nx.shortest_path(self.topology, source, target, weight=self.edge_fide_weight)
+        path = nx.shortest_path(self.qubit_topology, source, target, weight=self.edge_fide_weight)
         fidelity = 1
         for i in range(len(path)-1):
-            fidelity *= self.topology.edges[(path[i], path[i+1])]['fide']
+            fidelity *= self.qubit_topology.edges[(path[i], path[i+1])]['fide']
         return path, fidelity
 
     def estimate_transfer(self, transfer_pairs=None):
@@ -579,15 +660,6 @@ class Package():
         
         return np.mean(fidelity_list), path_list, fidelity_list
     
-    def die_yield(self, die_size):
-        '''
-        Estimate the yield rate of a die with certain size.
-        '''
-
-        # TODO: change to the real yield model
-        qubit_num = die_size[0] * die_size[1]
-        return self.fabricate_model.yield_rate * np.exp(-qubit_num * np.log(1-self.fabricate_model.single_gate_fide))
-    
     def estimate_efficiency(self, transfer_pairs=None):
         '''
         Estimate the efficiency of package considering the yield cost.
@@ -598,16 +670,32 @@ class Package():
         fidelity, _, _ = self.estimate_transfer(transfer_pairs)
 
         cost = 0
-        for area in self.compute_areas:
-            cost += (area['right'] - area['left'] + 1) * (area['bottom'] - area['top'] + 1)
-        for line in self.transfer_lines:
-            cost += 1
+        for compute_die in self.compute_dies:
+            die_size = (compute_die['right']-compute_die['left']+1, compute_die['bottom']-compute_die['top']+1)
+            cost += self.fabricate_model.get_die_cost(die_size)
+        for transfer_die in self.transfer_dies:
+            if transfer_die['orient'] == 'x':
+                die_size = (transfer_die['end']-transfer_die['start']+1, 1)
+            elif transfer_die['orient'] == 'y':
+                die_size = (1, transfer_die['end']-transfer_die['start']+1)
+            cost += self.fabricate_model.get_die_cost(die_size)
         
         return - np.log(1-fidelity) / cost
-
-    def draw(self, marginrate=0.2, markersize=4, linewidth_t=1, linewidth_b=2, save_path=None):
+    
+    def get_routing_topology(self):
         '''
-        Draw the package graph.
+        Get the routing topology of the package.
+
+        Return: 
+        qubit_topology, the graph of all the qubits
+        die_topology, the graph of all the dies
+        '''
+        
+        return self.qubit_topology.copy(), self.die_topology.copy()
+
+    def draw_qubits(self, marginrate=0.2, markersize=4, linewidth_t=1, linewidth_b=2, save_path=None):
+        '''
+        Draw the package graph in qubit level.
         '''
         
         plt.figure(figsize=self.package_size)
@@ -630,6 +718,28 @@ class Package():
         for node in self.cell_graph.nodes:
             if self.cell_graph.nodes[node]['type'] != CellType.Empty:
                 plt.plot(node[0], node[1], 'ko', markersize=markersize)
+        plt.axis('off')
+        plt.gca().spines["top"].set_visible(False)
+        plt.gca().spines["right"].set_visible(False)
+        plt.gca().spines["bottom"].set_visible(False)
+        plt.gca().spines["left"].set_visible(False)
+        plt.show()
+        if save_path:
+            plt.savefig(save_path, bbox_inches='tight')
+    
+    def draw_dies(self, marginrate=0.2, markersize=4, linewidth_t=1, linewidth_b=2, save_path=None):
+        '''
+        Draw the package graph in die level.
+        '''
+
+        plt.figure(figsize=self.package_size)
+        for die_id in self.die_topology.nodes:
+            die = self.die_topology.nodes[die_id]
+            plt.plot(*die['pos'], 'ko', markersize=markersize)
+        for u_id, v_id in self.die_topology.edges:
+            u_pos = self.die_topology.nodes[u_id]['pos']
+            v_pos = self.die_topology.nodes[v_id]['pos']
+            plt.plot([u_pos[0], v_pos[0]], [u_pos[1], v_pos[1]], 'k-', linewidth=linewidth_t)
         plt.axis('off')
         plt.gca().spines["top"].set_visible(False)
         plt.gca().spines["right"].set_visible(False)
