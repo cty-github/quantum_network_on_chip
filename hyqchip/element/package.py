@@ -4,6 +4,7 @@ from enum import Enum, auto
 
 import matplotlib.pyplot as plt
 import networkx as nx
+from networkx import is_valid_degree_sequence_erdos_gallai
 import numpy as np
 from scipy.optimize import curve_fit
 
@@ -383,8 +384,15 @@ class Package:
             else:
                 raise ValueError("Invalid transfer area: {}".format(area))
         return transfer_lines
+    
+    @staticmethod
+    def is_valid_to_design(area,type,interval,orient):
+        pass
 
-    def design_area(self, area, type, interval, orient):
+    @staticmethod
+    def design_area(area, type, interval, orient):
+        if not Package.is_valid_to_design(area,type,interval,orient):
+            return None
         print("Partition area:", area, type, interval, orient)
         new_compute_areas = []
         new_transfer_lines = []
@@ -1340,6 +1348,14 @@ class Package:
         plt.show()
         if save_path:
             plt.savefig(save_path, bbox_inches="tight")
+
+    def locate_area(self, pos: tuple[int, int]):
+        for area in self.compute_areas:
+            if (
+                area["left"] <= pos[0] <= area["right"]
+                and area["top"] <= pos[1] <= area["bottom"]
+            ):
+                return area
 
     def draw_path(
         self,
