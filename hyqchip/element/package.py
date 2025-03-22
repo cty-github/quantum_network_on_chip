@@ -386,7 +386,30 @@ class Package:
         return transfer_lines
     
     @staticmethod
-    def is_valid_to_design(area,type,interval,orient):
+    def is_valid_to_design(area, type, interval, orient):
+        if area["type"] != CellType.Compute:
+            return False
+        if type not in partition_types:
+            return False
+        if orient not in partition_orientations:
+            return False
+        if type == "strip":
+            if orient == "x":
+                if area["bottom"]-area["top"]+1 <= 2*interval+1:
+                    return False
+            elif orient == "y":
+                if area["right"]-area["left"]+1 <= 2*interval+1:
+                    return False
+        elif type == "radial":
+            if area["bottom"]-area["top"]+1 <= 3*interval+2:
+                return False
+            if area["right"]-area["left"]+1 <= 3*interval+2:
+                return False
+        elif type == "grid":
+            if area["bottom"]-area["top"]+1 <= 2*interval+1:
+                return False
+            if area["right"]-area["left"]+1 <= 2*interval+1:
+                return False
         pass
 
     @staticmethod
