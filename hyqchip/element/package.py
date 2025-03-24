@@ -130,10 +130,10 @@ class Package:
         package_size: (int, int), the size of package
         fabricate_model: FabricateModel, the model of fabrication
         design_scheme: str, 'top_down' or 'bottom_up', the design scheme of package
-        design_steps: int, the number of design steps
-        design_strategy: str, 'heuristic' or 'greedy' or 'rl', the design strategy of package
+        design_steps: int, the number of steps for top down design
+        design_strategy: str, 'heuristic' or 'greedy' or 'rl', the strategy of top down design
         type_matrix: np.ndarray, the matrix of cell types
-        template: str, 'string' or 'random', the template of partition
+        template: str, 'string' or 'random', the template of partition for bottom up design
 
         cell_graph: nx.Graph, the graph of cells in the package
                     node: (x, y), {'type': CellType, 'fide': float, 'die': str}
