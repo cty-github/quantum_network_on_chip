@@ -9,19 +9,25 @@ from ..element.package import CellType, FabricateModel, Package
 
 class QuantumChipletEnv(gym.Env):
     def __init__(
-        self, package_size: tuple[int, int] = (22, 11), fabricate_model=FabricateModel()
+        self,
+        package_size: tuple[int, int] = (22, 11),
+        fabricate_model=FabricateModel(),
+        patience=100,
     ):
         super(QuantumChipletEnv, self).__init__()
         self._package_size = package_size
         self._fabricate_model = fabricate_model
+        self._patience = patience
         self.reset()
         self.action_space = spaces.Dict(
             {
                 "pos": spaces.Tuple(
-                    spaces.Discrete(self._package_size[0]),
-                    spaces.Discrete(self._package_size[1]),
+                    (
+                        spaces.Discrete(self._package_size[0]),
+                        spaces.Discrete(self._package_size[1]),
+                    )
                 ),
-                "interval": spaces.Box(1, np.max(self._package_size), (1,), np.int32),
+                "interval": spaces.Discrete(np.max(self._package_size)),
                 "type": spaces.Discrete(3),
                 "orient": spaces.Discrete(2),
             }
@@ -31,11 +37,51 @@ class QuantumChipletEnv(gym.Env):
         )
 
     def reset(self, seed: int | None = None, options: dict[str, Any] | None = None):
-        super().reset(seed, options)
+        super().reset(seed=seed, options=options)
+        self._last_score = 0
+        self._best_reward = -np.inf
+        self._no_improve_steps = 0
         self.package = Package(self._package_size, self._fabricate_model)
 
     def step(self, action):
-        pass
+        action = self._modify_action(action)
+        if action is None:
+            reward = -np.inf
+        else:
+            score = self.estimate()
+            reward = self._last_score - score
+            self._last_score = score
+        if reward > self._best_reward:
+            self._best_reward = reward
+            self._no_improve_steps = 0
+        else:
+            self._no_improve_steps += 1
+
+        return (
+            self.package.type_matrix,
+            reward,
+            self._no_improve_steps >= self._patience,
+            False,
+            {},
+        )
+
+    def estimate(self):
+        return self.package.estimate_transfer()[0]
+
+    def render(self, mode="human"):
+        self.package.draw_qubits()
+
+    def _modify_action(self, action):
+        modified_action = {
+            "interval": action["interval"] + 1,
+            "type": action["type"],
+            "orient": action["orient"],
+            "area": self.package.locate_area(action["pos"]),
+        }
+        if modified_action["area"] is not None and Package.is_valid_to_design(
+            **modified_action
+        ):
+            return modified_action
 
 
 class QuantumChipletEnvV1(gym.Env):
