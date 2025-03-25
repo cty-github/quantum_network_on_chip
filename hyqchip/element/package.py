@@ -10,8 +10,9 @@ from scipy.optimize import curve_fit
 
 from ..utils.utils import color_pool
 
-partition_types = ["strip", "radial", "grid"]
-partition_orientations = ["x", "y"]
+
+design_templates = ["strip", "radial", "grid"]
+design_orientations = ["x", "y"]
 
 
 class CellType(Enum):
@@ -129,10 +130,10 @@ class Package:
         package_size: (int, int), the size of package
         fabricate_model: FabricateModel, the model of fabrication
         design_scheme: str, 'top_down' or 'bottom_up', the design scheme of package
-        design_steps: int, the number of design steps
-        design_strategy: str, 'heuristic' or 'greedy' or 'rl', the design strategy of package
+        design_steps: int, the number of steps for top down design
+        design_strategy: str, 'heuristic' or 'greedy' or 'rl', the strategy of top down design
         type_matrix: np.ndarray, the matrix of cell types
-        template: str, 'string' or 'random', the template of partition
+        template: str, 'string' or 'random', the template of partition for bottom up design
 
         cell_graph: nx.Graph, the graph of cells in the package
                     node: (x, y), {'type': CellType, 'fide': float, 'die': str}
@@ -167,19 +168,20 @@ class Package:
                 length_width_ratio = max(self.package_size) / min(self.package_size)
                 if length_width_ratio > 1:
                     if self.package_size[0] > self.package_size[1]:
+                        print("Interval: ", min(self.package_size[1]-1, (self.package_size[0]+1)//2-1))
                         new_compute_areas, new_transfer_lines = self.design_area(
-                            area2design, "strip", self.package_size[1] - 1, "y"
+                            area2design, "strip", min(self.package_size[1]-1, (self.package_size[0]+1)//2-1), "y"
                         )
                     else:
                         new_compute_areas, new_transfer_lines = self.design_area(
-                            area2design, "strip", self.package_size[0] - 1, "x"
+                            area2design, "strip", min(self.package_size[0]-1, (self.package_size[1]+1)//2-1), "x"
                         )
                     self.compute_areas.remove(area2design)
                     self.compute_areas.extend(new_compute_areas)
                     self.transfer_lines.extend(new_transfer_lines)
                     area2design = self.compute_areas[len(self.compute_areas) // 2]
                 grid_round = len(self.compute_areas) - 1
-                radial_round = min(self.package_size) // (
+                radial_round = (min(self.package_size)-2*max(self.fabricate_model.max_die_size)) // (
                     4 * max(self.fabricate_model.max_die_size)
                 )
                 for i in range(radial_round):
@@ -199,14 +201,14 @@ class Package:
                         new_compute_areas, new_transfer_lines = self.design_area(
                             area2design,
                             "grid",
-                            3 * max(self.fabricate_model.max_die_size) - 1,
+                            min(3*max(self.fabricate_model.max_die_size)-1, (min(self.package_size[1], area2design['right']-area2design['left']+1)+1)//2-1),
                             "x",
                         )
                     else:
                         new_compute_areas, new_transfer_lines = self.design_area(
                             area2design,
                             "grid",
-                            3 * max(self.fabricate_model.max_die_size) - 1,
+                            min(3*max(self.fabricate_model.max_die_size)-1, (min(self.package_size[0], area2design['bottom']-area2design['top']+1)+1)//2-1),
                             "y",
                         )
                     self.compute_areas.remove(area2design)
@@ -386,17 +388,41 @@ class Package:
         return transfer_lines
     
     @staticmethod
-    def is_valid_to_design(area,type,interval,orient):
-        pass
+    def is_valid_to_design(area, template, interval, orient):
+        if area["type"] != CellType.Compute:
+            return False
+        if template not in design_templates:
+            return False
+        if orient not in design_orientations:
+            return False
+        if template == "strip":
+            if orient == "x":
+                if area["bottom"]-area["top"]+1 < 2*interval+1:
+                    return False
+            elif orient == "y":
+                if area["right"]-area["left"]+1 < 2*interval+1:
+                    return False
+        elif template == "radial":
+            if area["bottom"]-area["top"]+1 < 3*interval+2:
+                return False
+            if area["right"]-area["left"]+1 < 3*interval+2:
+                return False
+        elif template == "grid":
+            if area["bottom"]-area["top"]+1 < 2*interval+1:
+                return False
+            if area["right"]-area["left"]+1 < 2*interval+1:
+                return False
+        return True
 
     @staticmethod
-    def design_area(area, type, interval, orient):
-        if not Package.is_valid_to_design(area,type,interval,orient):
-            return None
-        print("Partition area:", area, type, interval, orient)
+    def design_area(area, template, interval, orient):
+        if not Package.is_valid_to_design(area, template, interval, orient):
+            print("Invalid area to design: ", area, template, interval, orient)
+            return [area], []
+        print("Designing area:", area, template, interval, orient)
         new_compute_areas = []
         new_transfer_lines = []
-        if type == "strip":
+        if template == "strip":
             if orient == "x":
                 n_blocks = (area["bottom"] - area["top"] + 1) // (interval + 1)
                 if n_blocks == 0:
@@ -482,8 +508,8 @@ class Package:
                             }
                         )
             else:
-                raise ValueError("Invalid partition orientation: {}".format(orient))
-        elif type == "radial":
+                raise ValueError("Invalid design orientation: {}".format(orient))
+        elif template == "radial":
             assert area["bottom"] - area["top"] + 1 > 4
             assert area["right"] - area["left"] + 1 > 4
             if orient == "x":
@@ -659,8 +685,8 @@ class Package:
                     }
                 )
             else:
-                raise ValueError("Invalid partition orientation: {}".format(orient))
-        elif type == "grid":
+                raise ValueError("Invalid design orientation: {}".format(orient))
+        elif template == "grid":
             if orient == "x":
                 n_blocks = (area["bottom"] - area["top"] + 1) // (interval + 1)
                 n_units = (area["right"] - area["left"] + 1) // (interval + 1)
@@ -874,9 +900,9 @@ class Package:
                                         }
                                     )
             else:
-                raise ValueError("Invalid partition orientation: {}".format(orient))
+                raise ValueError("Invalid design orientation: {}".format(orient))
         else:
-            raise ValueError("Invalid partition type: {}".format(type))
+            raise ValueError("Invalid design template: {}".format(template))
         return new_compute_areas, new_transfer_lines
 
     def divide_compute_areas(self):
