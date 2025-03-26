@@ -33,7 +33,7 @@ class QuantumChipletEnv(gym.Env):
             }
         )
         self.observation_space = spaces.Box(
-            low=0, high=len(CellType) - 1, shape=(1, *package_size), dtype=np.int8
+            low=0, high=len(CellType) - 1, shape=(5, *package_size), dtype=np.int8
         )
 
     def reset(self, seed: int | None = None, options: dict[str, Any] | None = None):
