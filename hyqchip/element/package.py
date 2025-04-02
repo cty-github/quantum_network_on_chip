@@ -1,4 +1,5 @@
 import math
+import copy
 import random
 from enum import Enum, auto
 
@@ -8,7 +9,7 @@ from networkx import is_valid_degree_sequence_erdos_gallai
 import numpy as np
 from scipy.optimize import curve_fit
 
-from ..utils.utils import color_pool
+from ..utils.utils import color_pool, get_full_space_tuple
 
 
 design_templates = ["strip", "radial", "grid"]
@@ -25,6 +26,15 @@ class CouplerType(Enum):
     Empty = 0
     IntraDie = auto()
     InterDie = auto()
+
+
+class RoleType(Enum):
+    Empty = 0
+    Data = auto()
+    Platform = auto()
+    Rail = auto()
+    Station = auto()
+    Interchange = auto()
 
 
 class FabricateModel:
@@ -234,22 +244,14 @@ class Package:
                         self.type_matrix[i, j] = area["type"].value
                         self.compute_cells.append((i, j))
             for line in self.transfer_lines:
-                if line["orient"] == "x":
-                    for i in range(line["start"], line["end"] + 1):
-                        self.cell_graph.nodes[(i, line["pos"])]["fide"] = (
-                            self.fabricate_model.single_gate_fide
-                        )
-                        self.cell_graph.nodes[(i, line["pos"])]["type"] = line["type"]
-                        self.type_matrix[i, line["pos"]] = line["type"].value
-                        self.transfer_cells.append((i, line["pos"]))
-                elif line["orient"] == "y":
-                    for j in range(line["start"], line["end"] + 1):
-                        self.cell_graph.nodes[(line["pos"], j)]["fide"] = (
-                            self.fabricate_model.single_gate_fide
-                        )
-                        self.cell_graph.nodes[(line["pos"], j)]["type"] = line["type"]
-                        self.type_matrix[line["pos"], j] = line["type"].value
-                        self.transfer_cells.append((line["pos"], j))
+                for i in range(line["start"], line["end"]+1):
+                    node = get_full_space_tuple(line["pos"], line["axis"], i)
+                    self.cell_graph.nodes[node]["fide"] = (
+                        self.fabricate_model.single_gate_fide
+                    )
+                    self.cell_graph.nodes[node]["type"] = line["type"]
+                    self.type_matrix[node] = line["type"].value
+                    self.transfer_cells.append(node)
         elif self.design_scheme == "bottom_up":
             if self.type_matrix:
                 assert self.type_matrix.shape == self.package_size
@@ -367,7 +369,7 @@ class Package:
                 transfer_lines.append(
                     {
                         "type": CellType.Transfer,
-                        "orient": "x",
+                        "axis": 0,
                         "pos": area["top"],
                         "start": area["left"],
                         "end": area["right"],
@@ -377,7 +379,7 @@ class Package:
                 transfer_lines.append(
                     {
                         "type": CellType.Transfer,
-                        "orient": "y",
+                        "axis": 1,
                         "pos": area["left"],
                         "start": area["top"],
                         "end": area["bottom"],
@@ -459,7 +461,7 @@ class Package:
                         new_transfer_lines.append(
                             {
                                 "type": CellType.Transfer,
-                                "orient": "x",
+                                "axis": 0,
                                 "pos": area["top"] + (i + 1) * (interval + 1) - 1,
                                 "start": area["left"],
                                 "end": area["right"],
@@ -501,7 +503,7 @@ class Package:
                         new_transfer_lines.append(
                             {
                                 "type": CellType.Transfer,
-                                "orient": "y",
+                                "axis": 1,
                                 "pos": area["left"] + (i + 1) * (interval + 1) - 1,
                                 "start": area["top"],
                                 "end": area["bottom"],
@@ -529,7 +531,7 @@ class Package:
                 new_transfer_lines.append(
                     {
                         "type": CellType.Transfer,
-                        "orient": "x",
+                        "axis": 0,
                         "pos": area["top"] + interval,
                         "start": area["left"],
                         "end": area["right"] - interval - 1,
@@ -547,7 +549,7 @@ class Package:
                 new_transfer_lines.append(
                     {
                         "type": CellType.Transfer,
-                        "orient": "y",
+                        "axis": 1,
                         "pos": area["right"] - interval,
                         "start": area["top"],
                         "end": area["bottom"] - interval - 1,
@@ -565,7 +567,7 @@ class Package:
                 new_transfer_lines.append(
                     {
                         "type": CellType.Transfer,
-                        "orient": "x",
+                        "axis": 0,
                         "pos": area["bottom"] - interval,
                         "start": area["left"] + interval + 1,
                         "end": area["right"],
@@ -583,7 +585,7 @@ class Package:
                 new_transfer_lines.append(
                     {
                         "type": CellType.Transfer,
-                        "orient": "y",
+                        "axis": 1,
                         "pos": area["left"] + interval,
                         "start": area["top"] + interval + 1,
                         "end": area["bottom"],
@@ -615,7 +617,7 @@ class Package:
                 new_transfer_lines.append(
                     {
                         "type": CellType.Transfer,
-                        "orient": "y",
+                        "axis": 1,
                         "pos": area["left"] + interval,
                         "start": area["top"],
                         "end": area["bottom"] - interval - 1,
@@ -633,7 +635,7 @@ class Package:
                 new_transfer_lines.append(
                     {
                         "type": CellType.Transfer,
-                        "orient": "x",
+                        "axis": 0,
                         "pos": area["top"] + interval,
                         "start": area["left"] + interval + 1,
                         "end": area["right"],
@@ -651,7 +653,7 @@ class Package:
                 new_transfer_lines.append(
                     {
                         "type": CellType.Transfer,
-                        "orient": "y",
+                        "axis": 1,
                         "pos": area["right"] - interval,
                         "start": area["top"] + interval + 1,
                         "end": area["bottom"],
@@ -669,7 +671,7 @@ class Package:
                 new_transfer_lines.append(
                     {
                         "type": CellType.Transfer,
-                        "orient": "x",
+                        "axis": 0,
                         "pos": area["bottom"] - interval,
                         "start": area["left"],
                         "end": area["right"] - interval - 1,
@@ -730,10 +732,8 @@ class Package:
                                     new_transfer_lines.append(
                                         {
                                             "type": CellType.Transfer,
-                                            "orient": "y",
-                                            "pos": area["left"]
-                                            + (j + 1) * (interval + 1)
-                                            - 1,
+                                            "axis": 1,
+                                            "pos": area["left"] + (j + 1) * (interval + 1) - 1,
                                             "start": area["top"] + i * (interval + 1),
                                             "end": area["bottom"],
                                         }
@@ -755,10 +755,8 @@ class Package:
                                     new_transfer_lines.append(
                                         {
                                             "type": CellType.Transfer,
-                                            "orient": "x",
-                                            "pos": area["top"]
-                                            + (i + 1) * (interval + 1)
-                                            - 1,
+                                            "axis": 0,
+                                            "pos": area["top"] + (i + 1) * (interval + 1) - 1,
                                             "start": area["left"],
                                             "end": area["right"],
                                         }
@@ -769,28 +767,17 @@ class Package:
                                             "type": CellType.Compute,
                                             "left": area["left"] + j * (interval + 1),
                                             "top": area["top"] + i * (interval + 1),
-                                            "right": area["left"]
-                                            + j * (interval + 1)
-                                            + interval
-                                            - 1,
-                                            "bottom": area["top"]
-                                            + i * (interval + 1)
-                                            + interval
-                                            - 1,
+                                            "right": area["left"] + j * (interval + 1) + interval - 1,
+                                            "bottom": area["top"] + i * (interval + 1) + interval - 1,
                                         }
                                     )
                                     new_transfer_lines.append(
                                         {
                                             "type": CellType.Transfer,
-                                            "orient": "y",
-                                            "pos": area["left"]
-                                            + (j + 1) * (interval + 1)
-                                            - 1,
+                                            "axis": 1,
+                                            "pos": area["left"] + (j + 1) * (interval + 1) - 1,
                                             "start": area["top"] + i * (interval + 1),
-                                            "end": area["top"]
-                                            + i * (interval + 1)
-                                            + interval
-                                            - 1,
+                                            "end": area["top"] + i * (interval + 1) + interval - 1,
                                         }
                                     )
             elif orient == "y":
@@ -827,19 +814,14 @@ class Package:
                                             "left": area["left"] + i * (interval + 1),
                                             "top": area["top"] + j * (interval + 1),
                                             "right": area["right"],
-                                            "bottom": area["top"]
-                                            + j * (interval + 1)
-                                            + interval
-                                            - 1,
+                                            "bottom": area["top"] + j * (interval + 1) + interval - 1,
                                         }
                                     )
                                     new_transfer_lines.append(
                                         {
                                             "type": CellType.Transfer,
-                                            "orient": "x",
-                                            "pos": area["top"]
-                                            + (j + 1) * (interval + 1)
-                                            - 1,
+                                            "axis": 0,
+                                            "pos": area["top"] + (j + 1) * (interval + 1) - 1,
                                             "start": area["left"] + i * (interval + 1),
                                             "end": area["right"],
                                         }
@@ -851,20 +833,15 @@ class Package:
                                             "type": CellType.Compute,
                                             "left": area["left"] + i * (interval + 1),
                                             "top": area["top"] + j * (interval + 1),
-                                            "right": area["left"]
-                                            + i * (interval + 1)
-                                            + interval
-                                            - 1,
+                                            "right": area["left"] + i * (interval + 1) + interval - 1,
                                             "bottom": area["bottom"],
                                         }
                                     )
                                     new_transfer_lines.append(
                                         {
                                             "type": CellType.Transfer,
-                                            "orient": "y",
-                                            "pos": area["left"]
-                                            + (i + 1) * (interval + 1)
-                                            - 1,
+                                            "axis": 1,
+                                            "pos": area["left"] + (i + 1) * (interval + 1) - 1,
                                             "start": area["top"],
                                             "end": area["bottom"],
                                         }
@@ -875,28 +852,17 @@ class Package:
                                             "type": CellType.Compute,
                                             "left": area["left"] + i * (interval + 1),
                                             "top": area["top"] + j * (interval + 1),
-                                            "right": area["left"]
-                                            + i * (interval + 1)
-                                            + interval
-                                            - 1,
-                                            "bottom": area["top"]
-                                            + j * (interval + 1)
-                                            + interval
-                                            - 1,
+                                            "right": area["left"] + i * (interval + 1) + interval - 1,
+                                            "bottom": area["top"] + j * (interval + 1) + interval - 1,
                                         }
                                     )
                                     new_transfer_lines.append(
                                         {
                                             "type": CellType.Transfer,
-                                            "orient": "x",
-                                            "pos": area["top"]
-                                            + (j + 1) * (interval + 1)
-                                            - 1,
+                                            "axis": 0,
+                                            "pos": area["top"] + (j + 1) * (interval + 1) - 1,
                                             "start": area["left"] + i * (interval + 1),
-                                            "end": area["left"]
-                                            + i * (interval + 1)
-                                            + interval
-                                            - 1,
+                                            "end": area["left"] + i * (interval + 1) + interval - 1,
                                         }
                                     )
             else:
@@ -930,18 +896,10 @@ class Package:
                     compute_dies.append(
                         {
                             "type": CellType.Compute,
-                            "left": area["left"]
-                            + i * die_x_size
-                            + min(i, large_die_x_num),
+                            "left": area["left"] + i * die_x_size + min(i, large_die_x_num),
                             "top": area["top"] + j * die_y_size + min(j, large_die_y_num),
-                            "right": area["left"]
-                            + (i + 1) * die_x_size
-                            + min(i + 1, large_die_x_num)
-                            - 1,
-                            "bottom": area["top"]
-                            + (j + 1) * die_y_size
-                            + min(j + 1, large_die_y_num)
-                            - 1,
+                            "right": area["left"] + (i + 1) * die_x_size + min(i + 1, large_die_x_num) - 1,
+                            "bottom": area["top"] + (j + 1) * die_y_size + min(j + 1, large_die_y_num) - 1,
                         }
                     )
                     compute_dies[-1]["id"] = (
@@ -962,7 +920,7 @@ class Package:
 
         Return:
         transfer_dies: list, the list of transfer dies
-        die: {'type': CellType, 'orient': str, 'pos': int, 'start': int, 'end': int}
+        die: {'type': CellType, 'axis': int, 'pos': int, 'start': int, 'end': int}
         """
 
         transfer_dies = []
@@ -975,20 +933,15 @@ class Package:
                 transfer_dies.append(
                     {
                         "type": CellType.Transfer,
-                        "orient": line["orient"],
+                        "axis": line["axis"],
                         "pos": line["pos"],
-                        "start": line["start"]
-                        + i * chain_length
-                        + min(i, long_chain_num),
-                        "end": line["start"]
-                        + (i + 1) * chain_length
-                        + min(i + 1, long_chain_num)
-                        - 1,
+                        "start": line["start"] + i * chain_length + min(i, long_chain_num),
+                        "end": line["start"] + (i + 1) * chain_length + min(i + 1, long_chain_num) - 1,
                     }
                 )
                 transfer_dies[-1]["id"] = (
                     "t_"
-                    + transfer_dies[-1]["orient"]
+                    + str(transfer_dies[-1]["axis"])
                     + "_"
                     + str(transfer_dies[-1]["pos"])
                     + "_"
@@ -1012,16 +965,9 @@ class Package:
                 for j in range(compute_die["top"], compute_die["bottom"] + 1):
                     self.cell_graph.nodes[(i, j)]["die"] = compute_die["id"]
         for transfer_die in self.transfer_dies:
-            if transfer_die["orient"] == "x":
-                for i in range(transfer_die["start"], transfer_die["end"] + 1):
-                    self.cell_graph.nodes[(i, transfer_die["pos"])]["die"] = transfer_die[
-                        "id"
-                    ]
-            elif transfer_die["orient"] == "y":
-                for j in range(transfer_die["start"], transfer_die["end"] + 1):
-                    self.cell_graph.nodes[(transfer_die["pos"], j)]["die"] = transfer_die[
-                        "id"
-                    ]
+            for i in range(transfer_die["start"], transfer_die["end"] + 1):
+                node = get_full_space_tuple(transfer_die["pos"], transfer_die["axis"], i)
+                self.cell_graph.nodes[node]["die"] = transfer_die["id"]
 
         die_gaps = dict()
         for edge in self.cell_graph.edges:
@@ -1106,46 +1052,55 @@ class Package:
         self.transfer_dies = self.divide_transfer_lines()
         self.die_gaps = self.determine_inter_die_coupler()
 
-        self.qubit_topology: nx.Graph = self.cell_graph.copy()
+        self.qubit_topology: nx.Graph = copy.deepcopy(self.cell_graph)
         for node in self.qubit_topology.nodes:
-            if self.qubit_topology.nodes[node]["type"] == CellType.Empty:
+            if self.qubit_topology.nodes[node]["type"] == CellType.Compute:
+                self.qubit_topology.nodes[node]["role"] = RoleType.Data
+            elif self.qubit_topology.nodes[node]["type"] == CellType.Transfer:
+                self.qubit_topology.nodes[node]["role"] = RoleType.Rail
+            elif self.qubit_topology.nodes[node]["type"] == CellType.Empty:
                 self.qubit_topology.remove_node(node)
         for edge in self.qubit_topology.edges:
             if self.qubit_topology.edges[edge]["type"] == CouplerType.Empty:
                 self.qubit_topology.remove_edge(*edge)
+        for transfer_die in self.transfer_dies:
+            for i in range(transfer_die["start"], transfer_die["end"]+1):
+                node = get_full_space_tuple(transfer_die["pos"], transfer_die["axis"], i)
+                neighbor_nodes = self.qubit_topology.neighbors(node)
+                for neighbor_node in neighbor_nodes:
+                    if self.qubit_topology.edges[(node, neighbor_node)]["type"] == CouplerType.InterDie:
+                        if self.qubit_topology.nodes[neighbor_node]["type"] == CellType.Compute:
+                            if self.qubit_topology.nodes[node]["role"] != RoleType.Interchange:
+                                self.qubit_topology.nodes[node]["role"] = RoleType.Station
+                        elif self.qubit_topology.nodes[neighbor_node]["type"] == CellType.Transfer:
+                            self.qubit_topology.nodes[node]["role"] = RoleType.Interchange
+                if transfer_die["pos"] > 0:
+                    prev_node = get_full_space_tuple(transfer_die["pos"]-1, transfer_die["axis"], i)
+                    self.qubit_topology.nodes[prev_node]["role"] = RoleType.Platform
+                if transfer_die["pos"] < self.package_size[1-transfer_die["axis"]]-1:
+                    next_node = get_full_space_tuple(transfer_die["pos"]+1, transfer_die["axis"], i)
+                    self.qubit_topology.nodes[next_node]["role"] = RoleType.Platform
 
         self.die_topology = nx.Graph()
         for compute_die in self.compute_dies:
             self.die_topology.add_node(
                 compute_die["id"],
                 die=compute_die,
-                type=compute_die["type"],
+                type=CellType.Compute,
                 pos=(
                     (compute_die["left"] + compute_die["right"]) / 2,
                     (compute_die["top"] + compute_die["bottom"]) / 2,
                 ),
             )
         for transfer_die in self.transfer_dies:
-            if transfer_die["orient"] == "x":
-                self.die_topology.add_node(
-                    transfer_die["id"],
-                    die=transfer_die,
-                    type=compute_die["type"],
-                    pos=(
-                        (transfer_die["start"] + transfer_die["end"]) / 2,
-                        transfer_die["pos"],
-                    ),
-                )
-            elif transfer_die["orient"] == "y":
-                self.die_topology.add_node(
-                    transfer_die["id"],
-                    die=transfer_die,
-                    type=compute_die["type"],
-                    pos=(
-                        transfer_die["pos"],
-                        (transfer_die["start"] + transfer_die["end"]) / 2,
-                    ),
-                )
+            pos = get_full_space_tuple(transfer_die["pos"], transfer_die["axis"], 
+                                 (transfer_die["start"] + transfer_die["end"]) / 2)
+            self.die_topology.add_node(
+                transfer_die["id"],
+                die=transfer_die,
+                type=CellType.Transfer,
+                pos=pos,
+            )
         for die_gap in self.die_gaps.values():
             self.die_topology.add_edge(
                 die_gap["id"].split(", ")[0], die_gap["id"].split(", ")[1], gap=die_gap
@@ -1243,10 +1198,7 @@ class Package:
             )
             cost += self.fabricate_model.get_die_cost(die_size)
         for transfer_die in self.transfer_dies:
-            if transfer_die["orient"] == "x":
-                die_size = (transfer_die["end"] - transfer_die["start"] + 1, 1)
-            elif transfer_die["orient"] == "y":
-                die_size = (1, transfer_die["end"] - transfer_die["start"] + 1)
+            die_size = get_full_space_tuple(1, transfer_die["axis"], transfer_die["end"] - transfer_die["start"] + 1)
             cost += self.fabricate_model.get_die_cost(die_size)
 
         return -np.log(1 - fidelity) / cost
@@ -1260,7 +1212,29 @@ class Package:
         die_topology, the graph of all the dies
         """
 
-        return self.qubit_topology.copy(), self.die_topology.copy()
+        return copy.deepcopy(self.qubit_topology), copy.deepcopy(self.die_topology)
+
+    def get_data_qubit_num(self):
+        """
+        Get the number of physical qubits with data role in the package.
+        """
+
+        cnt = 0
+        for node in self.qubit_topology.nodes:
+            if self.qubit_topology.nodes[node]["role"] == RoleType.Data:
+                cnt += 1
+        return cnt
+
+    def get_data_qubit_list(self):
+        """
+        Get the list of physical qubits with data role in the package.
+        """
+
+        data_qubit_list = []
+        for node in self.qubit_topology.nodes:
+            if self.qubit_topology.nodes[node]["role"] == RoleType.Data:
+                data_qubit_list.append(node)
+        return data_qubit_list
 
     def draw_qubits(
         self, marginrate=0.2, markersize=4, linewidth_t=1, linewidth_b=2, save_path=None

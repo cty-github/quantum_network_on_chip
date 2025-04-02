@@ -22,3 +22,8 @@ def pick_n_links(size, lst, n):
         return links_2
     else:
         return links_1
+
+def get_full_space_tuple(pos, axis, index):
+    coordinate_list = list([pos])
+    coordinate_list.insert(axis, index)
+    return tuple(coordinate_list)
