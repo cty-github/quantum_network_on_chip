@@ -1,3 +1,5 @@
+import copy
+
 from ..element.package import *
 from ..element.benchmark import *
 from .circuit import *
@@ -5,14 +7,29 @@ from .circuit import *
 
 class CommutableBlock:
     def __init__(self):
-        self.cnot_gate_list = []
+        self.ctrl_gates = []
         self.control_qubits = []
         self.target_qubits = []
+        self.involved_qubits = []
+    
+    def __len__(self):
+        return len(self.ctrl_gates)
+    
+    def add_gate(self, gate):
+        self.ctrl_gates.append(gate)
+        if gate[0] not in self.control_qubits:
+            self.control_qubits.append(gate[0])
+        if gate[1] not in self.target_qubits:
+            self.target_qubits.append(gate[1])
+        if gate[0] not in self.involved_qubits:
+            self.involved_qubits.append(gate[0])
+        if gate[1] not in self.involved_qubits:
+            self.involved_qubits.append(gate[1])
 
 
 class LocalBlock:
-    def __init__(self, cnot_gates_list):
-        self.cnot_gates_list = cnot_gates_list
+    def __init__(self, ctrl_gates):
+        self.ctrl_gates = ctrl_gates
 
 
 class TeleBlock:
@@ -33,18 +50,19 @@ class MoveBlock:
 
 
 class Router:
-    def __init__(self, package: Package, program: list):
+    def __init__(self, package: Package, program: Program):
         '''
         Class for routing a quantum program on a package.
 
         package: Package, the package to be routed on.
-        program: list, the quantum program to be routed.
+        program: Program, the quantum program to be routed.
 
         l2p_map: dict, map from logic qubit index to physical qubit index
         p2l_map: dict, map from physical qubit index to logic qubit index
         circuit: Circuit, the routing results with circuit level actions in stages.
         '''
         self.package = package
+        self.qubit_topology = package.qubit_topology
         self.die_topology = package.die_topology
         self.program = program
 
@@ -60,8 +78,15 @@ class Router:
         Map logic qubits to physical qubits.
         Left qubits beside the die gaps, and take rest qubits in compute dies as compute qubits.
         '''
-        # TODO: complete the function
-        pass
+        
+        logic_data_qubit_num = self.program.data_qubit_num
+        physical_data_qubit_num = self.package.get_data_qubit_num()
+        if logic_data_qubit_num > physical_data_qubit_num:
+            raise ValueError("Not enough physical qubits to map logic qubits.")
+        physical_data_qubit_list = self.package.get_data_qubit_list()
+        for i in range(logic_data_qubit_num):
+            self.l2p_map[i] = physical_data_qubit_list[i]
+            self.p2l_map[physical_data_qubit_list[i]] = i
 
     def check_commutable_block(self):
         '''
@@ -70,8 +95,43 @@ class Router:
 
         self.commutable_blocks: list[list[tuple]], list of commutable blocks, each commutable blocks contains commutable control gates.
         '''
-        # TODO: complete the function
-        pass
+    
+        def check_commutable_gate(gate, control_qubits, target_qubits) -> bool:
+            involved_qubits = control_qubits + target_qubits
+            if gate[0] not in involved_qubits and gate[1] not in involved_qubits:
+                return True
+            elif gate[0] in control_qubits and gate[0] not in target_qubits:
+                return True
+            else:
+                return False
+
+        program_copy = copy.deepcopy(self.program)
+        commut_block = CommutableBlock()
+        while len(program_copy) > 0:
+            gate = program_copy.pop(0)
+            if gate == 'barrier':
+                continue
+            else:
+                commut_block.add_gate(gate)
+                checked_control_qubits = [gate[0]]
+                checked_target_qubits = [gate[1]]
+                pop_list = []
+                for i in range(len(program_copy)):
+                    if program_copy[i] == 'barrier':
+                        pop_list.append(i)
+                        break
+                    else:
+                        if check_commutable_gate(program_copy[i], checked_control_qubits, checked_target_qubits):
+                            commut_block.add_gate(program_copy[i])
+                            pop_list.append(i)
+                        if program_copy[i][0] not in checked_control_qubits:
+                            checked_control_qubits.append(program_copy[i][0])
+                        if program_copy[i][1] not in checked_target_qubits:
+                            checked_target_qubits.append(program_copy[i][1])
+                for i in sorted(pop_list, reverse=True):
+                    program_copy.pop(i)
+                self.commutable_blocks.append(commut_block)
+                commut_block = CommutableBlock()
 
     def determine_compute_blocks(self):
         '''
@@ -85,6 +145,7 @@ class Router:
 
         self.compute_blocks: list[TeleBlock or MoveBlock], list of compute blocks.
         '''
+
         # TODO: complete the function
         pass
 
@@ -92,6 +153,7 @@ class Router:
         '''
         Transform compute blocks into circuit actions.
         '''
+
         # TODO: complete the function
         pass
 
