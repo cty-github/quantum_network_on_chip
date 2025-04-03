@@ -150,6 +150,18 @@ class Package:
                     edge: ((x1, y1), (x2, y2)), {'type': CouplerType, 'fide': float}
         compute_cells: list, the list of compute cells
         transfer_cells: list, the list of transfer cells
+        compute_areas: list, the list of compute areas
+                    area: {'type': CellType, 'left': int, 'top': int, 'right': int, 'bottom': int}
+        transfer_lines: list, the list of transfer lines
+                    line: {'type': CellType, 'axis': int, 'pos': int, 'start': int, 'end': int}
+        compute_dies: list, the list of compute dies
+        transfer_dies: list, the list of transfer dies
+        qubit_topology: nx.Graph, the graph of qubit topology
+                    node: (x, y), {'type': CellType, 'fide': float, 'die': str, 'role': RoleType}
+                    edge: ((x1, y1), (x2, y2)), {'type': CouplerType, 'fide': float}
+        die_topology: nx.Graph, the graph of die topology
+                    node: id, {'type': CellType, 'die': str, 'pos': (x, y)}
+                    edge: (id1, id2), {'gap': gap}
         """
 
         self.package_size = package_size
@@ -1154,7 +1166,7 @@ class Package:
     def edge_fide_weight(self, u, v, attrs):
         return -math.log(attrs["fide"])
 
-    def shortest_path(self, transfer_pair):
+    def get_shortest_path(self, transfer_pair):
         source, target = transfer_pair
         path = nx.shortest_path(
             self.qubit_topology, source, target, weight=self.edge_fide_weight
@@ -1175,7 +1187,7 @@ class Package:
         path_list = []
         fidelity_list = []
         for transfer_pair in transfer_pairs:
-            path, fidelity = self.shortest_path(transfer_pair)
+            path, fidelity = self.get_shortest_path(transfer_pair)
             path_list.append(path)
             fidelity_list.append(fidelity)
 
@@ -1235,6 +1247,29 @@ class Package:
             if self.qubit_topology.nodes[node]["role"] == RoleType.Data:
                 data_qubit_list.append(node)
         return data_qubit_list
+
+    def get_physical_qubit_area(self, pos: tuple[int, int]):
+        for area in self.compute_areas:
+            if (
+                area["left"] <= pos[0] <= area["right"]
+                and area["top"] <= pos[1] <= area["bottom"]
+            ):
+                return area
+
+    def get_die_capacity(self, die_id: str):
+        die_info = die_id.split("_")
+        if die_info[0] != "c":
+            return 0
+        die_left = int(die_info[1])
+        die_top = int(die_info[2])
+        die_right = int(die_info[3])
+        die_bottom = int(die_info[4])
+        capacity = 0
+        for i in range(die_left, die_right + 1):
+            for j in range(die_top, die_bottom + 1):
+                if self.qubit_topology.nodes[(i, j)]["role"] == RoleType.Data:
+                    capacity += 1
+        return capacity
 
     def draw_qubits(
         self, marginrate=0.2, markersize=4, linewidth_t=1, linewidth_b=2, save_path=None
@@ -1348,14 +1383,6 @@ class Package:
         plt.show()
         if save_path:
             plt.savefig(save_path, bbox_inches="tight")
-
-    def locate_area(self, pos: tuple[int, int]):
-        for area in self.compute_areas:
-            if (
-                area["left"] <= pos[0] <= area["right"]
-                and area["top"] <= pos[1] <= area["bottom"]
-            ):
-                return area
 
     def draw_path(
         self,

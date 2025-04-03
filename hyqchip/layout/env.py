@@ -76,7 +76,7 @@ class QuantumChipletEnv(gym.Env):
             "interval": action["interval"] + 1,
             "type": action["type"],
             "orient": action["orient"],
-            "area": self.package.locate_area(action["pos"]),
+            "area": self.package.get_physical_qubit_area(action["pos"]),
         }
         if modified_action["area"] is not None and Package.is_valid_to_design(
             **modified_action
