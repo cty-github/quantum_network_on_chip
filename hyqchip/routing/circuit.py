@@ -4,9 +4,30 @@ from random import shuffle
 from collections import defaultdict, deque
 
 
+class Circuit: 
+    def __init__(self, package, logic_qubit_num):
+        '''
+        Structure of physical quantum circuit with enhanced quantum state transfer.
+        Circuit with enhanced quantum state transfer is a list interleaved with operating stage and boarding stage.
+        Operation stage: 1) transport on transfer die; 2) local compute on compute die; 3) routing to stops.
+        Boarding stage: 1) boarding on/off transfer die; 2) GHZ state preparation; 3) transfer between transfer dies.
+        '''
+        
+        self.package = package
+        self.logic_qubit_num = logic_qubit_num
+        self.circuit_stages: list[CircuitStage] = []
+    
+    def estimate_fidelity(self):
+        pass
+    
+    def estimate_depth(self):
+        pass
+
+
 class CircuitAction:
     def __init__(self):
         pass
+
 
 class OperatingAction(CircuitAction):
     def __init__(self):
@@ -18,7 +39,37 @@ class BoardingAction(CircuitAction):
         pass
 
 
-class TransportOnDie(OperatingAction):
+class CircuitStage:
+    def __init__(self, circuit: Circuit):
+        self.circuit = circuit
+        self.id = len(self.circuit.circuit_stages)
+        self.occupied_nodes = []
+    
+    def add_occupied_nodes(self, occupied_node):
+        self.occupied_nodes.append(occupied_node)
+
+
+class OperatingStage(CircuitStage):
+    def __init__(self, circuit: Circuit):
+        super().__init__(circuit)
+        self.operating_actions: list[OperatingAction] = []
+        self.phy_qubit_operate_layer = []
+    
+    def add_operating_action(self, action: OperatingAction):
+        self.operating_actions.append(action)
+        if isinstance(action, LocalCompute):
+            stage_layer = action.stage_layer
+            self.phy_qubit_operate_layer[stage_layer].extend(action.physical_nodes)
+            
+
+
+class BoardingStage(CircuitStage):
+    def __init__(self, circuit: Circuit):
+        super().__init__(circuit)
+        self.boarding_actions: list[BoardingAction] = []
+
+
+class TransportOnRail(OperatingAction):
     def __init__(self, logic_qubit, source_physical_qubit, target_physical_qubit):
         '''
         Action to transport a logic qubit inside the transfer die.
@@ -65,15 +116,18 @@ class Teleport(OperatingAction):
 
 
 class LocalCompute(OperatingAction):
-    def __init__(self, logic_gate, swap_gates):
+    def __init__(self, logic_gate, physical_nodes, stage_layer):
         '''
         Action of control gate within a compute area.
 
         logic_gate: (int, int), the logical control gate
-        swap_gates: list[edge], the list of swap gates to route the logic gate
+        physical_nodes: list[node], the physical qubits along which the local compute happens, include start and end.
+        stage_layer: int, the layer num where the opt happens in the stage
         '''
+
         self.logic_gate: tuple[int] = logic_gate
-        self.swap_gates = swap_gates
+        self.physical_nodes = physical_nodes
+        self.stage_layer = stage_layer
 
 
 class GhzPreparation(BoardingAction):
@@ -132,38 +186,3 @@ class TransferDieRoute:
         self.source_physical_qubit: tuple[int] = source_physical_qubit
         self.target_physical_qubit: tuple[int] = target_physical_qubit
         self.actions = actions
-
-
-class CircuitStage:
-    def __init__(self):
-        pass
-
-
-class OperatingStage(CircuitStage):
-    def __init__(self):
-        self.operating_actions: list[OperatingAction] = []
-
-
-class BoardingStage(CircuitStage):
-    def __init__(self):
-        self.boarding_actions: list[BoardingAction] = []
-
-
-class Circuit: 
-    def __init__(self, qubit_num):
-        '''
-        Structure of physical quantum circuit with enhanced quantum state transfer.
-        Circuit with enhanced quantum state transfer is a list interleaved with operating stage and boarding stage.
-        Operation stage: 1) transport on transfer die; 2) local compute on compute die; 3) routing to stops.
-        Boarding stage: 1) boarding on/off transfer die; 2) GHZ state preparation; 3) transfer between transfer dies.
-
-        '''
-        self.qubit_num = qubit_num
-        self.circuit_stages: list[CircuitStage] = []
-    
-    def estimate_fidelity(self):
-        pass
-    
-    def estimate_depth(self):
-        pass
-        

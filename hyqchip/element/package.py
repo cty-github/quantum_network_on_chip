@@ -1064,17 +1064,25 @@ class Package:
         self.transfer_dies = self.divide_transfer_lines()
         self.die_gaps = self.determine_inter_die_coupler()
 
+        self.metro_graph = nx.Graph()
+        self.platform_list = []
+        self.station_list = []
+        self.interchange_list = []
+
         self.qubit_topology: nx.Graph = copy.deepcopy(self.cell_graph)
         for node in self.qubit_topology.nodes:
             if self.qubit_topology.nodes[node]["type"] == CellType.Compute:
                 self.qubit_topology.nodes[node]["role"] = RoleType.Data
             elif self.qubit_topology.nodes[node]["type"] == CellType.Transfer:
                 self.qubit_topology.nodes[node]["role"] = RoleType.Rail
+                self.metro_graph.add_node(node, role=RoleType.Rail)
             elif self.qubit_topology.nodes[node]["type"] == CellType.Empty:
                 self.qubit_topology.remove_node(node)
         for edge in self.qubit_topology.edges:
             if self.qubit_topology.edges[edge]["type"] == CouplerType.Empty:
                 self.qubit_topology.remove_edge(*edge)
+            if self.qubit_topology.nodes[edge[0]]["type"] == CellType.Transfer and self.qubit_topology.nodes[edge[1]]["type"] == CellType.Transfer:
+                self.metro_graph.add_edge(edge[0], edge[1], role=RoleType.Rail)
         for transfer_die in self.transfer_dies:
             for i in range(transfer_die["start"], transfer_die["end"]+1):
                 node = get_full_space_tuple(transfer_die["pos"], transfer_die["axis"], i)
@@ -1082,16 +1090,20 @@ class Package:
                 for neighbor_node in neighbor_nodes:
                     if self.qubit_topology.edges[(node, neighbor_node)]["type"] == CouplerType.InterDie:
                         if self.qubit_topology.nodes[neighbor_node]["type"] == CellType.Compute:
-                            if self.qubit_topology.nodes[node]["role"] != RoleType.Interchange:
-                                self.qubit_topology.nodes[node]["role"] = RoleType.Station
+                            self.qubit_topology.nodes[node]["role"] = RoleType.Station
+                            self.metro_graph.nodes[node]["role"] = RoleType.Station
+                            self.station_list.append(node)
                         elif self.qubit_topology.nodes[neighbor_node]["type"] == CellType.Transfer:
-                            self.qubit_topology.nodes[node]["role"] = RoleType.Interchange
+                            self.metro_graph.edges[(node, neighbor_node)]["role"] = RoleType.Interchange
+                            self.interchange_list.append((node, neighbor_node))
                 if transfer_die["pos"] > 0:
                     prev_node = get_full_space_tuple(transfer_die["pos"]-1, transfer_die["axis"], i)
                     self.qubit_topology.nodes[prev_node]["role"] = RoleType.Platform
+                    self.platform_list.append(prev_node)
                 if transfer_die["pos"] < self.package_size[1-transfer_die["axis"]]-1:
                     next_node = get_full_space_tuple(transfer_die["pos"]+1, transfer_die["axis"], i)
                     self.qubit_topology.nodes[next_node]["role"] = RoleType.Platform
+                    self.platform_list.append(next_node)
 
         self.die_topology = nx.Graph()
         for compute_die in self.compute_dies:
@@ -1163,6 +1175,7 @@ class Package:
     def random_transfer_pairs(self, num):
         return [self.random_transfer_pair() for _ in range(num)]
 
+    @staticmethod
     def edge_fide_weight(self, u, v, attrs):
         return -math.log(attrs["fide"])
 
@@ -1248,11 +1261,11 @@ class Package:
                 data_qubit_list.append(node)
         return data_qubit_list
 
-    def get_physical_qubit_area(self, pos: tuple[int, int]):
+    def get_physical_qubit_area(self, physical_qubit: tuple[int, int]):
         for area in self.compute_areas:
             if (
-                area["left"] <= pos[0] <= area["right"]
-                and area["top"] <= pos[1] <= area["bottom"]
+                area["left"] <= physical_qubit[0] <= area["right"]
+                and area["top"] <= physical_qubit[1] <= area["bottom"]
             ):
                 return area
 
@@ -1270,6 +1283,28 @@ class Package:
                 if self.qubit_topology.nodes[(i, j)]["role"] == RoleType.Data:
                     capacity += 1
         return capacity
+
+    def get_platform_list(self):
+        return copy.deepcopy(self.platform_list)
+
+    def get_station_list(self):
+        return copy.deepcopy(self.station_list)
+
+    def get_interchange_list(self):
+        return copy.deepcopy(self.interchange_list)
+
+    def get_schedule_graph(self, area) -> nx.Graph:
+        """
+        Get the schedule graph of the package.
+        """
+
+        sub_nodes = []
+        for i in range(area["left"], area["right"] + 1):
+            for j in range(area["top"], area["bottom"] + 1):
+                sub_nodes.append((i, j))
+
+        schedule_graph = self.qubit_topology.subgraph(sub_nodes)
+        return schedule_graph
 
     def draw_qubits(
         self, marginrate=0.2, markersize=4, linewidth_t=1, linewidth_b=2, save_path=None
