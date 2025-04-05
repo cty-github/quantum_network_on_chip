@@ -32,8 +32,9 @@ class RoleType(Enum):
     Empty = 0
     Data = auto()
     Platform = auto()
-    Rail = auto()
+    Balise = auto()
     Station = auto()
+    Rail = auto()
     Interchange = auto()
 
 
@@ -1074,8 +1075,8 @@ class Package:
             if self.qubit_topology.nodes[node]["type"] == CellType.Compute:
                 self.qubit_topology.nodes[node]["role"] = RoleType.Data
             elif self.qubit_topology.nodes[node]["type"] == CellType.Transfer:
-                self.qubit_topology.nodes[node]["role"] = RoleType.Rail
-                self.metro_graph.add_node(node, role=RoleType.Rail)
+                self.qubit_topology.nodes[node]["role"] = RoleType.Balise
+                self.metro_graph.add_node(node, role=RoleType.Balise)
             elif self.qubit_topology.nodes[node]["type"] == CellType.Empty:
                 self.qubit_topology.remove_node(node)
         for edge in self.qubit_topology.edges:
@@ -1090,20 +1091,22 @@ class Package:
                 for neighbor_node in neighbor_nodes:
                     if self.qubit_topology.edges[(node, neighbor_node)]["type"] == CouplerType.InterDie:
                         if self.qubit_topology.nodes[neighbor_node]["type"] == CellType.Compute:
+                            self.qubit_topology.nodes[neighbor_node]["role"] = RoleType.Platform
+                            self.qubit_topology.nodes[neighbor_node]["station"] = node
                             self.qubit_topology.nodes[node]["role"] = RoleType.Station
                             self.metro_graph.nodes[node]["role"] = RoleType.Station
                             self.station_list.append(node)
                         elif self.qubit_topology.nodes[neighbor_node]["type"] == CellType.Transfer:
                             self.metro_graph.edges[(node, neighbor_node)]["role"] = RoleType.Interchange
                             self.interchange_list.append((node, neighbor_node))
-                if transfer_die["pos"] > 0:
-                    prev_node = get_full_space_tuple(transfer_die["pos"]-1, transfer_die["axis"], i)
-                    self.qubit_topology.nodes[prev_node]["role"] = RoleType.Platform
-                    self.platform_list.append(prev_node)
-                if transfer_die["pos"] < self.package_size[1-transfer_die["axis"]]-1:
-                    next_node = get_full_space_tuple(transfer_die["pos"]+1, transfer_die["axis"], i)
-                    self.qubit_topology.nodes[next_node]["role"] = RoleType.Platform
-                    self.platform_list.append(next_node)
+                # if transfer_die["pos"] > 0:
+                #     prev_node = get_full_space_tuple(transfer_die["pos"]-1, transfer_die["axis"], i)
+                #     self.qubit_topology.nodes[prev_node]["role"] = RoleType.Platform
+                #     self.platform_list.append(prev_node)
+                # if transfer_die["pos"] < self.package_size[1-transfer_die["axis"]]-1:
+                #     next_node = get_full_space_tuple(transfer_die["pos"]+1, transfer_die["axis"], i)
+                #     self.qubit_topology.nodes[next_node]["role"] = RoleType.Platform
+                #     self.platform_list.append(next_node)
 
         self.die_topology = nx.Graph()
         for compute_die in self.compute_dies:
@@ -1293,9 +1296,9 @@ class Package:
     def get_interchange_list(self):
         return copy.deepcopy(self.interchange_list)
 
-    def get_schedule_graph(self, area) -> nx.Graph:
+    def get_area_graph(self, area) -> nx.Graph:
         """
-        Get the schedule graph of the package.
+        Get the graph of some area in the package.
         """
 
         sub_nodes = []
@@ -1305,6 +1308,26 @@ class Package:
 
         schedule_graph = self.qubit_topology.subgraph(sub_nodes)
         return schedule_graph
+
+    @staticmethod
+    def edge_metro_weight(self, u, v, attrs):
+        if attrs["role"] == RoleType.Rail:
+            return 0
+        elif attrs["role"] == RoleType.Interchange:
+            return 1
+
+    def get_shortest_metro_path(self, source, target):
+        """
+        Get the shortest path in metro graph.
+        """
+
+        assert source in self.metro_graph.nodes and target in self.metro_graph.nodes
+        path = nx.shortest_path(self.metro_graph, source, target, weight=self.edge_metro_weight)
+        interchange_num = 0
+        for i in range(len(path) - 1):
+            if self.metro_graph.edges[(path[i], path[i + 1])]["role"] == RoleType.Interchange:
+                interchange_num += 1
+        return path, interchange_num
 
     def draw_qubits(
         self, marginrate=0.2, markersize=4, linewidth_t=1, linewidth_b=2, save_path=None
