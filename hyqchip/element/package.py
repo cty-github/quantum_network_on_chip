@@ -1,5 +1,5 @@
 import math
-import copy
+from copy import deepcopy
 import random
 from enum import Enum, auto
 
@@ -1070,7 +1070,7 @@ class Package:
         self.station_list = []
         self.interchange_list = []
 
-        self.qubit_topology: nx.Graph = copy.deepcopy(self.cell_graph)
+        self.qubit_topology: nx.Graph = deepcopy(self.cell_graph)
         for node in self.qubit_topology.nodes:
             if self.qubit_topology.nodes[node]["type"] == CellType.Compute:
                 self.qubit_topology.nodes[node]["role"] = RoleType.Data
@@ -1240,7 +1240,7 @@ class Package:
         die_topology, the graph of all the dies
         """
 
-        return copy.deepcopy(self.qubit_topology), copy.deepcopy(self.die_topology)
+        return deepcopy(self.qubit_topology), deepcopy(self.die_topology)
 
     def get_data_qubit_num(self):
         """
@@ -1288,13 +1288,13 @@ class Package:
         return capacity
 
     def get_platform_list(self):
-        return copy.deepcopy(self.platform_list)
+        return deepcopy(self.platform_list)
 
     def get_station_list(self):
-        return copy.deepcopy(self.station_list)
+        return deepcopy(self.station_list)
 
     def get_interchange_list(self):
-        return copy.deepcopy(self.interchange_list)
+        return deepcopy(self.interchange_list)
 
     def get_area_graph(self, area) -> nx.Graph:
         """
