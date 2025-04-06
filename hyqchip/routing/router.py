@@ -61,17 +61,17 @@ class Router:
         self.station_list = package.get_station_list()
         self.interchange_list = package.get_interchange_list()
 
-        self.gate_depend_graph = program.gate_depend_graph
-        self.block_depend_graph = nx.DiGraph()
-        self.action_depend_graph = nx.DiGraph()
-
         self.l2p_map = dict()
         self.p2l_map = dict()
         self.local_gate_freq = {i: 0 for i in range(program.data_qubit_num)}
 
+        self.gate_depend_graph = program.gate_depend_graph
+        self.block_depend_graph = nx.DiGraph()
+        self.action_depend_graph = nx.DiGraph()
+        self.circuit = Circuit(package, program.data_qubit_num)
+
         # self.commutable_blocks = []
         # self.compute_blocks = []
-        self.circuit = Circuit(package, program.data_qubit_num)
 
     def analysis_metro(self):
         self.balise_station_distance_dict = {balise: {station: {"interchange": 0, "path": None} for station in self.station_list} for balise in self.metro_graph.nodes}
@@ -81,6 +81,16 @@ class Router:
                 self.balise_station_distance_dict[balise][station]["interchange"] = interchange_num
                 self.balise_station_distance_dict[balise][station]["path"] = shortest_path
         pass
+
+    def route_program_on_package(self):
+        '''
+        Route the program on the package.
+        '''
+
+        self.map_qubits()
+        self.determine_compute_blocks()
+        self.transform_compute_blocks()
+        self.schedule_action_to_circuit()
 
     def map_qubits(self):
         '''
@@ -146,197 +156,6 @@ class Router:
     #                 program_copy.pop(i)
     #             self.commutable_blocks.append(commute_block)
     #             commute_block = []
-
-    def check_local_gate(self, gate: Control) -> dict:
-        '''
-        Check if the gate is a local gate.
-        Local criteria: transfer die involved in the shortest path.
-        '''
-        
-        shortest_path, _ = self.package.get_shortest_path((self.l2p_map[gate.control_qubit], self.l2p_map[gate.target_qubit]))
-        for node in shortest_path:
-            if self.qubit_topology.nodes[node]["type"] == CellType.Transfer:
-                return None
-        return self.package.get_physical_qubit_area(self.l2p_map[gate.control_qubit])
-    
-    def check_move_gate(self, gate: Control, move_gates: list[Control]) -> bool:
-        '''
-        Check if the gate can be inserted into the move gates.
-        Concentrate criteria: #gate > #qubits*(#qubits-1)//4 and #qubit < max(die_capacity)
-        '''
-        involved_qubits = set()
-        for move_gate in move_gates:
-            involved_qubits.add(move_gate.control_qubit)
-            involved_qubits.add(move_gate.target_qubit)
-        if gate.control_qubit not in involved_qubits and gate.target_qubit not in involved_qubits:
-            return False
-        involved_qubits.add(gate.control_qubit)
-        involved_qubits.add(gate.target_qubit)
-        
-        max_die_capacity = 0
-        for involved_qubit in involved_qubits:
-            physical_qubit = self.l2p_map[involved_qubit]
-            die = self.qubit_topology.nodes[physical_qubit]["die"]
-            die_capacity = self.package.get_die_capacity(die)
-            if die_capacity > max_die_capacity:
-                max_die_capacity = die_capacity
-
-        if len(move_gates)+1 < len(involved_qubits) * (len(involved_qubits) - 1) // 3:
-            return False
-        if len(involved_qubits) > max_die_capacity:
-            return False
-        return True
-
-    def determine_die(self, involved_qubits):
-        '''
-        Determine the die to move the qubits to.
-        '''
-
-        die_cnt = dict()
-        for qubit in involved_qubits:
-            physical_qubit = self.l2p_map[qubit]
-            die = self.qubit_topology.nodes[physical_qubit]["die"]
-            die_capacity = self.package.get_die_capacity(die)
-            if die_capacity > len(involved_qubits):
-                if die in die_cnt:
-                    die_cnt[die] += 1
-                else:
-                    die_cnt[die] = 1
-        die = max(die_cnt, key=die_cnt.get)
-        return die
-
-    def find_qubits_to_swap(self, die, in_qubits, stand_qubits):
-        '''
-        Find the logic qubits on target die to replace, which has less control gate with qubits in the same die.
-        
-        Return:
-        list, the logic qubits on target die to replace.
-        '''
-
-        die_info = die.split("_")
-        die_left = int(die_info[1])
-        die_top = int(die_info[2])
-        die_right = int(die_info[3])
-        die_bottom = int(die_info[4])
-        candidate_local_freq = dict()
-        for i in range(die_left, die_right + 1):
-            for j in range(die_top, die_bottom + 1):
-                if self.qubit_topology.nodes[(i, j)]["role"] == RoleType.Data:
-                    cand_qubit = self.p2l_map[(i, j)]
-                    if cand_qubit not in stand_qubits:
-                        candidate_local_freq[cand_qubit] = self.local_gate_freq[cand_qubit]
-        out_qubits = sorted(candidate_local_freq, key=candidate_local_freq.get)
-        out_qubits = out_qubits[:len(in_qubits)]
-        self.local_gate_freq = {i: 0 for i in range(self.program.data_qubit_num)}
-        return out_qubits
-
-    def move_qubits_in_block(self, involved_qubits, die):
-        '''
-        Move qubits in the block to the target die.
-        '''
-
-        in_qubits = []
-        stand_qubits = []
-        for qubit in involved_qubits:
-            if self.qubit_topology.nodes[self.l2p_map[qubit]]["die"] != die:
-                in_qubits.append(qubit)
-            else:
-                stand_qubits.append(qubit)
-        out_qubits = self.find_qubits_to_swap(die, in_qubits, stand_qubits)
-        swap_logic_pairs = []
-        for i in len(in_qubits):
-            swap_logic_pairs.append((in_qubits[i], out_qubits[i]))
-            in_physical_qubit = self.l2p_map[in_qubits[i]]
-            out_physical_qubit = self.l2p_map[out_qubits[i]]
-            self.l2p_map[in_qubits[i]] = out_physical_qubit
-            self.l2p_map[out_qubits[i]] = in_physical_qubit
-            self.p2l_map[out_physical_qubit] = in_qubits[i]
-            self.p2l_map[in_physical_qubit] = out_qubits[i]
-        return swap_logic_pairs
-
-    # def scan_local_block(self, commute_block):
-    #     '''
-    #     Scan the commutable block and find local blocks.
-    #     '''
-
-    #     pop_list = []
-    #     local_block_dict = dict()
-    #     for i in range(len(commute_block)):
-    #         area = self.check_local_gate(commute_block[i])
-    #         if area:
-    #             if area in local_block_dict:
-    #                 local_block_dict[area].append(commute_block[i])
-    #             else:
-    #                 local_block_dict[area] = [commute_block[i]]
-    #             if commute_block[i][0] not in self.local_gate_freq:
-    #                 self.local_gate_freq[commute_block[i][0]] = 1
-    #             else:
-    #                 self.local_gate_freq[commute_block[i][0]] += 1
-    #             if commute_block[i][1] not in self.local_gate_freq:
-    #                 self.local_gate_freq[commute_block[i][1]] = 1
-    #             else:
-    #                 self.local_gate_freq[commute_block[i][1]] += 1
-    #             pop_list.append(i)
-    #     local_blocks = []
-    #     for key, value in local_block_dict.items():
-    #         local_block = LocalBlock(value, key)
-    #         local_blocks.append(local_block)
-    #     return local_blocks, pop_list
-    
-    # def scan_tele_block(self, commute_block):
-    #     '''
-    #     Scan the commutable block and find tele blocks.
-    #     '''
-
-    #     tele_blocks = []
-    #     pop_list = []
-    #     while len(commute_block) > 0:
-    #         gate = commute_block.pop(0)
-    #         ctrl_qubit = gate[0]
-    #         common_ctrl_target_qubits = [gate[1]]
-    #         for i in range(len(commute_block)):
-    #             if commute_block[i][0] == ctrl_qubit:
-    #                 common_ctrl_target_qubits.append(commute_block[i][1])
-    #                 pop_list.append(i)
-    #         for i in sorted(pop_list, reverse=True):
-    #             commute_block.pop(i)
-    #         tele_block = TeleBlock(ctrl_qubit, common_ctrl_target_qubits)
-    #         tele_blocks.append(tele_block)
-    #     return tele_blocks
-
-    # def extend_to_tele_block(self, tele_block, commute_block):
-    #     '''
-    #     Extend the tele block with next commute block as tele block to include more gates.
-    #     '''
-
-    #     ctrl_qubit = tele_block.control_qubit
-    #     extend_list = []
-    #     for i in range(len(commute_block)):
-    #         if self.check_local_gate(commute_block[i]):
-    #             continue
-    #         if commute_block[i][0] == ctrl_qubit:
-    #             extend_list.append(i)
-    #     return extend_list
-
-    # def extend_to_move_block(self, tele_block, commute_block):
-    #     '''
-    #     Extend the tele block with next commute block as move block to include more gates.
-    #     '''
-
-    #     gate_cluster = [(tele_block.control_qubit, _) for _ in tele_block.target_qubits]
-    #     involved_qubits = [tele_block.control_qubit] + tele_block.target_qubits
-    #     extend_list = []
-    #     for i in range(len(commute_block)):
-    #         if self.check_local_gate(commute_block[i]):
-    #             continue
-    #         if self.check_move_gate(commute_block[i], gate_cluster, involved_qubits):
-    #             extend_list.append(i)
-    #             gate_cluster.append(commute_block[i])
-    #             if commute_block[i][0] not in involved_qubits:
-    #                 involved_qubits.append(commute_block[i][0])
-    #             if commute_block[i][1] not in involved_qubits:
-    #                 involved_qubits.append(commute_block[i][1])
-    #     return extend_list, gate_cluster, involved_qubits
 
     def update_no_depend_gate_ids(self, no_depend_gate_ids, removed_gate_id):
         '''
@@ -536,6 +355,197 @@ class Router:
         # for i in range(len(last_tele_blocks)):
         #     self.compute_blocks.append(last_tele_blocks[i])
 
+    def check_local_gate(self, gate: Control) -> dict:
+        '''
+        Check if the gate is a local gate.
+        Local criteria: transfer die involved in the shortest path.
+        '''
+        
+        shortest_path, _ = self.package.get_shortest_path((self.l2p_map[gate.control_qubit], self.l2p_map[gate.target_qubit]))
+        for node in shortest_path:
+            if self.qubit_topology.nodes[node]["type"] == CellType.Transfer:
+                return None
+        return self.package.get_physical_qubit_area(self.l2p_map[gate.control_qubit])
+    
+    def check_move_gate(self, gate: Control, move_gates: list[Control]) -> bool:
+        '''
+        Check if the gate can be inserted into the move gates.
+        Concentrate criteria: #gate > #qubits*(#qubits-1)//4 and #qubit < max(die_capacity)
+        '''
+        involved_qubits = set()
+        for move_gate in move_gates:
+            involved_qubits.add(move_gate.control_qubit)
+            involved_qubits.add(move_gate.target_qubit)
+        if gate.control_qubit not in involved_qubits and gate.target_qubit not in involved_qubits:
+            return False
+        involved_qubits.add(gate.control_qubit)
+        involved_qubits.add(gate.target_qubit)
+        
+        max_die_capacity = 0
+        for involved_qubit in involved_qubits:
+            physical_qubit = self.l2p_map[involved_qubit]
+            die = self.qubit_topology.nodes[physical_qubit]["die"]
+            die_capacity = self.package.get_die_capacity(die)
+            if die_capacity > max_die_capacity:
+                max_die_capacity = die_capacity
+
+        if len(move_gates)+1 < len(involved_qubits) * (len(involved_qubits) - 1) // 3:
+            return False
+        if len(involved_qubits) > max_die_capacity:
+            return False
+        return True
+
+    def determine_die(self, involved_qubits):
+        '''
+        Determine the die to move the qubits to.
+        '''
+
+        die_cnt = dict()
+        for qubit in involved_qubits:
+            physical_qubit = self.l2p_map[qubit]
+            die = self.qubit_topology.nodes[physical_qubit]["die"]
+            die_capacity = self.package.get_die_capacity(die)
+            if die_capacity > len(involved_qubits):
+                if die in die_cnt:
+                    die_cnt[die] += 1
+                else:
+                    die_cnt[die] = 1
+        die = max(die_cnt, key=die_cnt.get)
+        return die
+
+    def find_qubits_to_swap(self, die, in_qubits, stand_qubits):
+        '''
+        Find the logic qubits on target die to replace, which has less control gate with qubits in the same die.
+        
+        Return:
+        list, the logic qubits on target die to replace.
+        '''
+
+        die_info = die.split("_")
+        die_left = int(die_info[1])
+        die_top = int(die_info[2])
+        die_right = int(die_info[3])
+        die_bottom = int(die_info[4])
+        candidate_local_freq = dict()
+        for i in range(die_left, die_right + 1):
+            for j in range(die_top, die_bottom + 1):
+                if self.qubit_topology.nodes[(i, j)]["role"] == RoleType.Data:
+                    cand_qubit = self.p2l_map[(i, j)]
+                    if cand_qubit not in stand_qubits:
+                        candidate_local_freq[cand_qubit] = self.local_gate_freq[cand_qubit]
+        out_qubits = sorted(candidate_local_freq, key=candidate_local_freq.get)
+        out_qubits = out_qubits[:len(in_qubits)]
+        self.local_gate_freq = {i: 0 for i in range(self.program.data_qubit_num)}
+        return out_qubits
+
+    def move_qubits_in_block(self, involved_qubits, die):
+        '''
+        Move qubits in the block to the target die.
+        '''
+
+        in_qubits = []
+        stand_qubits = []
+        for qubit in involved_qubits:
+            if self.qubit_topology.nodes[self.l2p_map[qubit]]["die"] != die:
+                in_qubits.append(qubit)
+            else:
+                stand_qubits.append(qubit)
+        out_qubits = self.find_qubits_to_swap(die, in_qubits, stand_qubits)
+        swap_logic_pairs = []
+        for i in len(in_qubits):
+            swap_logic_pairs.append((in_qubits[i], out_qubits[i]))
+            in_physical_qubit = self.l2p_map[in_qubits[i]]
+            out_physical_qubit = self.l2p_map[out_qubits[i]]
+            self.l2p_map[in_qubits[i]] = out_physical_qubit
+            self.l2p_map[out_qubits[i]] = in_physical_qubit
+            self.p2l_map[out_physical_qubit] = in_qubits[i]
+            self.p2l_map[in_physical_qubit] = out_qubits[i]
+        return swap_logic_pairs
+
+    # def scan_local_block(self, commute_block):
+    #     '''
+    #     Scan the commutable block and find local blocks.
+    #     '''
+
+    #     pop_list = []
+    #     local_block_dict = dict()
+    #     for i in range(len(commute_block)):
+    #         area = self.check_local_gate(commute_block[i])
+    #         if area:
+    #             if area in local_block_dict:
+    #                 local_block_dict[area].append(commute_block[i])
+    #             else:
+    #                 local_block_dict[area] = [commute_block[i]]
+    #             if commute_block[i][0] not in self.local_gate_freq:
+    #                 self.local_gate_freq[commute_block[i][0]] = 1
+    #             else:
+    #                 self.local_gate_freq[commute_block[i][0]] += 1
+    #             if commute_block[i][1] not in self.local_gate_freq:
+    #                 self.local_gate_freq[commute_block[i][1]] = 1
+    #             else:
+    #                 self.local_gate_freq[commute_block[i][1]] += 1
+    #             pop_list.append(i)
+    #     local_blocks = []
+    #     for key, value in local_block_dict.items():
+    #         local_block = LocalBlock(value, key)
+    #         local_blocks.append(local_block)
+    #     return local_blocks, pop_list
+    
+    # def scan_tele_block(self, commute_block):
+    #     '''
+    #     Scan the commutable block and find tele blocks.
+    #     '''
+
+    #     tele_blocks = []
+    #     pop_list = []
+    #     while len(commute_block) > 0:
+    #         gate = commute_block.pop(0)
+    #         ctrl_qubit = gate[0]
+    #         common_ctrl_target_qubits = [gate[1]]
+    #         for i in range(len(commute_block)):
+    #             if commute_block[i][0] == ctrl_qubit:
+    #                 common_ctrl_target_qubits.append(commute_block[i][1])
+    #                 pop_list.append(i)
+    #         for i in sorted(pop_list, reverse=True):
+    #             commute_block.pop(i)
+    #         tele_block = TeleBlock(ctrl_qubit, common_ctrl_target_qubits)
+    #         tele_blocks.append(tele_block)
+    #     return tele_blocks
+
+    # def extend_to_tele_block(self, tele_block, commute_block):
+    #     '''
+    #     Extend the tele block with next commute block as tele block to include more gates.
+    #     '''
+
+    #     ctrl_qubit = tele_block.control_qubit
+    #     extend_list = []
+    #     for i in range(len(commute_block)):
+    #         if self.check_local_gate(commute_block[i]):
+    #             continue
+    #         if commute_block[i][0] == ctrl_qubit:
+    #             extend_list.append(i)
+    #     return extend_list
+
+    # def extend_to_move_block(self, tele_block, commute_block):
+    #     '''
+    #     Extend the tele block with next commute block as move block to include more gates.
+    #     '''
+
+    #     gate_cluster = [(tele_block.control_qubit, _) for _ in tele_block.target_qubits]
+    #     involved_qubits = [tele_block.control_qubit] + tele_block.target_qubits
+    #     extend_list = []
+    #     for i in range(len(commute_block)):
+    #         if self.check_local_gate(commute_block[i]):
+    #             continue
+    #         if self.check_move_gate(commute_block[i], gate_cluster, involved_qubits):
+    #             extend_list.append(i)
+    #             gate_cluster.append(commute_block[i])
+    #             if commute_block[i][0] not in involved_qubits:
+    #                 involved_qubits.append(commute_block[i][0])
+    #             if commute_block[i][1] not in involved_qubits:
+    #                 involved_qubits.append(commute_block[i][1])
+    #     return extend_list, gate_cluster, involved_qubits
+
     def update_no_depend_block_ids(self, no_depend_block_ids, removed_block_id):
         '''
         Update the no_depend_block_ids list by checking removed block's successors.
@@ -552,6 +562,7 @@ class Router:
         Transform compute blocks into circuit actions.
         '''
 
+        self.recent_logic_qubit_action_dict = {i: None for i in range(self.program.data_qubit_num)}
         for node in self.block_depend_graph:
             self.block_depend_graph.nodes[node]["pred"] = list(self.block_depend_graph.predecessors(node))
             self.block_depend_graph.nodes[node]["actions"] = []
@@ -580,30 +591,22 @@ class Router:
 
         LocalCompute.
         '''
-
-        depend_block_ids = self.block_depend_graph.predecessors(local_block.id)
-        depend_block_action_ids = []
-        for depend_block_id in depend_block_ids:
-            depend_block_action_ids.extend(self.block_depend_graph.nodes[depend_block_id]["actions"])
         
         local_gate_ids = [local_gate.id for local_gate in local_block.ctrl_gates]
         local_gate_depent: nx.DiGraph = self.gate_depend_graph.subgraph(local_gate_ids)
         local_gates_topo_sort = list(nx.topological_sort(local_gate_depent))
         compute_area = local_block.area
-        
-        local_gate_act_dict = dict()
         for gate_id in local_gates_topo_sort:
             gate = self.gate_depend_graph.nodes[gate_id]["gate"]
             assert isinstance(gate, Control)
             local_action = LocalCompute(gate, compute_area)
             self.action_depend_graph.add_node(local_action.id, action=local_action)
-            local_gate_act_dict[gate_id] = local_action
-            if len(local_gate_depent.predecessors(gate_id)) == 0:
-                for depend_action_id in depend_block_action_ids:
-                    self.action_depend_graph.add_edge(depend_action_id, local_action.id)
-            else:
-                for pred_gate in local_gate_depent.predecessors(gate_id):
-                    self.action_depend_graph.add_edge(local_gate_act_dict[pred_gate], local_action.id)
+            if self.recent_logic_qubit_action_dict[gate.control_qubit]:
+                self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[gate.control_qubit], local_action.id)
+            self.recent_logic_qubit_action_dict[gate.control_qubit] = local_action.id
+            if self.recent_logic_qubit_action_dict[gate.target_qubit]:
+                self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[gate.target_qubit], local_action.id)
+            self.recent_logic_qubit_action_dict[gate.target_qubit] = local_action.id
     
     def transform_tele_block(self, tele_block: TeleBlock):
         '''
@@ -617,25 +620,23 @@ class Router:
         GhzPreparation -> TransferDieRoute & RouteToStop -> OnOffBoard -> Teleport.
         '''
 
-        depend_block_ids = self.block_depend_graph.predecessors(tele_block.id)
-        depend_block_action_ids = []
-        for depend_block_id in depend_block_ids:
-            depend_block_action_ids.extend(self.block_depend_graph.nodes[depend_block_id]["actions"])
-
         involved_qubits = [tele_block.control_qubit] + tele_block.target_qubits
-
         route_to_plat_acts = self.route_nearest_platform(involved_qubits, False)
+
+        platforms = [act.platform for act in route_to_plat_acts]
+        ghz_action = self.locate_ghz_state(involved_qubits, platforms)
+        
+        self.action_depend_graph.add_node(ghz_action.id, action=ghz_action)
+        for logic_qubit in involved_qubits:
+            if self.recent_logic_qubit_action_dict[logic_qubit]:
+                self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[logic_qubit], ghz_action.id)
+                
         route_to_plat_act_ids = dict()
         for act in route_to_plat_acts:
             self.action_depend_graph.add_node(act.id, action=act)
+            self.action_depend_graph.add_edge(ghz_action.id, act.id)
             route_to_plat_act_ids[act.logic_qubit] = act.id
-            for depend_action_id in depend_block_action_ids:
-                self.action_depend_graph.add_edge(depend_action_id, act.id)
-        platforms = [act.platform for act in route_to_plat_acts]
-        ghz_action = self.locate_ghz_state(involved_qubits, platforms)
-        self.action_depend_graph.add_node(ghz_action.id, action=ghz_action)
-        for depend_action_id in depend_block_action_ids:
-            self.action_depend_graph.add_edge(depend_action_id, ghz_action.id)
+
         for i in range(ghz_action.qubit_num):
             logic_qubit = ghz_action.logic_qubits[i]
             source_phy_qubit = ghz_action.source_physical_qubits[i]
@@ -645,7 +646,6 @@ class Router:
                 self.action_depend_graph.add_node(transfer_on_metro_acts[i].id, action=transfer_on_metro_acts[i])
                 if i == 0:
                     self.action_depend_graph.add_edge(ghz_action.id, transfer_on_metro_acts[i].id)
-                    self.action_depend_graph.add_edge(route_to_plat_act_ids[logic_qubit], transfer_on_metro_acts[i].id)
                 else:
                     self.action_depend_graph.add_edge(transfer_on_metro_acts[i-1].id, transfer_on_metro_acts[i].id)
             alight_act = self.on_off_board(logic_qubit, target_phy_qubit, False)
@@ -653,7 +653,9 @@ class Router:
             self.action_depend_graph.add_edge(transfer_on_metro_acts[-1].id, alight_act.id)
             teleport_act = self.teleport(logic_qubit, platforms[i], logic_qubit==tele_block.control_qubit)
             self.action_depend_graph.add_node(teleport_act.id, action=teleport_act)
+            self.action_depend_graph.add_edge(route_to_plat_act_ids[logic_qubit], teleport_act.id)
             self.action_depend_graph.add_edge(alight_act.id, teleport_act.id)
+            self.recent_logic_qubit_action_dict[logic_qubit] = teleport_act.id
 
     def transform_move_block(self, move_block: MoveBlock):
         '''
@@ -666,22 +668,16 @@ class Router:
 
         RouteToStop -> OnOffBoard -> TransferDieRoute -> OnOffBoard -> LocalCompute.
         '''
-
-        depend_block_ids = self.block_depend_graph.predecessors(move_block.id)
-        depend_block_action_ids = []
-        for depend_block_id in depend_block_ids:
-            depend_block_action_ids.extend(self.block_depend_graph.nodes[depend_block_id]["actions"])
         
         in_qubits = [swap_pair[0] for swap_pair in move_block.swap_logic_pairs]
         out_qubits = [swap_pair[1] for swap_pair in move_block.swap_logic_pairs]
-
         route_to_plat_acts = self.route_nearest_platform(in_qubits+out_qubits, True)
         route_to_plat_act_ids = dict()
         for act in route_to_plat_acts:
             self.action_depend_graph.add_node(act.id, action=act)
+            self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[act.logic_qubit], act.id)
             route_to_plat_act_ids[act.logic_qubit] = act.id
-            for depend_action_id in depend_block_action_ids:
-                self.action_depend_graph.add_edge(depend_action_id, act.id)
+
         in_alight_act_ids = []
         for swap_pair in move_block.swap_logic_pairs:
             in_qubit = swap_pair[0]
@@ -719,25 +715,24 @@ class Router:
             self.action_depend_graph.add_node(out_alight_act.id, action=out_alight_act)
             self.action_depend_graph.add_edge(out_transfer_acts[-1].id, out_alight_act.id)
             self.action_depend_graph.add_edge(in_board_act.id, out_alight_act.id)
+            self.recent_logic_qubit_action_dict[in_qubit] = in_alight_act.id
+            self.recent_logic_qubit_action_dict[out_qubit] = out_alight_act.id
 
         local_gate_ids = [local_gate.id for local_gate in move_block.ctrl_gates]
         local_gate_depent: nx.DiGraph = self.gate_depend_graph.subgraph(local_gate_ids)
         local_gates_topo_sort = list(nx.topological_sort(local_gate_depent))
         compute_area = self.package.get_physical_qubit_area((move_block.die.split("_")[1], move_block.die.split("_")[2]))
-        
-        local_gate_act_dict = dict()
         for gate_id in local_gates_topo_sort:
             gate = self.gate_depend_graph.nodes[gate_id]["gate"]
             assert isinstance(gate, Control)
             local_action = LocalCompute(gate, compute_area)
             self.action_depend_graph.add_node(local_action.id, action=local_action)
-            local_gate_act_dict[gate_id] = local_action
-            if len(local_gate_depent.predecessors(gate_id)) == 0:
-                for depend_action_id in in_alight_act_ids:
-                    self.action_depend_graph.add_edge(depend_action_id, local_action.id)
-            else:
-                for pred_gate in local_gate_depent.predecessors(gate_id):
-                    self.action_depend_graph.add_edge(local_gate_act_dict[pred_gate], local_action.id)
+            if self.recent_logic_qubit_action_dict[gate.control_qubit]:
+                self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[gate.control_qubit], local_action.id)
+            self.recent_logic_qubit_action_dict[gate.control_qubit] = local_action.id
+            if self.recent_logic_qubit_action_dict[gate.target_qubit]:
+                self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[gate.target_qubit], local_action.id)
+            self.recent_logic_qubit_action_dict[gate.target_qubit] = local_action.id
 
     def route_nearest_platform(self, logic_qubits, enter_flag) -> list[RouteToPlat]:
         '''
@@ -845,3 +840,6 @@ class Router:
         '''
 
         return Teleport(logic_qubit, platform, control_flag)
+
+    def schedule_action_to_circuit(self):
+        pass

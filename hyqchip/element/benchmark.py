@@ -33,7 +33,7 @@ class Program:
         self.data_qubit_num = data_qubit_num
         self.logic_gates = logic_gates
 
-        recent_qubit_info = {i: {"operated": False, "all_depend": -1, "ctrl_depend": -1} for i in range(data_qubit_num)}
+        recent_qubit_info = {i: {"operated": False, "all_depend": None, "ctrl_depend": None} for i in range(data_qubit_num)}
         self.gate_depend_graph = nx.DiGraph()
         for gate in logic_gates:
             if isinstance(gate, Barrier):
@@ -49,7 +49,7 @@ class Program:
                 control = gate.control_qubit
                 target = gate.target_qubit
                 self.gate_depend_graph.add_node(gate.id, gate=gate)
-                if recent_qubit_info[control]["ctrl_depend"] != -1:
+                if recent_qubit_info[control]["ctrl_depend"]:
                     self.gate_depend_graph.add_edge(recent_qubit_info[control]["ctrl_depend"], gate.id)
                 if recent_qubit_info[target]["operated"]:
                     self.gate_depend_graph.add_edge(recent_qubit_info[target]["all_depend"], gate.id)
