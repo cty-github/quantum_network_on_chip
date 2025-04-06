@@ -5,7 +5,6 @@ from enum import Enum, auto
 
 import matplotlib.pyplot as plt
 import networkx as nx
-from networkx import is_valid_degree_sequence_erdos_gallai
 import numpy as np
 from scipy.optimize import curve_fit
 

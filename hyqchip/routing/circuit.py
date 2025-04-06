@@ -1,5 +1,4 @@
 import networkx as nx
-import numpy as np
 from copy import deepcopy
 
 from hyqchip.element.benchmark import *
@@ -396,7 +395,25 @@ class Circuit:
         return new_stage
     
     def estimate_fidelity(self):
+        '''
+        Estimate the fidelity of the circuit.
+        '''
+
+        # TODO: complete the function
+        pass
+
+    def estimate_average_qst_fide(self):
+        '''
+        Estimate the average fidelity of each quantum state transfer in the circuit.
+        '''
+
+        # TODO: complete the function
         pass
     
     def estimate_depth(self):
+        '''
+        Estimate the depth of the circuit.
+        '''
+
+        # TODO: complete the function
         pass
