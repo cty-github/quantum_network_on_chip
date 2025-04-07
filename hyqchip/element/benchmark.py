@@ -33,31 +33,46 @@ class Program:
         self.data_qubit_num = data_qubit_num
         self.logic_gates = logic_gates
 
-        recent_qubit_info = {i: {"operated": False, "all_depend": None, "ctrl_depend": None} for i in range(data_qubit_num)}
+        recent_qubit_info = {i: {"recent_role": None, "recent_ctrls": [], "recent_other": None} for i in range(data_qubit_num)}
         self.gate_depend_graph = nx.DiGraph()
         for gate in logic_gates:
             if isinstance(gate, Barrier):
                 self.gate_depend_graph.add_node(gate.id, gate=gate)
-                for i in range(data_qubit_num):
-                    if recent_qubit_info[i]["operated"]:
-                        self.gate_depend_graph.add_edge(recent_qubit_info[i]["all_depend"], gate.id)
-                for i in range(data_qubit_num):
-                    recent_qubit_info[i]["operated"] = True
-                    recent_qubit_info[i]["all_depend"] = gate.id
-                    recent_qubit_info[i]["ctrl_depend"] = gate.id
+
+                for qubit_id in range(data_qubit_num):
+                    if recent_qubit_info[qubit_id]["recent_role"]:
+                        if recent_qubit_info[qubit_id]["recent_role"] == "control":
+                            for ctrl_gate_id in recent_qubit_info[qubit_id]["recent_ctrls"]:
+                                self.gate_depend_graph.add_edge(ctrl_gate_id, gate.id)
+                        else:
+                            self.gate_depend_graph.add_edge(recent_qubit_info[qubit_id]["recent_other"], gate.id)
+                for qubit_id in range(data_qubit_num):
+                    recent_qubit_info[qubit_id]["recent_role"] = "barrier"
+                    recent_qubit_info[qubit_id]["recent_ctrls"] = []
+                    recent_qubit_info[qubit_id]["recent_other"] = gate.id
             elif isinstance(gate, Control):
-                control = gate.control_qubit
-                target = gate.target_qubit
                 self.gate_depend_graph.add_node(gate.id, gate=gate)
-                if recent_qubit_info[control]["ctrl_depend"]:
-                    self.gate_depend_graph.add_edge(recent_qubit_info[control]["ctrl_depend"], gate.id)
-                if recent_qubit_info[target]["operated"]:
-                    self.gate_depend_graph.add_edge(recent_qubit_info[target]["all_depend"], gate.id)
-                recent_qubit_info[control]["operated"] = True
-                recent_qubit_info[control]["all_depend"] = gate.id
-                recent_qubit_info[target]["operated"] = True
-                recent_qubit_info[target]["all_depend"] = gate.id
-                recent_qubit_info[target]["ctrl_depend"] = gate.id
+
+                control = gate.control_qubit
+                if recent_qubit_info[control]["recent_role"]:
+                    if recent_qubit_info[control]["recent_role"] == "control":
+                        if recent_qubit_info[control]["recent_other"]:
+                            self.gate_depend_graph.add_edge(recent_qubit_info[control]["recent_other"], gate.id)
+                    else:
+                        self.gate_depend_graph.add_edge(recent_qubit_info[control]["recent_other"], gate.id)
+                recent_qubit_info[control]["recent_role"] = "control"
+                recent_qubit_info[control]["recent_ctrls"].append(gate.id)
+
+                target = gate.target_qubit
+                if recent_qubit_info[target]["recent_role"]:
+                    if recent_qubit_info[target]["recent_role"] == "control":
+                            for ctrl_gate_id in recent_qubit_info[target]["recent_ctrls"]:
+                                self.gate_depend_graph.add_edge(ctrl_gate_id, gate.id)
+                    else:
+                        self.gate_depend_graph.add_edge(recent_qubit_info[target]["recent_other"], gate.id)
+                recent_qubit_info[target]["recent_role"] = "target"
+                recent_qubit_info[target]["recent_ctrls"] = []
+                recent_qubit_info[target]["recent_other"] = gate.id
             else:
                 raise ValueError("Unknown gate type")
             
@@ -70,6 +85,7 @@ class Program:
                         if p != s:
                             self.gate_depend_graph.add_edge(p, s)
                 self.gate_depend_graph.remove_node(node)
+        
         assert nx.is_directed_acyclic_graph(self.gate_depend_graph)
     
     def __repr__(self):
