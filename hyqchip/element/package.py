@@ -1,6 +1,6 @@
 import math
-from copy import deepcopy
 import random
+from copy import deepcopy
 from enum import Enum, auto
 
 import matplotlib.pyplot as plt
@@ -9,7 +9,6 @@ import numpy as np
 from scipy.optimize import curve_fit
 
 from ..utils.utils import color_pool, get_full_space_tuple
-
 
 design_templates = ["strip", "radial", "grid"]
 design_orientations = ["x", "y"]
@@ -190,22 +189,40 @@ class Package:
                 length_width_ratio = max(self.package_size) / min(self.package_size)
                 if length_width_ratio > 1:
                     if self.package_size[0] > self.package_size[1]:
-                        print("Interval: ", min(self.package_size[1]-1, (self.package_size[0]+1)//2-1))
+                        print(
+                            "Interval: ",
+                            min(
+                                self.package_size[1] - 1,
+                                (self.package_size[0] + 1) // 2 - 1,
+                            ),
+                        )
                         new_compute_areas, new_transfer_lines = self.design_area(
-                            area2design, "strip", min(self.package_size[1]-1, (self.package_size[0]+1)//2-1), "y"
+                            area2design,
+                            "strip",
+                            min(
+                                self.package_size[1] - 1,
+                                (self.package_size[0] + 1) // 2 - 1,
+                            ),
+                            "y",
                         )
                     else:
                         new_compute_areas, new_transfer_lines = self.design_area(
-                            area2design, "strip", min(self.package_size[0]-1, (self.package_size[1]+1)//2-1), "x"
+                            area2design,
+                            "strip",
+                            min(
+                                self.package_size[0] - 1,
+                                (self.package_size[1] + 1) // 2 - 1,
+                            ),
+                            "x",
                         )
                     self.compute_areas.remove(area2design)
                     self.compute_areas.extend(new_compute_areas)
                     self.transfer_lines.extend(new_transfer_lines)
                     area2design = self.compute_areas[len(self.compute_areas) // 2]
                 grid_round = len(self.compute_areas) - 1
-                radial_round = (min(self.package_size)-2*max(self.fabricate_model.max_die_size)) // (
-                    4 * max(self.fabricate_model.max_die_size)
-                )
+                radial_round = (
+                    min(self.package_size) - 2 * max(self.fabricate_model.max_die_size)
+                ) // (4 * max(self.fabricate_model.max_die_size))
                 for i in range(radial_round):
                     new_compute_areas, new_transfer_lines = self.design_area(
                         area2design,
@@ -223,14 +240,36 @@ class Package:
                         new_compute_areas, new_transfer_lines = self.design_area(
                             area2design,
                             "grid",
-                            min(3*max(self.fabricate_model.max_die_size)-1, (min(self.package_size[1], area2design['right']-area2design['left']+1)+1)//2-1),
+                            min(
+                                3 * max(self.fabricate_model.max_die_size) - 1,
+                                (
+                                    min(
+                                        self.package_size[1],
+                                        area2design["right"] - area2design["left"] + 1,
+                                    )
+                                    + 1
+                                )
+                                // 2
+                                - 1,
+                            ),
                             "x",
                         )
                     else:
                         new_compute_areas, new_transfer_lines = self.design_area(
                             area2design,
                             "grid",
-                            min(3*max(self.fabricate_model.max_die_size)-1, (min(self.package_size[0], area2design['bottom']-area2design['top']+1)+1)//2-1),
+                            min(
+                                3 * max(self.fabricate_model.max_die_size) - 1,
+                                (
+                                    min(
+                                        self.package_size[0],
+                                        area2design["bottom"] - area2design["top"] + 1,
+                                    )
+                                    + 1
+                                )
+                                // 2
+                                - 1,
+                            ),
                             "y",
                         )
                     self.compute_areas.remove(area2design)
@@ -256,7 +295,7 @@ class Package:
                         self.type_matrix[i, j] = area["type"].value
                         self.compute_cells.append((i, j))
             for line in self.transfer_lines:
-                for i in range(line["start"], line["end"]+1):
+                for i in range(line["start"], line["end"] + 1):
                     node = get_full_space_tuple(line["pos"], line["axis"], i)
                     self.cell_graph.nodes[node]["fide"] = (
                         self.fabricate_model.single_gate_fide
@@ -400,7 +439,7 @@ class Package:
             else:
                 raise ValueError("Invalid transfer area: {}".format(area))
         return transfer_lines
-    
+
     @staticmethod
     def is_valid_to_design(area, template, interval, orient):
         if area["type"] != CellType.Compute:
@@ -411,29 +450,29 @@ class Package:
             return False
         if template == "strip":
             if orient == "x":
-                if area["bottom"]-area["top"]+1 < 2*interval+1:
+                if area["bottom"] - area["top"] + 1 < 2 * interval + 1:
                     return False
             elif orient == "y":
-                if area["right"]-area["left"]+1 < 2*interval+1:
+                if area["right"] - area["left"] + 1 < 2 * interval + 1:
                     return False
         elif template == "radial":
-            if area["bottom"]-area["top"]+1 < 3*interval+2:
+            if area["bottom"] - area["top"] + 1 < 3 * interval + 2:
                 return False
-            if area["right"]-area["left"]+1 < 3*interval+2:
+            if area["right"] - area["left"] + 1 < 3 * interval + 2:
                 return False
         elif template == "grid":
-            if area["bottom"]-area["top"]+1 < 2*interval+1:
+            if area["bottom"] - area["top"] + 1 < 2 * interval + 1:
                 return False
-            if area["right"]-area["left"]+1 < 2*interval+1:
+            if area["right"] - area["left"] + 1 < 2 * interval + 1:
                 return False
         return True
 
     @staticmethod
-    def design_area(area, template, interval, orient):
-        if not Package.is_valid_to_design(area, template, interval, orient):
-            print("Invalid area to design: ", area, template, interval, orient)
-            return [area], []
-        print("Designing area:", area, template, interval, orient)
+    def design_area(area, template, interval, orient, check_valid=True):
+        if check_valid:
+            assert Package.is_valid_to_design(area, template, interval, orient), (
+                f"Invalid area to design:\narea={area}\ntemplate={template}\ninterval={interval}\norient={orient}"
+            )
         new_compute_areas = []
         new_transfer_lines = []
         if template == "strip":
@@ -745,7 +784,9 @@ class Package:
                                         {
                                             "type": CellType.Transfer,
                                             "axis": 1,
-                                            "pos": area["left"] + (j + 1) * (interval + 1) - 1,
+                                            "pos": area["left"]
+                                            + (j + 1) * (interval + 1)
+                                            - 1,
                                             "start": area["top"] + i * (interval + 1),
                                             "end": area["bottom"],
                                         }
@@ -768,7 +809,9 @@ class Package:
                                         {
                                             "type": CellType.Transfer,
                                             "axis": 0,
-                                            "pos": area["top"] + (i + 1) * (interval + 1) - 1,
+                                            "pos": area["top"]
+                                            + (i + 1) * (interval + 1)
+                                            - 1,
                                             "start": area["left"],
                                             "end": area["right"],
                                         }
@@ -779,17 +822,28 @@ class Package:
                                             "type": CellType.Compute,
                                             "left": area["left"] + j * (interval + 1),
                                             "top": area["top"] + i * (interval + 1),
-                                            "right": area["left"] + j * (interval + 1) + interval - 1,
-                                            "bottom": area["top"] + i * (interval + 1) + interval - 1,
+                                            "right": area["left"]
+                                            + j * (interval + 1)
+                                            + interval
+                                            - 1,
+                                            "bottom": area["top"]
+                                            + i * (interval + 1)
+                                            + interval
+                                            - 1,
                                         }
                                     )
                                     new_transfer_lines.append(
                                         {
                                             "type": CellType.Transfer,
                                             "axis": 1,
-                                            "pos": area["left"] + (j + 1) * (interval + 1) - 1,
+                                            "pos": area["left"]
+                                            + (j + 1) * (interval + 1)
+                                            - 1,
                                             "start": area["top"] + i * (interval + 1),
-                                            "end": area["top"] + i * (interval + 1) + interval - 1,
+                                            "end": area["top"]
+                                            + i * (interval + 1)
+                                            + interval
+                                            - 1,
                                         }
                                     )
             elif orient == "y":
@@ -826,14 +880,19 @@ class Package:
                                             "left": area["left"] + i * (interval + 1),
                                             "top": area["top"] + j * (interval + 1),
                                             "right": area["right"],
-                                            "bottom": area["top"] + j * (interval + 1) + interval - 1,
+                                            "bottom": area["top"]
+                                            + j * (interval + 1)
+                                            + interval
+                                            - 1,
                                         }
                                     )
                                     new_transfer_lines.append(
                                         {
                                             "type": CellType.Transfer,
                                             "axis": 0,
-                                            "pos": area["top"] + (j + 1) * (interval + 1) - 1,
+                                            "pos": area["top"]
+                                            + (j + 1) * (interval + 1)
+                                            - 1,
                                             "start": area["left"] + i * (interval + 1),
                                             "end": area["right"],
                                         }
@@ -845,7 +904,10 @@ class Package:
                                             "type": CellType.Compute,
                                             "left": area["left"] + i * (interval + 1),
                                             "top": area["top"] + j * (interval + 1),
-                                            "right": area["left"] + i * (interval + 1) + interval - 1,
+                                            "right": area["left"]
+                                            + i * (interval + 1)
+                                            + interval
+                                            - 1,
                                             "bottom": area["bottom"],
                                         }
                                     )
@@ -853,7 +915,9 @@ class Package:
                                         {
                                             "type": CellType.Transfer,
                                             "axis": 1,
-                                            "pos": area["left"] + (i + 1) * (interval + 1) - 1,
+                                            "pos": area["left"]
+                                            + (i + 1) * (interval + 1)
+                                            - 1,
                                             "start": area["top"],
                                             "end": area["bottom"],
                                         }
@@ -864,17 +928,28 @@ class Package:
                                             "type": CellType.Compute,
                                             "left": area["left"] + i * (interval + 1),
                                             "top": area["top"] + j * (interval + 1),
-                                            "right": area["left"] + i * (interval + 1) + interval - 1,
-                                            "bottom": area["top"] + j * (interval + 1) + interval - 1,
+                                            "right": area["left"]
+                                            + i * (interval + 1)
+                                            + interval
+                                            - 1,
+                                            "bottom": area["top"]
+                                            + j * (interval + 1)
+                                            + interval
+                                            - 1,
                                         }
                                     )
                                     new_transfer_lines.append(
                                         {
                                             "type": CellType.Transfer,
                                             "axis": 0,
-                                            "pos": area["top"] + (j + 1) * (interval + 1) - 1,
+                                            "pos": area["top"]
+                                            + (j + 1) * (interval + 1)
+                                            - 1,
                                             "start": area["left"] + i * (interval + 1),
-                                            "end": area["left"] + i * (interval + 1) + interval - 1,
+                                            "end": area["left"]
+                                            + i * (interval + 1)
+                                            + interval
+                                            - 1,
                                         }
                                     )
             else:
@@ -908,10 +983,18 @@ class Package:
                     compute_dies.append(
                         {
                             "type": CellType.Compute,
-                            "left": area["left"] + i * die_x_size + min(i, large_die_x_num),
+                            "left": area["left"]
+                            + i * die_x_size
+                            + min(i, large_die_x_num),
                             "top": area["top"] + j * die_y_size + min(j, large_die_y_num),
-                            "right": area["left"] + (i + 1) * die_x_size + min(i + 1, large_die_x_num) - 1,
-                            "bottom": area["top"] + (j + 1) * die_y_size + min(j + 1, large_die_y_num) - 1,
+                            "right": area["left"]
+                            + (i + 1) * die_x_size
+                            + min(i + 1, large_die_x_num)
+                            - 1,
+                            "bottom": area["top"]
+                            + (j + 1) * die_y_size
+                            + min(j + 1, large_die_y_num)
+                            - 1,
                         }
                     )
                     compute_dies[-1]["id"] = (
@@ -947,8 +1030,13 @@ class Package:
                         "type": CellType.Transfer,
                         "axis": line["axis"],
                         "pos": line["pos"],
-                        "start": line["start"] + i * chain_length + min(i, long_chain_num),
-                        "end": line["start"] + (i + 1) * chain_length + min(i + 1, long_chain_num) - 1,
+                        "start": line["start"]
+                        + i * chain_length
+                        + min(i, long_chain_num),
+                        "end": line["start"]
+                        + (i + 1) * chain_length
+                        + min(i + 1, long_chain_num)
+                        - 1,
                     }
                 )
                 transfer_dies[-1]["id"] = (
@@ -1081,31 +1169,44 @@ class Package:
         for edge in self.qubit_topology.edges:
             if self.qubit_topology.edges[edge]["type"] == CouplerType.Empty:
                 self.qubit_topology.remove_edge(*edge)
-            if self.qubit_topology.nodes[edge[0]]["type"] == CellType.Transfer and self.qubit_topology.nodes[edge[1]]["type"] == CellType.Transfer:
+            if (
+                self.qubit_topology.nodes[edge[0]]["type"] == CellType.Transfer
+                and self.qubit_topology.nodes[edge[1]]["type"] == CellType.Transfer
+            ):
                 self.metro_graph.add_edge(edge[0], edge[1], role=RoleType.Rail)
         for transfer_die in self.transfer_dies:
-            for i in range(transfer_die["start"], transfer_die["end"]+1):
+            for i in range(transfer_die["start"], transfer_die["end"] + 1):
                 node = get_full_space_tuple(transfer_die["pos"], transfer_die["axis"], i)
                 neighbor_nodes = self.qubit_topology.neighbors(node)
                 for neighbor_node in neighbor_nodes:
-                    if self.qubit_topology.edges[(node, neighbor_node)]["type"] == CouplerType.InterDie:
-                        if self.qubit_topology.nodes[neighbor_node]["type"] == CellType.Compute:
-                            self.qubit_topology.nodes[neighbor_node]["role"] = RoleType.Platform
-                            self.qubit_topology.nodes[neighbor_node]["station"] = node
-                            self.qubit_topology.nodes[node]["role"] = RoleType.Station
-                            self.metro_graph.nodes[node]["role"] = RoleType.Station
-                            self.station_list.append(node)
-                        elif self.qubit_topology.nodes[neighbor_node]["type"] == CellType.Transfer:
-                            self.metro_graph.edges[(node, neighbor_node)]["role"] = RoleType.Interchange
-                            self.interchange_list.append((node, neighbor_node))
-                # if transfer_die["pos"] > 0:
-                #     prev_node = get_full_space_tuple(transfer_die["pos"]-1, transfer_die["axis"], i)
-                #     self.qubit_topology.nodes[prev_node]["role"] = RoleType.Platform
-                #     self.platform_list.append(prev_node)
-                # if transfer_die["pos"] < self.package_size[1-transfer_die["axis"]]-1:
-                #     next_node = get_full_space_tuple(transfer_die["pos"]+1, transfer_die["axis"], i)
-                #     self.qubit_topology.nodes[next_node]["role"] = RoleType.Platform
-                #     self.platform_list.append(next_node)
+                    if (
+                        self.qubit_topology.edges[(node, neighbor_node)]["type"]
+                        == CouplerType.InterDie
+                    ):
+                        if (
+                            self.qubit_topology.nodes[neighbor_node]["type"]
+                            == CellType.Compute
+                        ):
+                            if (
+                                self.qubit_topology.nodes[node]["role"]
+                                != RoleType.Interchange
+                            ):
+                                self.qubit_topology.nodes[node]["role"] = RoleType.Station
+                        elif (
+                            self.qubit_topology.nodes[neighbor_node]["type"]
+                            == CellType.Transfer
+                        ):
+                            self.qubit_topology.nodes[node]["role"] = RoleType.Interchange
+                if transfer_die["pos"] > 0:
+                    prev_node = get_full_space_tuple(
+                        transfer_die["pos"] - 1, transfer_die["axis"], i
+                    )
+                    self.qubit_topology.nodes[prev_node]["role"] = RoleType.Platform
+                if transfer_die["pos"] < self.package_size[1 - transfer_die["axis"]] - 1:
+                    next_node = get_full_space_tuple(
+                        transfer_die["pos"] + 1, transfer_die["axis"], i
+                    )
+                    self.qubit_topology.nodes[next_node]["role"] = RoleType.Platform
 
         self.die_topology = nx.Graph()
         for compute_die in self.compute_dies:
@@ -1119,8 +1220,11 @@ class Package:
                 ),
             )
         for transfer_die in self.transfer_dies:
-            pos = get_full_space_tuple(transfer_die["pos"], transfer_die["axis"], 
-                                 (transfer_die["start"] + transfer_die["end"]) / 2)
+            pos = get_full_space_tuple(
+                transfer_die["pos"],
+                transfer_die["axis"],
+                (transfer_die["start"] + transfer_die["end"]) / 2,
+            )
             self.die_topology.add_node(
                 transfer_die["id"],
                 die=transfer_die,
@@ -1177,7 +1281,6 @@ class Package:
     def random_transfer_pairs(self, num):
         return [self.random_transfer_pair() for _ in range(num)]
 
-    @staticmethod
     def edge_fide_weight(self, u, v, attrs):
         return -math.log(attrs["fide"])
 
@@ -1225,7 +1328,9 @@ class Package:
             )
             cost += self.fabricate_model.get_die_cost(die_size)
         for transfer_die in self.transfer_dies:
-            die_size = get_full_space_tuple(1, transfer_die["axis"], transfer_die["end"] - transfer_die["start"] + 1)
+            die_size = get_full_space_tuple(
+                1, transfer_die["axis"], transfer_die["end"] - transfer_die["start"] + 1
+            )
             cost += self.fabricate_model.get_die_cost(die_size)
 
         return -np.log(1 - fidelity) / cost
@@ -1270,6 +1375,21 @@ class Package:
                 and area["top"] <= physical_qubit[1] <= area["bottom"]
             ):
                 return area
+        for line in self.transfer_lines:
+            if line["axis"] == 0:
+                if (
+                    line["pos"] == physical_qubit[1]
+                    and line["start"] <= physical_qubit[0] <= line["end"]
+                ):
+                    return line
+            elif line["axis"] == 1:
+                if (
+                    line["pos"] == physical_qubit[0]
+                    and line["start"] <= physical_qubit[1] <= line["end"]
+                ):
+                    return line
+            else:
+                pass
 
     def get_die_capacity(self, die_id: str):
         die_info = die_id.split("_")
@@ -1321,10 +1441,15 @@ class Package:
         """
 
         assert source in self.metro_graph.nodes and target in self.metro_graph.nodes
-        path = nx.shortest_path(self.metro_graph, source, target, weight=self.edge_metro_weight)
+        path = nx.shortest_path(
+            self.metro_graph, source, target, weight=self.edge_metro_weight
+        )
         interchange_num = 0
         for i in range(len(path) - 1):
-            if self.metro_graph.edges[(path[i], path[i + 1])]["role"] == RoleType.Interchange:
+            if (
+                self.metro_graph.edges[(path[i], path[i + 1])]["role"]
+                == RoleType.Interchange
+            ):
                 interchange_num += 1
         return path, interchange_num
 
