@@ -1281,7 +1281,6 @@ class Package:
     def random_transfer_pairs(self, num):
         return [self.random_transfer_pair() for _ in range(num)]
 
-    @staticmethod
     def edge_fide_weight(self, u, v, attrs):
         return -math.log(attrs["fide"])
 

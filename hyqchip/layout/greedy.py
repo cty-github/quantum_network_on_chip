@@ -5,15 +5,21 @@ import numpy as np
 from hyqchip.layout.env import Package
 from hyqchip.routing.router import design_orientations, design_templates
 
-package = Package()
-for _ in range(1):
+max_score = -np.inf
+package = Package(package_size=(50, 50))
+for _ in range(100):
+    if len(package.compute_areas) == 0:
+        break
     area = package.compute_areas[0]
     package.compute_areas.pop(0)
-    max_score = -np.inf
     best_package = None
     for template in design_templates:
         for orient in design_orientations:
-            for interval in range(0, np.max(package.package_size)):
+            for interval in range(
+                2 * np.max(package.fabricate_model.max_die_size),
+                np.max(package.package_size),
+                2
+            ):
                 try:
                     temp = deepcopy(package)
                     new_compute_areas, new_transfer_lines = temp.design_area(

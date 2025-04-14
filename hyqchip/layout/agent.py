@@ -57,6 +57,7 @@ class LayoutAgent:
     def select_action(self, state):
         state = torch.as_tensor(state, dtype=torch.int32).unsqueeze(0)
         logits = self.model.policy(state)
+        # 每一块特征做 softmax
         with torch.no_grad():
             # 提取特征并获取动作 logits
             features = self.model.policy.features_extractor(state)
