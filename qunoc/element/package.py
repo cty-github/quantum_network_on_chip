@@ -1,12 +1,11 @@
 import math
 import random
-from copy import deepcopy
 from enum import Enum, auto
 
-import matplotlib.pyplot as plt
-import networkx as nx
 import numpy as np
+import networkx as nx
 from scipy.optimize import curve_fit
+import matplotlib.pyplot as plt
 
 from ..utils.utils import color_pool, get_full_space_tuple
 
@@ -15,7 +14,6 @@ class NodeType(Enum):
     """
     Enumerate of the types of the node in the package graph, each node corresponds to a potential qubit.
     """
-
     Empty = 0
     Compute = auto()
     Transfer = auto()
@@ -27,7 +25,6 @@ class EdgeType(Enum):
     """
     Enumerate of the types of the edge between two nodes, each edge corresponds to a potential coupler.
     """
-
     Empty = 0
     Intra = auto()
     Inter = auto()
@@ -40,7 +37,6 @@ class QubitRole(Enum):
     """
     Enumerate of the roles of the qubit in the package for routing.
     """
-
     Data = 0
     Platform = auto()
     Balise = auto()
@@ -53,7 +49,6 @@ class CouplerRole(Enum):
     """
     Enumerate of the roles of the coupler in the package for routing.
     """
-
     Rail = 0
     Interchange = auto()
 
@@ -65,7 +60,6 @@ class DesignTemplate(Enum):
     """
     Enumerate of predetermined templates used in layout design.
     """
-
     Strip = 0
     Radial = auto()
     Grid = auto()
@@ -77,7 +71,6 @@ class DesignOrientation(Enum):
     """
     Enumerate of orientations used in layout design.
     """
-
     X = 0
     Y = auto()
 
@@ -1396,6 +1389,13 @@ class Package:
     ):
         """
         Draw the package graph in qubit level.
+
+        Args:
+            marginrate (float): The margin rate of the package.
+            markersize (float): The size of the markers.
+            linewidth_t (float): The linewidth of the transfer lines.
+            linewidth_b (float): The linewidth of the compute lines.
+            save_path (str): The path to save the figure.
         """
         plt.figure(figsize=self.package_size)
         for node in self.package_graph.nodes:
@@ -1486,6 +1486,13 @@ class Package:
     ):
         """
         Draw the package graph in chiplet level.
+
+        Args:
+            marginrate (float): The margin rate of the package.
+            markersize (float): The size of the markers.
+            linewidth_t (float): The linewidth of the transfer lines.
+            linewidth_b (float): The linewidth of the compute lines.
+            save_path (str): The path to save the figure.
         """
         plt.figure(figsize=self.package_size)
         for node in self.chiplet_topology.nodes:

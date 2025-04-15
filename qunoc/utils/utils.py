@@ -23,7 +23,18 @@ def pick_n_links(size, lst, n):
     else:
         return links_1
 
-def get_full_space_tuple(pos, axis, index):
-    coordinate_list = list([pos])
+def get_full_space_tuple(pos:int, axis:int, index:int) -> tuple[int, int]:
+    """
+    Get the full space tuple for a given position, axis, and index.
+
+    Args:
+        pos (int): The position in the specified axis.
+        axis (int): The axis to insert the index into (0 or 1).
+        index (int): The index to insert at the specified axis.
+
+    Returns:
+        tuple[int, int]: A tuple representing the full space coordinates.
+    """
+    coordinate_list = [pos]
     coordinate_list.insert(axis, index)
     return tuple(coordinate_list)

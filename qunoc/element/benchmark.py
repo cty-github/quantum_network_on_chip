@@ -4,14 +4,34 @@ import matplotlib.pyplot as plt
 
 
 class Gate:
+    """
+    Represents the logic gate in the program.
+
+    Attributes:
+        id (int): Unique identifier for the gate.
+    """
     _counter = 0
 
     def __init__(self):
+        """
+        Initialize a logic gate.
+        """
         self.id = Gate._counter
         Gate._counter += 1
 
 class Control(Gate):
-    def __init__(self, control_qubit, target_qubit):
+    """
+    Represents a control gate in the program.
+    """
+    
+    def __init__(self, control_qubit:int, target_qubit:int):
+        """
+        Initialize a control gate.
+
+        Args:
+            control_qubit (int): The qubit that controls the gate.
+            target_qubit (int): The qubit that is affected by the gate.
+        """
         super().__init__()
         self.control_qubit = control_qubit
         self.target_qubit = target_qubit
@@ -20,7 +40,17 @@ class Control(Gate):
         return f"{self.__class__.__name__}_{self.control_qubit}_{self.target_qubit}"
     
 class Barrier(Gate):
-    def __init__(self, qubit):
+    """
+    Represents a barrier gate in the program.
+    """
+    
+    def __init__(self, qubit:int):
+        """
+        Initialize a barrier gate.
+
+        Args:
+            qubit (int): The qubit that the barrier is applied to.
+        """
         super().__init__()
         self.qubit = qubit
 
@@ -29,13 +59,31 @@ class Barrier(Gate):
 
 
 class Program:
-    def __init__(self, algo_name, data_qubit_num, logic_gates: list[Gate]):
+    """
+    Represents the quantum program.
+
+    Attributes:
+        algo_name (str): Name of the algorithm.
+        data_qubit_num (int): Number of data qubits.
+        logic_gates (list[Gate]): List of logic gates in the program.
+        gate_depend_graph (nx.DiGraph): Directed acyclic graph representing dependencies between gates.
+    """
+
+    def __init__(self, algo_name:str, data_qubit_num:int, logic_gates: list[Gate]):
+        """
+        Initialize a quantum program.
+
+        Args:
+            algo_name (str): Name of the algorithm.
+            data_qubit_num (int): Number of data qubits.
+            logic_gates (list[Gate]): List of logic gates in the program.
+        """
         self.algo_name = algo_name
         self.data_qubit_num = data_qubit_num
         self.logic_gates = logic_gates
 
         recent_qubit_info = {i: {"recent_role": None, "recent_ctrls": [], "recent_other": None} for i in range(data_qubit_num)}
-        self.gate_depend_graph = nx.DiGraph()
+        self.gate_depend_graph: nx.DiGraph = nx.DiGraph()
         for gate in logic_gates:
             if isinstance(gate, Barrier):
                 self.gate_depend_graph.add_node(gate.id, gate=gate)
@@ -82,20 +130,31 @@ class Program:
                         if p != s:
                             self.gate_depend_graph.add_edge(p, s)
                 self.gate_depend_graph.remove_node(gate.id)
-        
+
         assert nx.is_directed_acyclic_graph(self.gate_depend_graph)
     
     def __repr__(self):
         return ", ".join([str(self.gate_depend_graph.nodes[id]["gate"]) for id in nx.topological_sort(self.gate_depend_graph)])
 
     def draw(self):
+        """
+        Draw the gate dependency graph to present the program.
+        """
         pos = nx.spring_layout(self.gate_depend_graph)
         plt.figure()
         nx.draw(self.gate_depend_graph, pos, with_labels=True, arrows=True, node_size=1000, node_color='lightblue', edge_color='gray')
         plt.title(f"Program {self.algo_name}-{self.data_qubit_num}")
 
+def VQE(data_qubit_num:int) -> Program:
+    """
+    Generate a VQE program.
 
-def VQE(data_qubit_num):
+    Args:
+        data_qubit_num (int): Number of data qubits.
+
+    Returns:
+        Program: A quantum program with VQE logic gates.
+    """
     Gate._counter = 0
     logic_gates = []
     for i in range(data_qubit_num-1):
@@ -104,7 +163,16 @@ def VQE(data_qubit_num):
         logic_gates.extend(control_gates)
     return Program("vqe", data_qubit_num, logic_gates)
 
-def QFT(data_qubit_num):
+def QFT(data_qubit_num:int) -> Program:
+    """
+    Generate a QFT program.
+
+    Args:
+        data_qubit_num (int): Number of data qubits.
+
+    Returns:
+        Program: A quantum program with QFT logic gates.
+    """
     Gate._counter = 0
     logic_gates = []
     for i in range(data_qubit_num-1):
@@ -113,7 +181,18 @@ def QFT(data_qubit_num):
         logic_gates.extend(control_gates)
     return Program("qft", data_qubit_num, logic_gates)
 
-def QAOA(data_qubit_num, percentage=0.5, blocklayer=1):
+def QAOA(data_qubit_num:int, percentage:float=0.5, blocklayer:int=1) -> Program:
+    """
+    Generate a QAOA program.
+
+    Args:
+        data_qubit_num (int): Number of data qubits.
+        percentage (float): Percentage of control gates to be selected.
+        blocklayer (int): Number of block layers.
+
+    Returns:
+        Program: A quantum program with QAOA logic gates.
+    """
     Gate._counter = 0
     all_possible_gates = [(i, j) for i in range(data_qubit_num) for j in range(i+1, data_qubit_num)]
     control_gates = sample(all_possible_gates, k=int(len(all_possible_gates)*percentage))
@@ -124,7 +203,17 @@ def QAOA(data_qubit_num, percentage=0.5, blocklayer=1):
             logic_gates.extend([Barrier(j) for j in range(data_qubit_num-1)])
     return Program("qaoa", data_qubit_num, logic_gates)
 
-def BV(data_qubit_num, percentage=0.5):
+def BV(data_qubit_num:int, percentage:float=0.5) -> Program:
+    """
+    Generate a BV program.
+
+    Args:
+        data_qubit_num (int): Number of data qubits.
+        percentage (float): Percentage of control gates to be selected.
+
+    Returns:
+        Program: A quantum program with BV logic gates.
+    """
     Gate._counter = 0
     all_possible_gates = [(0, i) for i in range(1, data_qubit_num)]
     control_gates = sample(all_possible_gates, k=int(len(all_possible_gates)*percentage))
