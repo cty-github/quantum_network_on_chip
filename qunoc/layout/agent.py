@@ -40,7 +40,7 @@ class FeatureCNN(BaseFeaturesExtractor):
 class LayoutAgent:
     def __init__(self, env: QuantumChipletEnv, model_path=None):
         self.env = env
-        self.package_size = self.env.package_size
+        self.package_size = self.env._package_size
 
         policy_kwargs = {
             "features_extractor_class": FeatureCNN,

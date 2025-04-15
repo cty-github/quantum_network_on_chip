@@ -17,14 +17,15 @@ class Control(Gate):
         self.target_qubit = target_qubit
 
     def __repr__(self):
-        return f"control_{self.control_qubit}_{self.target_qubit}"
+        return f"{self.__class__.__name__}_{self.control_qubit}_{self.target_qubit}"
     
 class Barrier(Gate):
-    def __init__(self):
+    def __init__(self, qubit):
         super().__init__()
+        self.qubit = qubit
 
     def __repr__(self):
-        return "barrier"
+        return f"{self.__class__.__name__}_{self.qubit}"
 
 
 class Program:
@@ -38,21 +39,18 @@ class Program:
         for gate in logic_gates:
             if isinstance(gate, Barrier):
                 self.gate_depend_graph.add_node(gate.id, gate=gate)
-
-                for qubit_id in range(data_qubit_num):
-                    if recent_qubit_info[qubit_id]["recent_role"]:
-                        if recent_qubit_info[qubit_id]["recent_role"] == "control":
-                            for ctrl_gate_id in recent_qubit_info[qubit_id]["recent_ctrls"]:
-                                self.gate_depend_graph.add_edge(ctrl_gate_id, gate.id)
-                        else:
-                            self.gate_depend_graph.add_edge(recent_qubit_info[qubit_id]["recent_other"], gate.id)
-                for qubit_id in range(data_qubit_num):
-                    recent_qubit_info[qubit_id]["recent_role"] = "barrier"
-                    recent_qubit_info[qubit_id]["recent_ctrls"] = []
-                    recent_qubit_info[qubit_id]["recent_other"] = gate.id
+                qubit = gate.qubit
+                if recent_qubit_info[qubit]["recent_role"]:
+                    if recent_qubit_info[qubit]["recent_role"] == "control":
+                        for ctrl_gate_id in recent_qubit_info[qubit]["recent_ctrls"]:
+                            self.gate_depend_graph.add_edge(ctrl_gate_id, gate.id)
+                    else:
+                        self.gate_depend_graph.add_edge(recent_qubit_info[qubit]["recent_other"], gate.id)
+                recent_qubit_info[qubit]["recent_role"] = "barrier"
+                recent_qubit_info[qubit]["recent_ctrls"] = []
+                recent_qubit_info[qubit]["recent_other"] = gate.id
             elif isinstance(gate, Control):
                 self.gate_depend_graph.add_node(gate.id, gate=gate)
-
                 control = gate.control_qubit
                 if recent_qubit_info[control]["recent_role"]:
                     if recent_qubit_info[control]["recent_role"] == "control":
@@ -62,7 +60,6 @@ class Program:
                         self.gate_depend_graph.add_edge(recent_qubit_info[control]["recent_other"], gate.id)
                 recent_qubit_info[control]["recent_role"] = "control"
                 recent_qubit_info[control]["recent_ctrls"].append(gate.id)
-
                 target = gate.target_qubit
                 if recent_qubit_info[target]["recent_role"]:
                     if recent_qubit_info[target]["recent_role"] == "control":
@@ -75,16 +72,16 @@ class Program:
                 recent_qubit_info[target]["recent_other"] = gate.id
             else:
                 raise ValueError("Unknown gate type")
-            
-        for node in self.gate_depend_graph:
-            if isinstance(self.gate_depend_graph.nodes[node]["gate"], Barrier):
-                pred = list(self.gate_depend_graph.predecessors(node))
-                succ = list(self.gate_depend_graph.successors(node))
+        
+        for gate in self.logic_gates:
+            if isinstance(gate, Barrier):
+                pred = list(self.gate_depend_graph.predecessors(gate.id))
+                succ = list(self.gate_depend_graph.successors(gate.id))
                 for p in pred:
                     for s in succ:
                         if p != s:
                             self.gate_depend_graph.add_edge(p, s)
-                self.gate_depend_graph.remove_node(node)
+                self.gate_depend_graph.remove_node(gate.id)
         
         assert nx.is_directed_acyclic_graph(self.gate_depend_graph)
     
@@ -102,7 +99,7 @@ def VQE(data_qubit_num):
     Gate._counter = 0
     logic_gates = []
     for i in range(data_qubit_num-1):
-        logic_gates.append(Barrier())
+        logic_gates.extend([Barrier(j) for j in range(data_qubit_num-1)])
         control_gates = [Control(i, j) for j in range(i+1, data_qubit_num)]
         logic_gates.extend(control_gates)
     return Program("vqe", data_qubit_num, logic_gates)
@@ -111,7 +108,7 @@ def QFT(data_qubit_num):
     Gate._counter = 0
     logic_gates = []
     for i in range(data_qubit_num-1):
-        logic_gates.append(Barrier())
+        logic_gates.extend([Barrier(j) for j in range(data_qubit_num-1)])
         control_gates = [Control(j, i) for j in range(i+1, data_qubit_num)]
         logic_gates.extend(control_gates)
     return Program("qft", data_qubit_num, logic_gates)
@@ -124,7 +121,7 @@ def QAOA(data_qubit_num, percentage=0.5, blocklayer=1):
     for i, gate in enumerate(control_gates):
         logic_gates.append(Control(*gate))
         if (i+1) % (data_qubit_num*blocklayer) == 0 and (i+1) != len(control_gates):
-            logic_gates.append(Barrier())
+            logic_gates.extend([Barrier(j) for j in range(data_qubit_num-1)])
     return Program("qaoa", data_qubit_num, logic_gates)
 
 def BV(data_qubit_num, percentage=0.5):
