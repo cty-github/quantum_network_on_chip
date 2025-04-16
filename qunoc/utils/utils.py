@@ -1,4 +1,7 @@
+import os
 import numpy as np
+from PIL import Image
+from datetime import datetime
 
 color_pool = ['#D9D9D9', '#C9E0E5', '#BED2C6', '#FFD19D', '#FEB29B', '#ED8687']
 
@@ -23,7 +26,7 @@ def pick_n_links(size, lst, n):
     else:
         return links_1
 
-def get_full_space_tuple(pos:int, axis:int, index:int) -> tuple[int, int]:
+def get_full_space_tuple(pos: int, axis: int, index: int) -> tuple[int, int]:
     """
     Get the full space tuple for a given position, axis, and index.
 
@@ -38,3 +41,46 @@ def get_full_space_tuple(pos:int, axis:int, index:int) -> tuple[int, int]:
     coordinate_list = [pos]
     coordinate_list.insert(axis, index)
     return tuple(coordinate_list)
+
+def get_timestamp() -> str:
+    """
+    Get current time as unique stamp.
+    """
+    return datetime.now().strftime("%Y%m%d%H%M%S")
+
+def get_unique_file_save_path(dir: str, prefix: str, ext: str) -> str:
+    """
+    Get the unique name for file with the same prefix in the director.
+
+    Args:
+        dir (str): The director to save file.
+        prefix (str): The prefix of the file.
+        ext (str): The ext of the file.
+    
+    Returns:
+        str: The save path with unique file name.
+    """
+    index = len([f for f in os.listdir(dir) if f.startswith(prefix) and f.endswith(ext)])
+    return f"{dir}{prefix}{index}{ext}"
+
+def make_gif(dir: str, prefix, ext: str, filename: str, duration: int = 1000):
+    """
+    Make gif with figures in the director with given prefix.
+
+    Args:
+        dir (str): The director saving the figures.
+        prefix (str): The prefix of the figures.
+        ext (str): The ext of the figures.
+        filename (str): The filename of gif.
+        duration (int): The duration of each frame in the gif.
+    """
+
+    files = sorted([f for f in os.listdir(dir) if f.startswith(prefix) and f.endswith(ext)])
+    figures = [Image.open(os.path.join(dir, f)) for f in files]
+    figures[0].save(
+        f"{dir}{filename}",
+        save_all=True,
+        append_images=figures[1:],
+        duration=duration,
+        loop=0
+    )

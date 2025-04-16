@@ -24,7 +24,7 @@ class Control(Gate):
     Represents a control gate in the program.
     """
     
-    def __init__(self, control_qubit:int, target_qubit:int):
+    def __init__(self, control_qubit: int, target_qubit: int):
         """
         Initialize a control gate.
 
@@ -44,7 +44,7 @@ class Barrier(Gate):
     Represents a barrier gate in the program.
     """
     
-    def __init__(self, qubit:int):
+    def __init__(self, qubit: int):
         """
         Initialize a barrier gate.
 
@@ -69,7 +69,7 @@ class Program:
         gate_depend_graph (nx.DiGraph): Directed acyclic graph representing dependencies between gates.
     """
 
-    def __init__(self, algo_name:str, data_qubit_num:int, logic_gates: list[Gate]):
+    def __init__(self, algo_name: str, data_qubit_num: int, logic_gates: list[Gate]):
         """
         Initialize a quantum program.
 
@@ -145,7 +145,7 @@ class Program:
         nx.draw(self.gate_depend_graph, pos, with_labels=True, arrows=True, node_size=1000, node_color='lightblue', edge_color='gray')
         plt.title(f"Program {self.algo_name}-{self.data_qubit_num}")
 
-def VQE(data_qubit_num:int) -> Program:
+def VQE(data_qubit_num: int) -> Program:
     """
     Generate a VQE program.
 
@@ -163,7 +163,7 @@ def VQE(data_qubit_num:int) -> Program:
         logic_gates.extend(control_gates)
     return Program("vqe", data_qubit_num, logic_gates)
 
-def QFT(data_qubit_num:int) -> Program:
+def QFT(data_qubit_num: int) -> Program:
     """
     Generate a QFT program.
 
@@ -181,7 +181,7 @@ def QFT(data_qubit_num:int) -> Program:
         logic_gates.extend(control_gates)
     return Program("qft", data_qubit_num, logic_gates)
 
-def QAOA(data_qubit_num:int, percentage:float=0.5, blocklayer:int=1) -> Program:
+def QAOA(data_qubit_num: int, percentage: float = 0.5, blocklayer: int = 1) -> Program:
     """
     Generate a QAOA program.
 
@@ -203,7 +203,7 @@ def QAOA(data_qubit_num:int, percentage:float=0.5, blocklayer:int=1) -> Program:
             logic_gates.extend([Barrier(j) for j in range(data_qubit_num-1)])
     return Program("qaoa", data_qubit_num, logic_gates)
 
-def BV(data_qubit_num:int, percentage:float=0.5) -> Program:
+def BV(data_qubit_num: int, percentage: float = 0.5) -> Program:
     """
     Generate a BV program.
 

@@ -1,7 +1,5 @@
 import networkx as nx
 
-from ..utils.utils import *
-
 
 def gen_linear_lattice(size):
     return nx.path_graph(size)
