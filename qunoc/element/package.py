@@ -589,6 +589,7 @@ class Package:
         design_scheme (str): The design scheme of the package, i.e. "top_down", "bottom_up".
         design_strategy (str): The design strategy of the package, i.e. "heuristic", "greedy", "rl".
         top_down_max_step (int): The max number of steps for top down design.
+        result_dir (str): The directory to save the design results.
 
         package_graph (nx.Graph): The graph recording the grid structure of the package.
             node: tuple[int, int], {"type": NodeType, "qubit": Qubit}
@@ -618,6 +619,7 @@ class Package:
         design_strategy: str = "heuristic", 
         top_down_max_step: int = 10, 
         bottom_up_init_type: np.ndarray = None, 
+        result_dir: str = None,
     ):
         """
         Initialize a package.
@@ -629,6 +631,7 @@ class Package:
             design_strategy (str): The design strategy of the package, i.e. "heuristic", "greedy", "rl".
             top_down_max_step (int): The max number of steps for top down design.
             bottom_up_init_type (np.ndarray): The initial type of nodes used for bottom up design.
+            result_dir (str): The directory to save the design results.
         """
         self.package_size = package_size
         self.node_num = package_size[0] * package_size[1]
@@ -636,6 +639,7 @@ class Package:
         self.design_scheme = design_scheme
         self.design_strategy = design_strategy
         self.top_down_max_step = top_down_max_step
+        self.result_dir = result_dir
 
         self.package_graph: nx.Graph = nx.grid_2d_graph(*self.package_size)
         self.compute_nodes: set[tuple[int, int]] = set()
@@ -721,12 +725,11 @@ class Package:
                         )
                 self.complete_package()
             elif self.design_strategy == "greedy":
-                save_dir = f"result/layout/greedy/example_{get_timestamp()}/"
-                os.makedirs(save_dir, exist_ok=True)
+                os.makedirs(self.result_dir, exist_ok=True)
                 self.complete_package()
                 best_score = self.estimate_efficiency()
                 print("Initial score: ", best_score)
-                self.draw_qubits(show=False, save_path=get_unique_file_save_path(save_dir, "design_process_", ".jpg"))
+                self.draw_qubits(show=False, save_path=get_unique_file_save_path(self.result_dir, "greedy_process_", ".jpg"))
                 while True:
                     best_action: tuple = None
                     candidate_modules: list[ComputeModule] = [area.name for area in list(self.design_tree_root.leaves) if area.name.type == NodeType.Compute]
@@ -746,8 +749,8 @@ class Package:
                     self.complete_package()
                     print("New action: ", best_action)
                     print("New score: ", best_score)
-                    self.draw_qubits(show=False, save_path=get_unique_file_save_path(save_dir, "design_process_", ".jpg"))
-                make_gif(save_dir, "design_process_", ".jpg", "design_process.gif")
+                    self.draw_qubits(show=False, save_path=get_unique_file_save_path(self.result_dir, "greedy_process_", ".jpg"))
+                make_gif(self.result_dir, "greedy_process_", ".jpg", "greedy_process.gif")
             elif self.design_strategy == "rl":
                 self.complete_package()
                 # The rest rl design process is implemented outside in the LayoutAgent.
@@ -1408,6 +1411,7 @@ class Package:
             num = int(math.sqrt(self.package_size[0] * self.package_size[1]))
         fidelity = self.estimate_transfer(num)
         cost = self.estimate_cost()
+        return -np.log(1 - fidelity)
         return -np.log(1 - fidelity) / cost
 
     def get_data_qubit_num(self) -> int:
