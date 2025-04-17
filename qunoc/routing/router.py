@@ -6,6 +6,12 @@ from .circuit import *
 
 
 class ComputeBlock:
+    """
+    The base class for compute blocks.
+
+    Attributes:
+        id (int): the id of the compute block.
+    """
     _counter = 0
 
     def __init__(self):
@@ -14,51 +20,115 @@ class ComputeBlock:
 
 
 class LocalBlock(ComputeBlock):
-    def __init__(self, ctrl_gates: list[Control], area):
+    """
+    Represents a compute block in which gates are executed locally.
+
+    Attributes:
+        ctrl_gates (list[Control]): the control gates in the local block.
+        module (ComputeModule): the compute module where the local block is executed.
+    """
+
+    def __init__(self, ctrl_gates: list[Control], module: ComputeModule):
+        """
+        Initialize a LocalBlock.
+
+        Args:
+            ctrl_gates (list[Control]): the control gates in the local block.
+            module (ComputeModule): the compute module where the local block is executed.
+        """
         super().__init__()
         self.ctrl_gates = ctrl_gates
-        self.area = area
+        self.module = module
 
 
 class TeleBlock(ComputeBlock):
-    def __init__(self, control_qubit, target_qubits):
+    """
+    Represents a teleportation block in which gates are executed by teleportation.
+
+    Attributes:
+        control_qubit (int): the control qubit of the teleportation block.
+        target_qubits (list[int]): the target qubits of the teleportation block.
+    """
+
+    def __init__(self, control_qubit: int, target_qubits: list[int]):
+        """
+        Initialize a TeleBlock.
+
+        Args:
+            control_qubit (int): the control qubit of the teleportation block.
+            target_qubits (list[int]): the target qubits of the teleportation block.
+        """
         super().__init__()
         self.control_qubit = control_qubit
         self.target_qubits = target_qubits
 
 
 class MoveBlock(ComputeBlock):
-    def __init__(self, ctrl_gates: list[Control], involved_qubits, chiplet, swap_logic_pairs):
+    """
+    Represents a move block in which gates are executed by moving qubits.
+
+    Attributes:
+        ctrl_gates (list[Control]): the control gates in the move block.
+        involved_qubits (list[int]): the involved qubits in the move block.
+        chiplet (ComputeChiplet): the chiplet where the move block is executed.
+        swap_logic_pairs (list[tuple[int, int]]): the logic qubit pairs to be swapped.
+    """
+
+    def __init__(self, 
+        ctrl_gates: list[Control], 
+        involved_qubits: list[int], 
+        chiplet: ComputeChiplet, 
+        swap_logic_pairs: list[tuple[int, int]], 
+    ):
+        """
+        Initialize a MoveBlock.
+
+        Args:
+            ctrl_gates (list[Control]): the control gates in the move block.
+            involved_qubits (list[int]): the involved qubits in the move block.
+            chiplet (ComputeChiplet): the chiplet where the move block is executed.
+            swap_logic_pairs (list[tuple[int, int]]): the logic qubit pairs to be swapped.
+        """
         super().__init__()
         self.ctrl_gates = ctrl_gates
         self.involved_qubits = involved_qubits
         self.chiplet = chiplet
-        self.swap_logic_pairs: list[tuple[int, int]] = swap_logic_pairs
+        self.swap_logic_pairs = swap_logic_pairs
 
 
 class Router:
-    def __init__(self, package: Package, program: Program):
-        """
-        Class for routing a quantum program on a package.
+    """
+    Represents a router for routing quantum programs on a package.
 
-        package: Package, the package to be routed on.
-        program: Program, the quantum program to be routed.
+    Attributes:
+        package (Package): the package to be routed on.
+        program (Program): the quantum program to be routed.
+        qubit_topology: QubitTopology, the qubit topology of the package.
+        chiplet_topology: ChipletTopology, the chiplet topology of the package.
 
         l2p_map: dict, map from logic qubit index to physical qubit index
         p2l_map: dict, map from physical qubit index to logic qubit index
         circuit: Circuit, the routing results with circuit level actions in stages.
-        """
+    """
 
+    def __init__(self, package: Package, program: Program):
+        """
+        Initialize a Router.
+
+        Args:
+            package (Package): the package to be routed on.
+            program (Program): the quantum program to be routed.
+        """
         self.package = package
         self.program = program
 
         self.qubit_topology = package.qubit_topology
         self.chiplet_topology = package.chiplet_topology
-        self.metro_graph = package.metro_topology
+        self.metro_topology = package.metro_topology
         self.analysis_metro()
-        self.platform_list = package.get_platform_list()
-        self.station_list = package.get_station_list()
-        self.interchange_list = package.get_interchange_list()
+        # self.platform_list = package.get_platform_list()
+        # self.station_list = package.get_station_list()
+        # self.interchange_list = package.get_interchange_list()
 
         self.gate_depend_graph = program.gate_depend_graph
 
@@ -76,13 +146,12 @@ class Router:
         # self.compute_blocks = []
 
     def analysis_metro(self):
-        self.balise_station_distance_dict = {balise: {station: {"interchange": 0, "path": None} for station in self.station_list} for balise in self.metro_graph.nodes}
-        for balise in self.metro_graph.nodes:
+        self.balise_station_distance_dict = {balise: {station: {"interchange": 0, "path": None} for station in self.station_list} for balise in self.metro_topology.nodes}
+        for balise in self.metro_topology.nodes:
             for station in self.station_list:
                 shortest_path, interchange_num = self.package.get_shortest_metro_path(balise, station)
                 self.balise_station_distance_dict[balise][station]["interchange"] = interchange_num
                 self.balise_station_distance_dict[balise][station]["path"] = shortest_path
-        pass
 
     def route_program_on_package(self):
         """
@@ -467,7 +536,7 @@ class Router:
         local_gate_ids = [local_gate.id for local_gate in local_block.ctrl_gates]
         local_gate_depent: nx.DiGraph = self.gate_depend_graph.subgraph(local_gate_ids)
         local_gates_topo_sort = list(nx.topological_sort(local_gate_depent))
-        compute_area = local_block.area
+        compute_area = local_block.module
         for gate_id in local_gates_topo_sort:
             gate = self.gate_depend_graph.nodes[gate_id]["gate"]
             assert isinstance(gate, Control)
@@ -643,8 +712,8 @@ class Router:
             node = queue.pop(0)
             if node not in visited:
                 visited.add(node)
-                queue.extend([nbr for nbr in self.metro_graph.neighbors(node) if nbr not in visited])
-        subgraph = self.metro_graph.subgraph(visited).copy()
+                queue.extend([nbr for nbr in self.metro_topology.neighbors(node) if nbr not in visited])
+        subgraph = self.metro_topology.subgraph(visited).copy()
         return subgraph
 
     def locate_ghz_state(self, involved_qubits, platforms) -> GhzPreparation:
@@ -660,7 +729,7 @@ class Router:
         stations = [self.qubit_topology.nodes[platform]["station"] for platform in platforms]
         best_interchange_depth = None
         best_ghz_balises = None
-        for balise_id in self.metro_graph.nodes:
+        for balise_id in self.metro_topology.nodes:
             ghz_balise_graph = self.get_balise_nearest_metro_subgraph(balise_id, ancilla_qubit_num)
             ghz_balises = list(ghz_balise_graph.nodes)
             interchange_depth = max([self.balise_station_distance_dict[ghz_balises[i]][stations[i]]["interchange"] for i in range(ancilla_qubit_num)])
@@ -686,7 +755,7 @@ class Router:
         transfer_path = self.balise_station_distance_dict[source_physical_qubit][target_physical_qubit]["path"]
         on_rail_source_qubit = transfer_path[0]
         for i in range(len(transfer_path)-1):
-            if self.metro_graph.edges[transfer_path[i], transfer_path[i+1]]["role"] == QubitRole.Interchange:
+            if self.metro_topology.edges[transfer_path[i], transfer_path[i+1]]["role"] == QubitRole.Interchange:
                 if transfer_path[i] != on_rail_source_qubit:
                     actions.append(Transport(logic_qubit, on_rail_source_qubit, transfer_path[i]))
                 actions.append(Interchange(logic_qubit, (transfer_path[i], transfer_path[i+1])))
