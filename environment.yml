@@ -1,0 +1,21 @@
+name: qunoc
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - ipykernel
+  - ipython
+  - jupyter_client
+  - jupyter_core
+  - matplotlib-inline
+  - psutil
+  - pyzmq
+  - tornado
+  - traitlets
+  - debugpy
+  - prompt-toolkit
+  - setuptools
+  - pip
+  - pip:
+      - -r requirements.txt

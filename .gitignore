@@ -1,8 +1,8 @@
 *.pyc
 *.pkl
-__pycache__
 .vscode
+__pycache__
 setup.py
-Dockerfile
 test.py
+Dockerfile
 result
