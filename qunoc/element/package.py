@@ -750,8 +750,7 @@ class Package:
                 make_gif(save_dir, "design_process_", ".jpg", "design_process.gif")
             elif self.design_strategy == "rl":
                 self.complete_package()
-                # # TODO: Implement reinforcement learning strategy
-                # raise NotImplementedError("Reinforcement learning strategy is not implemented yet.")
+                # The rest rl design process is implemented outside in the LayoutAgent.
         else:
             raise ValueError("Invalid design scheme: {}".format(design_scheme))
 

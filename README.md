@@ -1,1 +1,1 @@
-# QuNoC: Designing Quantum Networks-on-chip Based on Enhanced Quantum State Transfer
+# Sensate: Orchestrating Quantum Network-on-Chip with Quantum Chiplets Based on Enhanced Quantum State Transfer

@@ -1,6 +1,9 @@
 *.pyc
 *.pkl
 __pycache__
+.vscode
 setup.py
 Dockerfile
 test.py
+result
+motivation

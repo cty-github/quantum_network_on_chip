@@ -7,9 +7,9 @@ from gymnasium import spaces
 from ..element.package import *
 
 
-class QuantumChipletEnv(gym.Env):
+class QuNoCEnv(gym.Env):
     """
-    Environment for designing quantum chiplets.
+    Environment for designing quantum network-on-chip (NoC) layout using reinforcement learning.
 
     Attributes:
         package_size (tuple[int, int]): Size of the package to design.
@@ -38,14 +38,14 @@ class QuantumChipletEnv(gym.Env):
         patience: int = 100, 
     ):
         """
-        Initialize the QuantumChipletEnv environment.
+        Initialize the quantum network-on-chip (NoC) layout environment.
 
         Args:
             package_size (tuple[int, int]): Size of the package to design.
             fab_model (FabricateModel): Fabrication model for the quantum chiplet.
             patience (int): Number of steps to wait before stopping if no improvement.
         """
-        super(QuantumChipletEnv, self).__init__()
+        super(QuNoCEnv, self).__init__()
         self.package_size = package_size
         self.fab_model = fab_model
         self.patience = patience
@@ -77,14 +77,14 @@ class QuantumChipletEnv(gym.Env):
             ]
         )
 
-    def reset(self, seed: int | None = None, options: dict[str, Any] | None = None):
+    def reset(self, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[np.ndarray, dict[str, Any]]:
         super().reset(seed=seed, options=options)
         self.package = Package(self.package_size, self.fab_model, design_strategy="rl")
         self.last_score = self.estimate()
         self.no_improve_steps = 0
         return self.get_current_state(), {}
 
-    def step(self, action):
+    def step(self, action: np.ndarray) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
         action = self.deserialize_action(action)
         if action is None:
             reward = -1e8

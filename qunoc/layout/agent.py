@@ -1,78 +1,128 @@
-import numpy as np
 import torch
 import torch.nn as nn
+import gymnasium as gym
 from stable_baselines3 import PPO
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
+from stable_baselines3.common.policies import ActorCriticPolicy
 
-from .env import QuantumChipletEnv
+from .env import QuNoCEnv
+from ..element.package import Package
 
 
-class FeatureCNN(BaseFeaturesExtractor):
-    def __init__(self, observation_space, dim, package_size=(22, 11)):
-        super(FeatureCNN, self).__init__(observation_space, features_dim=dim)
-        self.package_size = package_size
+class LayoutFeaturesExtractor(BaseFeaturesExtractor):
+    """
+    A CNN feature extractor for the QuNoCEnv environment.
+
+    Attributes:
+        cnn (nn.Sequential): The CNN model.
+        linear (nn.Sequential): The linear layer.
+    """
+
+    def __init__(self, observation_space: gym.spaces.Box, features_dim: int = 256):
+        """
+        Initialize the CNN feature extractor.
+
+        Args:
+            observation_space (spaces.Box): The observation space.
+            features_dim (int): The dimension of the output features.
+        """
+        super().__init__(observation_space, features_dim)
+        in_channels = observation_space.shape[0]  # Should be 5
 
         self.cnn = nn.Sequential(
-            nn.Conv2d(5, 32, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(in_channels, 32, kernel_size=5, stride=1, padding=2),
             nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2),
+
             nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.Flatten(),
+            nn.MaxPool2d(kernel_size=2),
+
+            nn.Flatten()
         )
 
         with torch.no_grad():
-            sample_input = torch.zeros(1, 5, *package_size)
-            cnn_out_dim = self.cnn(sample_input).shape[1]
-        self.fc = nn.Linear(cnn_out_dim, 256)
+            dummy_input = torch.zeros((1, *observation_space.shape))
+            n_flatten = self.cnn(dummy_input).shape[1]
 
-        self.fc = nn.Sequential(
-            nn.Linear(cnn_out_dim, 512),
+        self.linear = nn.Sequential(
+            nn.Linear(n_flatten, features_dim),
             nn.ReLU(),
-            nn.Linear(512, self.features_dim),
         )
 
-    def forward(self, x):
-        x = self.cnn(x)
-        x = self.fc(x)
-        return x
+    def forward(self, observations: torch.Tensor) -> torch.Tensor:
+        return self.linear(self.cnn(observations.float()))
+
+
+class LayoutPolicy(ActorCriticPolicy):
+    """
+    A custom policy for the QuNoCEnv environment.
+    """
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(
+            *args,
+            features_extractor_class=LayoutFeaturesExtractor,
+            features_extractor_kwargs=dict(features_dim=256),
+            **kwargs,
+        )
 
 
 class LayoutAgent:
-    def __init__(self, env: QuantumChipletEnv, model_path=None):
+    """
+    A reinforcement learning agent for the QuNoCEnv environment.
+
+    Attributes:
+        env (QuNoCEnv): The environment to train the agent.
+        model (PPO): The PPO model.
+    """
+
+    def __init__(self, env: QuNoCEnv, pre_trained_model_path: str = None):
+        """
+        Initialize the agent.
+
+        Args:
+            env (QuNoCEnv): The environment to train the agent.
+            pre_trained_model_path (str): Path to the pre-trained model.
+        """
         self.env = env
-        self.package_size = self.env.package_size
+        self.model = PPO(policy=LayoutPolicy, env=env, verbose=1)
+        if pre_trained_model_path:
+            self.model.load(pre_trained_model_path)
 
-        policy_kwargs = {
-            "features_extractor_class": FeatureCNN,
-            "features_extractor_kwargs": {
-                "package_size": self.package_size,
-                "dim": sum(env.action_space.nvec),
-            },
-        }
-        self.model = PPO("CnnPolicy", self.env, policy_kwargs=policy_kwargs, verbose=1)
+    def train(self, total_timesteps: int = 10000):
+        """
+        Train the agent.
 
-        if model_path:
-            self.model.load(model_path)
-
-    def select_action(self, state):
-        state = torch.as_tensor(state, dtype=torch.int32).unsqueeze(0)
-        logits = self.model.policy(state)
-        # 每一块特征做 softmax
-        with torch.no_grad():
-            # 提取特征并获取动作 logits
-            features = self.model.policy.features_extractor(state)
-            logits = self.model.policy.action_net(features)
-        split_logits = torch.split(logits, list(self.env.action_space.nvec), dim=1)
-        actions = [torch.argmax(logits_dim, dim=1).item() for logits_dim in split_logits]
-
-        return np.array(actions)
-
-    def train(self, total_timesteps=10000):
+        Args:
+            total_timesteps (int): Total timesteps for training.
+        """
         print("Training agent...")
         self.model.learn(total_timesteps=total_timesteps)
+    
+    def design(self) -> Package:
+        """
+        Design the layout using the trained agent.
 
-    def save(self, path="ppo_quantum_chip_agent.zip"):
-        self.model.save(path)
+        Returns:
+            Package: The designed package.
+        """
+        print("Designing layout...")
+        state, _ = self.env.reset()
+        done = False
+        while not done:
+            action, _ = self.model.predict(state, deterministic=True)
+            state, reward, done, _, _ = self.env.step(action)
+        return self.env.package
 
-    def load(self, path="ppo_quantum_chip_agent.zip"):
+    def load(self, path: str):
+        """
+        Load a pre-trained PPO model from a file.
+        """
         self.model.load(path)
+
+    def save(self, path: str):
+        """
+        Save the PPO model to a file.
+        """
+        self.model.save(path)
