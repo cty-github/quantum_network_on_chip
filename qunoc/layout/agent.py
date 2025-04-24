@@ -113,7 +113,7 @@ class LayoutAgent:
         while not done:
             action, _ = self.model.predict(state, deterministic=True)
             state, reward, done, _, _ = self.env.step(action)
-        return self.env.package
+        return self.env.best_package
 
     def load(self, path: str):
         """

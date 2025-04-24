@@ -125,7 +125,6 @@ class Router:
         self.qubit_topology = package.qubit_topology
         self.chiplet_topology = package.chiplet_topology
         self.metro_topology = package.metro_topology
-        self.analysis_metro()
         # self.platform_list = package.get_platform_list()
         # self.station_list = package.get_station_list()
         # self.interchange_list = package.get_interchange_list()
@@ -144,14 +143,6 @@ class Router:
 
         # self.commutable_blocks = []
         # self.compute_blocks = []
-
-    def analysis_metro(self):
-        self.balise_station_distance_dict = {balise: {station: {"interchange": 0, "path": None} for station in self.station_list} for balise in self.metro_topology.nodes}
-        for balise in self.metro_topology.nodes:
-            for station in self.station_list:
-                shortest_path, interchange_num = self.package.get_shortest_metro_path(balise, station)
-                self.balise_station_distance_dict[balise][station]["interchange"] = interchange_num
-                self.balise_station_distance_dict[balise][station]["path"] = shortest_path
 
     def route_program_on_package(self):
         """

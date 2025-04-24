@@ -1,1 +1,1 @@
-# Sensate: Orchestrating Quantum Network-on-Chip with Quantum Chiplets Based on Enhanced Quantum State Transfer
+# Sensate: Orchestrating Quantum Chiplets for Quantum Network-on-Chip Based on Enhanced Quantum State Transfer

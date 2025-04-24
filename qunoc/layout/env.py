@@ -77,7 +77,7 @@ class QuNoCEnv(gym.Env):
                 self.package_size[1], # y coordinate of the qubit choosen to design whose area
                 len(DesignTemplate), # template choosen to design the area
                 len(DesignOrientation), # orientation choosen to design the area
-                (max(self.package_size) // 2 - 1) // self.fab_model.max_square_size + 1, # number of interval choosen to design the area
+                (max(self.package_size) // 2 - self.fab_model.max_square_size - 1) // self.fab_model.max_square_size + 1, # number of interval choosen to design the area
             ]
         )
 
@@ -86,6 +86,8 @@ class QuNoCEnv(gym.Env):
         self.package = Package(self.package_size, self.fab_model, design_strategy="rl", result_dir=self.result_dir)
         self.last_score = self.estimate()
         self.no_improve_steps = 0
+        self.best_score = self.last_score
+        self.best_package = self.package
         return self.get_current_state(), {}
 
     def step(self, action: np.ndarray) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
@@ -97,6 +99,10 @@ class QuNoCEnv(gym.Env):
             score = self.estimate()
             reward = score - self.last_score
             self.last_score = score
+            if score > self.best_score:
+                self.best_score = score
+                self.best_package = self.package
+
         if reward > 0:
             self.no_improve_steps = 0
         else:
@@ -121,7 +127,7 @@ class QuNoCEnv(gym.Env):
             float: The evaluation score of the package.
         """
         self.package.complete_package()
-        return self.package.estimate_transfer()
+        return self.package.estimate_efficiency()
 
     def deserialize_action(self, action_vector: list) -> dict | None:
         """
@@ -137,7 +143,7 @@ class QuNoCEnv(gym.Env):
             "module": self.package.get_physical_qubit_area((action_vector[0], action_vector[1])),
             "template": DesignTemplate(action_vector[2]),
             "orient": DesignOrientation(action_vector[3]),
-            "interval": 1 + action_vector[4] * self.fab_model.max_square_size,
+            "interval": (action_vector[4] + 1) * self.fab_model.max_square_size,
         }
         if action_dict["module"].type == NodeType.Compute and Package.is_valid_to_design(**action_dict):
             return action_dict
