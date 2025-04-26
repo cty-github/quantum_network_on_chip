@@ -122,8 +122,8 @@ class Router:
         self.package = package
         self.program = program
 
-        self.qubit_topology = package.qubit_topology
-        self.chiplet_topology = package.chiplet_topology
+        # self.qubit_topology = package.qubit_topology
+        # self.chiplet_topology = package.chiplet_topology
         self.metro_topology = package.metro_topology
         # self.platform_list = package.get_platform_list()
         # self.station_list = package.get_station_list()
@@ -382,7 +382,7 @@ class Router:
         for node in shortest_path:
             if self.qubit_topology.nodes[node]["type"] == NodeType.Transfer:
                 return None
-        return self.package.get_physical_qubit_area(self.curr_l2p_map[gate.control_qubit])
+        return self.package.get_node_area(self.curr_l2p_map[gate.control_qubit])
     
     def check_move_gate(self, gate: Control, move_gates: list[Control]) -> bool:
         """
@@ -653,7 +653,7 @@ class Router:
         local_gate_ids = [local_gate.id for local_gate in move_block.ctrl_gates]
         local_gate_depent: nx.DiGraph = self.gate_depend_graph.subgraph(local_gate_ids)
         local_gates_topo_sort = list(nx.topological_sort(local_gate_depent))
-        compute_area = self.package.get_physical_qubit_area((move_block.chiplet.split("_")[1], move_block.chiplet.split("_")[2]))
+        compute_area = self.package.get_node_area((move_block.chiplet.split("_")[1], move_block.chiplet.split("_")[2]))
         for gate_id in local_gates_topo_sort:
             gate = self.gate_depend_graph.nodes[gate_id]["gate"]
             assert isinstance(gate, Control)
@@ -678,7 +678,7 @@ class Router:
         occupied_platforms = []
         for logic_qubit in logic_qubits:
             physical_qubit = self.curr_l2p_map[logic_qubit]
-            physical_qubit_area = self.package.get_physical_qubit_area(physical_qubit)
+            physical_qubit_area = self.package.get_node_area(physical_qubit)
             area_graph = self.package.get_area_graph(physical_qubit_area)
             shortest_path_dict = nx.shortest_path(area_graph, physical_qubit)
             for target in shortest_path_dict:

@@ -165,11 +165,17 @@ class Qubit:
         coordinate (tuple[int, int]): The coordinate of the qubit.
         type (NodeType): The type of the chiplet that the qubit belongs to.
         fide (float): The single gate fidelity of the qubit.
-        area (FuncArea): The function area that the qubit belongs to.
         role (QubitRole): The role of the qubit.
+        chiplet (Chiplet): The chiplet that the qubit belongs to.
+        area (FuncArea): The function area that the qubit belongs to.
     """
     
-    def __init__(self, coordinate: tuple[int, int], type: NodeType, fide: float):
+    def __init__(self, 
+        coordinate: tuple[int, int], 
+        type: NodeType, 
+        fide: float, 
+        role: QubitRole = None
+    ):
         """
         Initialize a physcial qubit.
 
@@ -177,12 +183,14 @@ class Qubit:
             coordinate (tuple[int, int]): The coordinate of the qubit.
             type (NodeType): The type of the chiplet that the qubit belongs to.
             fide (float): The single gate fidelity of the qubit.
+            role (QubitRole): The role of the qubit.
         """
         self.coordinate = coordinate
         self.type = type
         self.fide = fide
+        self.role = role
+        self.chiplet: Chiplet = None
         self.area: FuncArea = None
-        self.role: QubitRole = None
 
     def __repr__(self):
         return f"{self.__class__.__name__}{self.coordinate}"
@@ -192,31 +200,38 @@ class Coupler:
     Represents the coupler between two qubits in the package.
     
     Attributes:
-        qubit_u (Qubit): The qubit u on one side of the coupler.
-        qubit_v (Qubit): The qubit v on the other side of the coupler.
+        qubit_u (tuple[int, int]): The coordinate of qubit u on one side of the coupler.
+        qubit_v (tuple[int, int]): The coordinate of qubit v on the other side of the coupler.
         type (EdgeType): The type of the coupler.
         fide (float): The CZ/EQST fidelity of the coupler.
         role (CouplerRole): The role of the coupler.
     """
     
-    def __init__(self, qubit_u: Qubit, qubit_v: Qubit, type: EdgeType, fide: float):
+    def __init__(self, 
+        qubit_u: tuple[int, int], 
+        qubit_v: tuple[int, int], 
+        type: EdgeType, 
+        fide: float, 
+        role: CouplerRole = None
+    ):
         """
         Initialize a coupler.
 
         Args:
-            qubit_u (Qubit): The qubit u on one side of the coupler.
-            qubit_v (Qubit): The qubit v on the other side of the coupler.
+            qubit_u (tuple[int, int]): The coordinate of qubit u on one side of the coupler.
+            qubit_v (tuple[int, int]): The coordinate of qubit v on the other side of the coupler.
             type (EdgeType): The type of the coupler.
             fide (float): The CZ/EQST fidelity of the coupler.
+            role (CouplerRole): The role of the coupler.
         """
         self.qubit_u = qubit_u
         self.qubit_v = qubit_v
         self.type = type
         self.fide = fide
-        self.role: CouplerRole = None
+        self.role = role
 
     def __repr__(self):
-        return f"{self.__class__.__name__}{self.qubit_u.coordinate}{self.qubit_v.coordinate}"
+        return f"{self.__class__.__name__}{self.qubit_u}{self.qubit_v}"
 
 
 class Chiplet:
@@ -224,17 +239,25 @@ class Chiplet:
     Represents the chiplet in the package.
 
     Attributes:
-        type (NodeType): The type of the chiplet.
+        intra_fide (float): The fidelity of intra-chiplet CZ.
     """
 
-    def __init__(self, type: NodeType):
+    def __init__(self, intra_fide: float):
         """
         Initialize a chiplet.
 
         Args:
-            type (NodeType): The type of the chiplet.
+            intra_fide (float): The fidelity of intra-chiplet CZ.
         """
-        self.type = type
+        self.intra_fide = intra_fide
+    
+    def get_coordinate(self) -> tuple[float, float]:
+        """
+        Get the center coordinate of the chiplet.
+
+        Returns:
+            coordinate (tuple[float, float]): the center coordinate of the chiplet
+        """
     
     def get_nodes(self) -> list[tuple[int, int]]:
         """
@@ -244,6 +267,29 @@ class Chiplet:
             nodes (list[tuple[int, int]]): the list of nodes in the chiplet
         """
 
+    def has_node(self, node: tuple[int, int]) -> bool:
+        """
+        Check if the node is in the function area.
+
+        Args:
+            node (tuple[int, int]): The coordinate of the node.
+
+        Returns:
+            bool: True if the node is in the function area, False otherwise.
+        """
+    
+    def get_distance(self, source: tuple[int, int], target: tuple[int, int]) -> int:
+        """
+        Get the distance between two nodes in the chiplet, which is the number of edges in the shortest path.
+
+        Args:
+            source (tuple[int, int]): The coordinate of the source node.
+            target (tuple[int, int]): The coordinate of the target node.
+
+        Returns:
+            distance (int): The distance between the two nodes, which is the number of edges in the shortest path.
+        """
+
     def get_capacity(self) -> int:
         """
         Get the capacity of the chiplet.
@@ -251,27 +297,22 @@ class Chiplet:
         Returns:
             capacity (int): the capacity of the chiplet
         """
-    
-    def get_coordinate(self) -> tuple[float, float]:
-        """
-        Get the center coordinate of the chiplet.
-
-        Returns:
-            coordinate (tuple[float, float]): the center coordinate of the chiplet
-        """
 
 class ComputeChiplet(Chiplet):
     """
     Represents the compute chiplet in the package.
 
     Attributes:
+        intra_fide (float): The fidelity of intra-chiplet CZ.
+        in_module_coord (tuple[int, int]): The coordinate of the chiplet in the module.
         left (int): The left boundary of the chiplet.
         top (int): The top boundary of the chiplet.
         right (int): The right boundary of the chiplet.
         bottom (int): The bottom boundary of the chiplet.
+        geometry (str): The qubit topology in the chiplet, i.e. 'square', 'hexagon', 'heavy square', 'heavy hexagon'.
     """
 
-    def __init__(self, left: int, top: int, right: int, bottom: int):
+    def __init__(self, intra_fide: float, in_module_coord: tuple[int, int], left: int, top: int, right: int, bottom: int, geometry: str = "square"):
         """
         Initialize a compute chiplet.
 
@@ -280,33 +321,42 @@ class ComputeChiplet(Chiplet):
             top (int): The top boundary of the chiplet.
             right (int): The right boundary of the chiplet.
             bottom (int): The bottom boundary of the chiplet.
+            geometry (str): The qubit topology in the chiplet, i.e. 'square', 'hexagon', 'heavy square', 'heavy hexagon'.
         """
-        super().__init__(NodeType.Compute)
+        super().__init__(intra_fide)
+        self.in_module_coord = in_module_coord
         self.left = left
         self.top = top
         self.right = right
         self.bottom = bottom
+        self.geometry = geometry
 
     def __repr__(self):
         return f"{self.__class__.__name__}_{self.left}_{self.top}_{self.right}_{self.bottom}"
     
+    def get_coordinate(self) -> tuple[float, float]:
+        return ((self.left + self.right) / 2, (self.top + self.bottom) / 2)
+    
     def get_nodes(self) -> list[tuple[int, int]]:
+        # TODO: Set the topology of compute chiplets according to the geometry.
         if not hasattr(self, "nodes"):
             self.nodes = []
             for i in range(self.left, self.right + 1):
                 for j in range(self.top, self.bottom + 1):
                     self.nodes.append((i, j))
         return self.nodes
+
+    def has_node(self, node: tuple[int, int]) -> bool:
+        return node[0] >= self.left and node[0] <= self.right and node[1] >= self.top and node[1] <= self.bottom
+    
+    def get_distance(self, source: tuple[int, int], target: tuple[int, int]) -> int:
+        # TODO: Find the shortest path considering the topology of compute chiplet.
+        assert self.has_node(source), f"source {source} is not in the compute chiplet {self}"
+        assert self.has_node(target), f"target {target} is not in the compute chiplet {self}"
+        return abs(source[0] - target[0]) + abs(source[1] - target[1])
     
     def get_capacity(self) -> int:
         return (self.right - self.left + 1) * (self.bottom - self.top + 1)
-    
-    def get_coordinate(self) -> tuple[float, float]:
-        return (
-            (self.left + self.right) / 2,
-            (self.top + self.bottom) / 2,
-        )
-
 
 class TransferChiplet(Chiplet):
     """
@@ -319,17 +369,18 @@ class TransferChiplet(Chiplet):
         end (int): The end point of the chiplet.
     """
 
-    def __init__(self, axis: int, pos: int, start: int, end: int):
+    def __init__(self, intra_fide: float, axis: int, pos: int, start: int, end: int):
         """
         Initialize a transfer chiplet.
 
         Args:
+            intra_fide (float): The fidelity of intra-chiplet CZ.
             axis (int): The axis of the chiplet.
             pos (int): The position of the chiplet.
             start (int): The start point of the chiplet.
             end (int): The end point of the chiplet.
         """
-        super().__init__(NodeType.Transfer)
+        super().__init__(intra_fide)
         self.axis = axis
         self.pos = pos
         self.start = start
@@ -337,173 +388,9 @@ class TransferChiplet(Chiplet):
 
     def __repr__(self):
         return f"{self.__class__.__name__}_{self.axis}_{self.pos}_{self.start}_{self.end}"
-    
-    def get_nodes(self) -> list[tuple[int, int]]:
-        if not hasattr(self, "nodes"):
-            self.nodes = []
-            for i in range(self.start, self.end + 1):
-                self.nodes.append(get_full_space_tuple(self.pos, self.axis, i))
-        return self.nodes
-    
-    def get_capacity(self) -> int:
-        return self.end - self.start + 1
 
     def get_coordinate(self) -> tuple[float, float]:
         return get_full_space_tuple(self.pos, self.axis, (self.start + self.end) / 2)
-
-
-class FuncArea:
-    """
-    Represents the function area in the package.
-
-    Attributes:
-        type (NodeType): The type of the function area.
-        fab_model (FabricateModel): The fabrication model of the package.
-        nodes (list[tuple[int, int]]): The list of nodes in the function area.
-        chiplets (list[Chiplet]): The list of chiplets in the function area.
-    """
-
-    def __init__(self, type: NodeType, fab_model: FabricateModel):
-        """
-        Initialize a function area.
-
-        Args:
-            type (NodeType): The type of the function area.
-            fab_model (FabricateModel): The fabrication model of the package.
-        """
-        self.type = type
-        self.fab_model = fab_model
-    
-    def get_nodes(self) -> list[tuple[int, int]]:
-        """
-        Get the nodes in the function region.
-
-        Returns:
-            nodes (list[tuple[int, int]]): The list of nodes in the function region.
-        """
-
-    def in_area(self, node: tuple[int, int]) -> bool:
-        """
-        Check if the node is in the function area.
-
-        Args:
-            node (tuple[int, int]): The coordinate of the node.
-
-        Returns:
-            bool: True if the node is in the function area, False otherwise.
-        """
-        return node in self.get_nodes()
-    
-    def get_chiplets(self) -> list[Chiplet]:
-        """
-        Get the chiplets in the function region.
-
-        Returns:
-            chiplets (list[Chiplet]): The list of chiplets in the function region.
-        """
-
-class ComputeModule(FuncArea):
-    """
-    Represents the compute module in the package.
-
-    Attributes:
-        left (int): The left boundary of the module.
-        top (int): The top boundary of the module.
-        right (int): The right boundary of the module.
-        bottom (int): The bottom boundary of the module.
-    """
-    
-    def __init__(self, fab_model: FabricateModel, left: int, top: int, right: int, bottom: int):
-        """
-        Initialize a compute module.
-
-        Args:
-            fab_model (FabricateModel): The fabrication model of the package.
-            left (int): The left boundary of the module.
-            top (int): The top boundary of the module.
-            right (int): The right boundary of the module.
-            bottom (int): The bottom boundary of the module.
-        """
-        super().__init__(NodeType.Compute, fab_model)
-        self.left = left
-        self.top = top
-        self.right = right
-        self.bottom = bottom
-
-    def __repr__(self):
-        return f"{self.__class__.__name__}_{self.left}_{self.top}_{self.right}_{self.bottom}"
-    
-    def get_nodes(self) -> list[tuple[int, int]]:
-        if not hasattr(self, "nodes"):
-            self.nodes = []
-            for i in range(self.left, self.right + 1):
-                for j in range(self.top, self.bottom + 1):
-                    self.nodes.append((i, j))
-        return self.nodes
-    
-    def get_chiplets(self) -> list[ComputeChiplet]:
-        """
-        TODO: Set the topology of compute chiplets according to the fabricate model.
-        """
-        if not hasattr(self, "chiplets"):
-            self.chiplets: list[ComputeChiplet] = []
-            self.intra_gaps: list[IntraAreaGap] = []
-            module_x_size = self.right - self.left + 1
-            module_y_size = self.bottom - self.top + 1
-            chiplet_x_num = (module_x_size - 1) // self.fab_model.max_square_size + 1
-            chiplet_y_num = (module_y_size - 1) // self.fab_model.max_square_size + 1
-            chiplet_x_size = module_x_size // chiplet_x_num
-            chiplet_y_size = module_y_size // chiplet_y_num
-            large_chiplet_x_num = module_x_size - chiplet_x_num * chiplet_x_size
-            large_chiplet_y_num = module_y_size - chiplet_y_num * chiplet_y_size
-            for i in range(chiplet_x_num):
-                for j in range(chiplet_y_num):
-                    self.chiplets.append(ComputeChiplet(
-                        self.left + i * chiplet_x_size + min(i, large_chiplet_x_num),
-                        self.top + j * chiplet_y_size + min(j, large_chiplet_y_num),
-                        self.left + (i + 1) * chiplet_x_size + min(i + 1, large_chiplet_x_num) - 1,
-                        self.top + (j + 1) * chiplet_y_size + min(j + 1, large_chiplet_y_num) - 1,
-                    ))
-        return self.chiplets
-
-    def get_platforms(self) -> list[tuple[float, float]]:
-        """
-        Get the platform qubits in the chiplet.
-        """
-        if not hasattr(self, "platforms"):
-            self.platforms = []
-        return self.platforms
-
-class TransferLine(FuncArea):
-    """
-    Represents the transfer line in the package.
-
-    Attributes:
-        axis (int): The axis of the line.
-        pos (int): The position of the line.
-        start (int): The start point of the line.
-        end (int): The end point of the line.
-    """
-
-    def __init__(self, fab_model: FabricateModel, axis: int, pos: int, start: int, end: int):
-        """
-        Initialize a transfer line.
-
-        Args:
-            fab_model (FabricateModel): The fabrication model of the package.
-            axis (int): The axis of the line.
-            pos (int): The position of the line.
-            start (int): The start point of the line.
-            end (int): The end point of the line.
-        """
-        super().__init__(NodeType.Transfer, fab_model)
-        self.axis = axis
-        self.pos = pos
-        self.start = start
-        self.end = end
-
-    def __repr__(self):
-        return f"{self.__class__.__name__}_{self.axis}_{self.pos}_{self.start}_{self.end}"
     
     def get_nodes(self) -> list[tuple[int, int]]:
         if not hasattr(self, "nodes"):
@@ -511,30 +398,17 @@ class TransferLine(FuncArea):
             for i in range(self.start, self.end + 1):
                 self.nodes.append(get_full_space_tuple(self.pos, self.axis, i))
         return self.nodes
-    
-    def get_chiplets(self) -> list[TransferChiplet]:
-        if not hasattr(self, "chiplets"):
-            self.chiplets: list[TransferChiplet] = []
-            line_length = self.end - self.start + 1
-            chiplet_num = (line_length - 1) // self.fab_model.max_length + 1
-            chiplet_length = line_length // chiplet_num
-            long_chiplet_num = line_length - chiplet_num * chiplet_length
-            for i in range(chiplet_num):
-                self.chiplets.append(TransferChiplet(
-                    self.axis,
-                    self.pos,
-                    self.start + i * chiplet_length + min(i, long_chiplet_num),
-                    self.start + (i + 1) * chiplet_length + min(i + 1, long_chiplet_num) - 1,
-                ))
-        return self.chiplets
 
-    def get_stations(self) -> list[tuple[float, float]]:
-        """
-        Get the station qubits in the chiplet.
-        """
-        if not hasattr(self, "stations"):
-            self.stations = []
-        return self.stations
+    def has_node(self, node: tuple[int, int]) -> bool:
+        return node[1-self.axis] == self.pos and node[self.axis] >= self.start and node[self.axis] <= self.end
+    
+    def get_distance(self, source: tuple[int, int], target: tuple[int, int]) -> int:
+        assert self.has_node(source), f"source {source} is not in the transfer chiplet {self}"
+        assert self.has_node(target), f"target {target} is not in the transfer chiplet {self}"
+        return abs(source[self.axis] - target[self.axis])
+    
+    def get_capacity(self) -> int:
+        return self.end - self.start + 1
 
 
 class Gap:
@@ -549,91 +423,520 @@ class Gap:
         end (int): The end point of the gap.
         edges (dict[int, tuple[tuple[int,int], tuple[int,int]]]): The edges in the gap.
     """
+    fab_model: FabricateModel = None
 
-    def __init__(self, fab_model: FabricateModel, axis:int, pos: tuple[int, int], start: int, end: int):
+    def __init__(self, axis:int, pos: tuple[int, int], start: int, end: int):
         """
         Initialize a gap.
 
         Args:
-            fab_model (FabricateModel): The fabrication model of the package.
             axis (int): The axis of the gap.
             pos (tuple[int, int]): The position of the gap.
             start (int): The start point of the gap.
             end (int): The end point of the gap.
         """
-        self.fab_model = fab_model
         self.axis = axis
         self.pos = pos
         self.start = start
         self.end = end
     
-    def get_edges(self) -> tuple[int, tuple[tuple[int,int], tuple[int,int]]]:
+    def __repr__(self):
+        return f"{self.__class__.__name__}_{self.axis}_{self.pos}_{self.start}_{self.end}"
+    
+    def get_couplers(self) -> dict[int, Coupler]:
         """
-        Get the edges in the gap.
+        Get the couplers in the gap.
 
         Returns:
-            edges (dict[int, tuple[tuple[int,int], tuple[int,int]]]): The edges in the gap.
+            couplers (dict[int, Coupler]): The dictionary of couplers in the gap.
         """
-        if not hasattr(self, "edges"):
-            self.edges = {}
-            for i in range(self.start, self.end + 1, self.fab_model.inter_sparsity):
-                self.edges[i] = (get_full_space_tuple(self.pos[0], self.axis, i), get_full_space_tuple(self.pos[1], self.axis, i))
-        return self.edges
+        if not hasattr(self, "couplers"):
+            self.couplers: dict[int, Coupler] = {}
+            for i in range(self.start, self.end + 1, Gap.fab_model.inter_sparsity):
+                self.couplers[i] = Coupler(
+                    get_full_space_tuple(self.pos[0], self.axis, i), 
+                    get_full_space_tuple(self.pos[1], self.axis, i), 
+                    EdgeType.Inter,
+                    Gap.fab_model.inter_fide,
+                )
+        return self.couplers
 
-class InterAreaGap(Gap):
+class IntraComputeGap(Gap):
     """
-    Represents the gap between two function area.
-
-    Attributes:
-        compute_module (ComputeModule): The compute module on one side of the gap.
-        transfer_line (TransferLine): The transfer line on the other side of the gap.
-    """
-
-    def __init__(self, fab_model: FabricateModel, axis:int, pos: tuple[int, int], start: int, end: int, compute_module: ComputeModule, transfer_line: TransferLine):
-        """
-        Initialize a gap between two function area.
-
-        Args:
-            fab_model (FabricateModel): The fabrication model of the package.
-            axis (int): The axis of the gap.
-            pos (tuple[int, int]): The position of the gap.
-            start (int): The start point of the gap.
-            end (int): The end point of the gap.
-            compute_module (ComputeModule): The compute module on one side of the gap.
-            transfer_line (TransferLine): The transfer line on the other side of the gap.
-        """
-        super().__init__(fab_model, axis, pos, start, end)
-        self.compute_module = compute_module
-        self.transfer_line = transfer_line
-
-    def __repr__(self):
-        return f"{self.__class__.__name__}_{self.compute_module}_{self.transfer_line}"
-
-class IntraAreaGap(Gap):
-    """
-    Represents the gap in a function area.
-
-    Attributes:
-        chiplet_u (Chiplet): The chiplet u on one side of the gap.
-        chiplet_v (Chiplet): The chiplet v on the other side of the gap.
+    Represents the gap in a compute module.
     """
 
-    def __init__(self, fab_model: FabricateModel, axis:int, pos: tuple[int, int], start: int, end: int, chiplet_u: Chiplet, chiplet_v: Chiplet):
+    def __init__(self, axis:int, pos: tuple[int, int], start: int, end: int):
         """
         Initialize a gap in a function area.
 
         Args:
-            fab_model (FabricateModel): The fabrication model of the package.
             axis (int): The axis of the gap.
             pos (tuple[int, int]): The position of the gap.
             start (int): The start point of the gap.
             end (int): The end point of the gap.
-            chiplet_u (Chiplet): The chiplet u on one side of the gap.
-            chiplet_v (Chiplet): The chiplet v on the other side of the gap.
         """
-        super().__init__(fab_model, axis, pos, start, end)
-        self.chiplet_u = chiplet_u
-        self.chiplet_v = chiplet_v
+        super().__init__(axis, pos, start, end)
+
+class ComputeTransferGap(Gap):
+    """
+    Represents the gap between a compute module and a transfer line.
+    """
+
+    def __init__(self, axis:int, pos: tuple[int, int], start: int, end: int):
+        """
+        Initialize a gap between two function area.
+
+        Args:
+            axis (int): The axis of the gap.
+            pos (tuple[int, int]): The position of the gap.
+            start (int): The start point of the gap.
+            end (int): The end point of the gap.
+        """
+        super().__init__(axis, pos, start, end)
+
+
+class FuncArea:
+    """
+    Represents the function area in the package.
+
+    Attributes:
+        fab_model (FabricateModel): The fabrication model of the package.
+        nodes (list[tuple[int, int]]): The list of nodes in the function area.
+        chiplets (list[Chiplet]): The list of chiplets in the function area.
+    """
+    fab_model: FabricateModel = None
+
+    def __init__(self):
+        """
+        Initialize a function area.
+        """
     
+    def get_nodes(self) -> list[tuple[int, int]]:
+        """
+        Get the nodes in the function area.
+
+        Returns:
+            nodes (list[tuple[int, int]]): The list of nodes in the function area.
+        """
+
+    def has_node(self, node: tuple[int, int]) -> bool:
+        """
+        Check if the node is in the function area.
+
+        Args:
+            node (tuple[int, int]): The coordinate of the node.
+
+        Returns:
+            bool: True if the node is in the function area, False otherwise.
+        """
+    
+    def determine_chiplets(self):
+        """
+        Partition the function area into chiplets.
+        """
+        self.chiplets: list[Chiplet] = []
+    
+    def get_chiplets(self) -> list[Chiplet]:
+        """
+        Get the chiplets in the function area.
+
+        Returns:
+            chiplets (list[Chiplet]): The list of chiplets in the function area.
+        """
+        if not hasattr(self, "chiplets"):
+            self.determine_chiplets()
+        return self.chiplets
+
+class TransferLine(FuncArea):
+    """
+    Represents the transfer line in the package.
+
+    Attributes:
+        axis (int): The axis of the line.
+        pos (int): The position of the line.
+        start (tuple[int, Coupler]): The start coordinate and interchange of the line.
+        end (tuple[int, Coupler]): The end coordinate and interchange of the line.
+    """
+
+    def __init__(self, 
+            axis: int, 
+            pos: int, 
+            start: tuple[int, bool],
+            end: tuple[int, bool],
+        ):
+        """
+        Initialize a transfer line.
+
+        Args:
+            axis (int): The axis of the line.
+            pos (int): The position of the line.
+            start (tuple[int, bool]): The start coordinate and boundary flag of the line.
+            end (tuple[int, bool]): The end coordinate and boundary flag of the line.
+        """
+        super().__init__()
+        self.axis = axis
+        self.pos = pos
+        if not start[1]:
+            start_interchange = Coupler(
+                get_full_space_tuple(pos, axis, start[0]-1),
+                get_full_space_tuple(pos, axis, start[0]),
+                EdgeType.Inter,
+                FuncArea.fab_model.inter_fide,
+                CouplerRole.Interchange, 
+            )
+        else:
+            start_interchange = None
+        if not end[1]:
+            end_interchange = Coupler(
+                get_full_space_tuple(pos, axis, end[0]),
+                get_full_space_tuple(pos, axis, end[0]+1),
+                EdgeType.Inter,
+                FuncArea.fab_model.inter_fide,
+                CouplerRole.Interchange, 
+            )
+        else:
+            end_interchange = None
+        self.start: tuple[int, Coupler] = (start[0], start_interchange)
+        self.end: tuple[int, Coupler] = (end[0], end_interchange)
+
     def __repr__(self):
-        return f"{self.__class__.__name__}_{self.chiplet_u}_{self.chiplet_v}"
+        return f"{self.__class__.__name__}_{self.axis}_{self.pos}_{self.start[0]}_{self.end[0]}"
+    
+    def get_nodes(self) -> list[tuple[int, int]]:
+        if not hasattr(self, "nodes"):
+            self.nodes = []
+            for i in range(self.start, self.end + 1):
+                self.nodes.append(get_full_space_tuple(self.pos, self.axis, i))
+        return self.nodes
+    
+    def has_node(self, node: tuple[int, int]) -> bool:
+        return node[1-self.axis] == self.pos and node[self.axis] >= self.start[0] and node[self.axis] <= self.end[0]
+    
+    def determine_chiplets(self):
+        line_length = self.end - self.start + 1
+        chiplet_num = (line_length - 1) // FuncArea.fab_model.max_length + 1
+        chiplet_length = line_length // chiplet_num
+        long_chiplet_num = line_length - chiplet_num * chiplet_length
+        self.chiplets: list[TransferChiplet] = []
+        for i in range(chiplet_num):
+            self.chiplets.append(TransferChiplet(
+                FuncArea.fab_model.enhanced_fide,
+                self.axis,
+                self.pos,
+                self.start + i * chiplet_length + min(i, long_chiplet_num),
+                self.start + (i + 1) * chiplet_length + min(i + 1, long_chiplet_num) - 1,
+            ))
+        self.interchanges: set[Coupler] = set()
+        self.interchanges.add(self.start[1])
+        self.interchanges.add(self.end[1])
+        for i in range(chiplet_num - 1):
+            self.interchanges.add(Coupler(
+                get_full_space_tuple(self.pos, self.axis, (i + 1) * chiplet_length + min(i + 1, long_chiplet_num) - 1),
+                get_full_space_tuple(self.pos, self.axis, (i + 1) * chiplet_length + min(i + 1, long_chiplet_num)),
+                EdgeType.Inter,
+                FuncArea.fab_model.inter_fide,
+                CouplerRole.Interchange,
+            ))
+    
+    def get_chiplets(self) -> list[TransferChiplet]:
+        if not hasattr(self, "chiplets"):
+            self.determine_chiplets()
+        return self.chiplets
+
+    def get_interchanges(self) -> set[Coupler]:
+        """
+        Get the interchanges in the transfer line.
+
+        Returns:
+            interchanges (set[Coupler]): The set of interchanges in the transfer line.
+        """
+        if not hasattr(self, "interchanges"):
+            self.determine_chiplets()
+        return self.interchanges
+
+class ComputeModule(FuncArea):
+    """
+    Represents the compute module in the package.
+
+    Attributes:
+        left (tuple[int, TransferLine, ComputeTransferGap]): The left boundary of the module.
+        top (tuple[int, TransferLine, ComputeTransferGap]): The top boundary of the module.
+        right (tuple[int, TransferLine, ComputeTransferGap]): The right boundary of the module.
+        bottom (tuple[int, TransferLine, ComputeTransferGap]): The bottom boundary of the module.
+        chiplet_x_num (int): The number of chiplets in the x direction.
+        chiplet_y_num (int): The number of chiplets in the y direction.
+        chiplets (list[ComputeChiplet]): The list of chiplets in the module.
+        chiplet_matrix (dict[tuple[int, int], ComputeChiplet]): The dictionary of chiplets in the module.
+        intra_gaps (list[IntraComputeGap]): The list of intra-chiplet gaps in the module.
+    """
+    
+    def __init__(self, 
+        left: int | TransferLine, 
+        top: int | TransferLine, 
+        right: int | TransferLine, 
+        bottom: int | TransferLine, 
+    ):
+        """
+        Initialize a compute module.
+
+        Args:
+            left (int | Transferline): The left coordinate or transferline of the module.
+            top (int | Transferline): The top coordinate or transferline of the module.
+            right (int | Transferline): The right coordinate or transferline of the module.
+            bottom (int | Transferline): The bottom coordinate or transferline of the module.
+        """
+        super().__init__()
+        if isinstance(left, TransferLine):
+            left_coord = left.pos + 1
+            left_line = left
+        else:
+            left_coord = left
+            left_line = None
+        if isinstance(top, TransferLine):
+            top_coord = top.pos + 1
+            top_line = top
+        else:
+            top_coord = top
+            top_line = None
+        if isinstance(right, TransferLine):
+            right_coord = right.pos - 1
+            right_line = right
+        else:
+            right_coord = right
+            right_line = None
+        if isinstance(bottom, TransferLine):
+            bottom_coord = bottom.pos - 1
+            bottom_line = bottom
+        else:
+            bottom_coord = bottom
+            bottom_line = None
+        left_gap = ComputeTransferGap(
+            left_line.axis, 
+            (left_line.pos, left_coord), 
+            top_coord, 
+            bottom_coord
+        ) if left_line else None
+        top_gap = ComputeTransferGap(
+            top_line.axis, 
+            (top_line.pos, top_coord), 
+            left_coord, 
+            right_coord
+        ) if top_line else None
+        right_gap = ComputeTransferGap(
+            right_line.axis, 
+            (right_coord, right_line.pos), 
+            top_coord, 
+            bottom_coord
+        ) if right_line else None
+        bottom_gap = ComputeTransferGap(
+            bottom_line.axis, 
+            (bottom_coord, bottom_line.pos), 
+            left_coord, 
+            right_coord
+        ) if bottom_line else None
+        self.left: tuple[int, TransferLine, ComputeTransferGap] = (left_coord, left_line, left_gap)
+        self.top: tuple[int, TransferLine, ComputeTransferGap] = (top_coord, top_line, top_gap)
+        self.right: tuple[int, TransferLine, ComputeTransferGap] = (right_coord, right_line, right_gap)
+        self.bottom: tuple[int, TransferLine, ComputeTransferGap] = (bottom_coord, bottom_line, bottom_gap)
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}_{self.left[0]}_{self.top[0]}_{self.right[0]}_{self.bottom[0]}"
+    
+    def get_nodes(self) -> list[tuple[int, int]]:
+        if not hasattr(self, "nodes"):
+            self.nodes = []
+            for i in range(self.left[0], self.right[0] + 1):
+                for j in range(self.top[0], self.bottom[0] + 1):
+                    self.nodes.append((i, j))
+        return self.nodes
+    
+    def has_node(self, node: tuple[int, int]) -> bool:
+        return node[0] >= self.left[0] and node[0] <= self.right[0] and node[1] >= self.top[0] and node[1] <= self.bottom[0]
+    
+    def determine_chiplets(self):
+        module_x_size = self.right - self.left + 1
+        module_y_size = self.bottom - self.top + 1
+        self.chiplet_x_num = (module_x_size - 1) // self.fab_model.max_square_size + 1
+        self.chiplet_y_num = (module_y_size - 1) // self.fab_model.max_square_size + 1
+        chiplet_x_size = module_x_size // self.chiplet_x_num
+        chiplet_y_size = module_y_size // self.chiplet_y_num
+        large_chiplet_x_num = module_x_size - self.chiplet_x_num * chiplet_x_size
+        large_chiplet_y_num = module_y_size - self.chiplet_y_num * chiplet_y_size
+        self.chiplets: list[ComputeChiplet] = []
+        self.chiplet_matrix: dict[tuple[int, int], ComputeChiplet] = {}
+        for i in range(self.chiplet_x_num):
+            for j in range(self.chiplet_y_num):
+                self.chiplets.append(ComputeChiplet(
+                    FuncArea.fab_model.get_intra_fide(
+                        (chiplet_x_size + int(i < large_chiplet_x_num)) * (chiplet_y_size + int(j < large_chiplet_y_num))
+                    ),
+                    (i, j),
+                    self.left + i * chiplet_x_size + min(i, large_chiplet_x_num),
+                    self.top + j * chiplet_y_size + min(j, large_chiplet_y_num),
+                    self.left + (i + 1) * chiplet_x_size + min(i + 1, large_chiplet_x_num) - 1,
+                    self.top + (j + 1) * chiplet_y_size + min(j + 1, large_chiplet_y_num) - 1,
+                    FuncArea.fab_model.compute_geometry,
+                ))
+                self.chiplet_matrix[(i, j)] = self.chiplets[-1]
+        self.intra_gaps: list[IntraComputeGap] = []
+        for i in range(self.chiplet_x_num - 1):
+            self.intra_gaps.append(IntraComputeGap(
+                1, 
+                (
+                    self.left + (i + 1) * chiplet_x_size + min(i + 1, large_chiplet_x_num) - 1, 
+                    self.left + (i + 1) * chiplet_x_size + min(i + 1, large_chiplet_x_num)
+                ), 
+                self.top[0], 
+                self.bottom[0],
+            ))
+        for j in range(self.chiplet_y_num - 1):
+            self.intra_gaps.append(IntraComputeGap(
+                0,
+                (
+                    self.top + (j + 1) * chiplet_y_size + min(j + 1, large_chiplet_y_num) - 1, 
+                    self.top + (j + 1) * chiplet_y_size + min(j + 1, large_chiplet_y_num)
+                ),
+                self.left[0],
+                self.right[0],
+            ))
+    
+    def get_chiplets(self) -> list[ComputeChiplet]:
+        if not hasattr(self, "chiplets"):
+            self.determine_chiplets()
+        return self.chiplets
+    
+    def get_intra_gaps(self) -> list[IntraComputeGap]:
+        """
+        Get the gaps in the compute module.
+
+        Returns:
+            intra_gaps (list[IntraComputeGap]): The list of gaps in the compute module.
+        """
+        if not hasattr(self, "intra_gaps"):
+            self.determine_chiplets()
+        return self.intra_gaps
+
+    def get_platform_station_pairs(self) -> list[tuple[tuple[int, int], tuple[int, int]]]:
+        """
+        Get the platform and station pairs in the compute module.
+
+        Returns:
+            platforms_and_stations (list[tuple[tuple[int, int], tuple[int, int]]]): The list of platforms and stations in the compute module.
+        """
+        if not hasattr(self, "platforms_and_stations"):
+            self.platforms_and_stations: list[tuple[tuple[int, int], tuple[int, int]]] = []
+            for coupler in self.left[2].get_couplers().values():
+                self.platforms_and_stations.append((coupler.qubit_v, coupler.qubit_u))
+            for coupler in self.top[2].get_couplers().values():
+                self.platforms_and_stations.append((coupler.qubit_v, coupler.qubit_u))
+            for coupler in self.right[2].get_couplers().values():
+                self.platforms_and_stations.append((coupler.qubit_u, coupler.qubit_v))
+            for coupler in self.bottom[2].get_couplers().values():
+                self.platforms_and_stations.append((coupler.qubit_u, coupler.qubit_v))
+        return self.platforms_and_stations
+
+    def get_node_chiplet(self, node: tuple[int, int]) -> ComputeChiplet:
+        """
+        Get the compute chiplet that contains the node.
+
+        Args:
+            node (tuple[int, int]): The coordinate of the node.
+
+        Returns:
+            ComputeChiplet: The compute chiplet that contains the node.
+        """
+        for chiplet in self.get_chiplets():
+            if chiplet.has_node(node):
+                return chiplet
+        raise ValueError(f"Node {node} is not in any chiplet in the compute module {self}")
+
+    def get_chiplet_platforms(self, chiplet: ComputeChiplet) -> set[tuple[int, int]]:
+        """
+        Get the platforms in the compute chiplet.
+
+        Args:
+            chiplet (ComputeChiplet): The compute chiplet.
+
+        Returns:
+            platforms (set[tuple[int, int]]): The set of platforms in the compute chiplet.
+        """
+        assert chiplet in self.get_chiplets(), f"chiplet {chiplet} is not in the compute module {self}"
+        platforms: set[tuple[int, int]] = set()
+        for platform, _ in self.get_platform_station_pairs():
+            if chiplet.has_node(platform):
+                platforms.add(platform)
+        return platforms
+
+    def get_distance(self, source: tuple[int, int], target: tuple[int, int]) -> int:
+        """
+        Get the distance between two nodes in the compute module, which is the number of edges in the shortest path.
+        # TODO: Find the shortest path considering the topology of chiplet in the compute module.
+
+        Args:
+            source (tuple[int, int]): The coordinate of the source node.
+            target (tuple[int, int]): The coordinate of the target node.
+
+        Returns:
+            distance (int): The distance between the two nodes, which is the number of edges in the shortest path.
+        """
+        assert self.has_node(source), f"source {source} is not in the compute module {self}"
+        assert self.has_node(target), f"target {target} is not in the compute module {self}"
+        return abs(source[0] - target[0]) + abs(source[1] - target[1])
+    
+    def get_inter_distance(self, source: tuple[int, int], target: tuple[int, int]) -> int:
+        """
+        Get the number of inter-chiplet coupler in the shortest path between two nodes in the compute module.
+
+        Args:
+            source (tuple[int, int]): The coordinate of the source node.
+            target (tuple[int, int]): The coordinate of the target node.
+
+        Returns:
+            distance (int): The number of inter-chiplet coupler in the shortest path between the two nodes.
+        """
+        assert self.has_node(source), f"source {source} is not in the compute module {self}"
+        assert self.has_node(target), f"target {target} is not in the compute module {self}"
+        source_chiplet = self.get_node_chiplet(source)
+        target_chiplet = self.get_node_chiplet(target)
+        source_chiplet_coord = source_chiplet.in_module_coord
+        target_chiplet_coord = target_chiplet.in_module_coord
+        return abs(source_chiplet_coord[0] - target_chiplet_coord[0]) + abs(source_chiplet_coord[1] - target_chiplet_coord[1])
+
+    def get_nearest_platform(self, node: tuple[int, int]) -> tuple[int, int]:
+        """
+        Get the nearest platform to the node in the compute module.
+
+        Args:
+            node (tuple[int, int]): The coordinate of the node.
+
+        Returns:
+            tuple[int, int]: The coordinate of the nearest platform.
+        """
+        assert self.has_node(node), f"node {node} is not in the compute module {self}"
+        chiplet = self.get_node_chiplet(node)
+        left_inter_distance = chiplet.in_module_coord[0] if self.left[2] else int(math.inf)
+        top_inter_distance = chiplet.in_module_coord[1] if self.top[2] else int(math.inf)
+        right_inter_distance = self.chiplet_x_num - chiplet.in_module_coord[0] - 1 if self.right[2] else int(math.inf)
+        bottom_inter_distance = self.chiplet_y_num - chiplet.in_module_coord[1] - 1 if self.bottom[2] else int(math.inf)
+        min_inter_distance = min(left_inter_distance, top_inter_distance, right_inter_distance, bottom_inter_distance)
+        nearest_chiplets: list[ComputeChiplet] = []
+        if left_inter_distance == min_inter_distance:
+            nearest_chiplets.append(self.chiplet_matrix[(0, chiplet.in_module_coord[1])])
+        if top_inter_distance == min_inter_distance:
+            nearest_chiplets.append(self.chiplet_matrix[(chiplet.in_module_coord[0], 0)])
+        if right_inter_distance == min_inter_distance:
+            nearest_chiplets.append(self.chiplet_matrix[(self.chiplet_x_num - 1, chiplet.in_module_coord[1])])
+        if bottom_inter_distance == min_inter_distance:
+            nearest_chiplets.append(self.chiplet_matrix[(chiplet.in_module_coord[0], self.chiplet_y_num - 1)])
+            
+        min_distance = int(math.inf)
+        nearest_platform = None
+        for nearest_chiplet in nearest_chiplets:
+            for platform in self.get_chiplet_platforms(nearest_chiplet):
+                distance = self.get_distance(node, platform)
+                if distance < min_distance:
+                    min_distance = distance
+                    nearest_platform = platform
+        assert nearest_platform is not None, f"No metro system in the package!!!"
+        return nearest_platform

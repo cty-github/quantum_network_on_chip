@@ -140,7 +140,7 @@ class QuNoCEnv(gym.Env):
             dict | None: The deserialized action dictionary or None if the action is invalid.
         """
         action_dict = {
-            "module": self.package.get_physical_qubit_area((action_vector[0], action_vector[1])),
+            "module": self.package.get_node_area((action_vector[0], action_vector[1])),
             "template": DesignTemplate(action_vector[2]),
             "orient": DesignOrientation(action_vector[3]),
             "interval": (action_vector[4] + 1) * self.fab_model.max_square_size,
@@ -159,7 +159,7 @@ class QuNoCEnv(gym.Env):
         """
         observation = np.zeros((5, *self.package_size), dtype=np.int32)
         for node in self.package.package_graph.nodes:
-            area = self.package.get_physical_qubit_area(node)
+            area = self.package.get_node_area(node)
             assert area is not None, "Area is None during layout design."
             if isinstance(area, ComputeModule):
                 observation[:, node[0], node[1]] = [
