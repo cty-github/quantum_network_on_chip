@@ -200,7 +200,7 @@ class Package:
         interchange (set[Coupler]): The set of couplers which are used for interchange.
 
         metro_topology (nx.Graph): The subgraph view of package_graph recording the topology of transfer qubits in the package.
-        interchange_dict (dict[TransferChiplet, dict[TransferChiplet, list[TransferChiplet]]]): The dictionary recording the interchange path between transfer chiplets.
+        interchange_dict (dict[TransferChiplet, dict[TransferChiplet, Path]]): The dictionary recording the interchange path between transfer chiplets.
     """
 
     def __init__(self, 
