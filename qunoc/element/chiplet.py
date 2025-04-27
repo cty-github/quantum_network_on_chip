@@ -33,7 +33,7 @@ class QubitRole(Enum):
     """
     Enumerate of the roles of the qubit in the package for routing.
     """
-    Data = 0
+    Register = 0
     Platform = auto()
     Balise = auto()
     Station = auto()
@@ -929,7 +929,7 @@ class ComputeModule(FuncArea):
             nearest_chiplets.append(self.chiplet_matrix[(self.chiplet_x_num - 1, chiplet.in_module_coord[1])])
         if bottom_inter_distance == min_inter_distance:
             nearest_chiplets.append(self.chiplet_matrix[(chiplet.in_module_coord[0], self.chiplet_y_num - 1)])
-            
+
         min_distance = int(math.inf)
         nearest_platform = None
         for nearest_chiplet in nearest_chiplets:
@@ -940,3 +940,48 @@ class ComputeModule(FuncArea):
                     nearest_platform = platform
         assert nearest_platform is not None, f"No metro system in the package!!!"
         return nearest_platform
+
+    def get_fidelity(self, source: tuple[int, int], target: tuple[int, int]) -> float:
+        """
+        Get the fidelity of the shortest path between two nodes in the compute module.
+
+        Args:
+            source (tuple[int, int]): The coordinate of the source node.
+            target (tuple[int, int]): The coordinate of the target node.
+
+        Returns:
+            fidelity (float): The fidelity of the shortest path between the two nodes.
+        """
+        assert self.has_node(source), f"source {source} is not in the compute module {self}"
+        assert self.has_node(target), f"target {target} is not in the compute module {self}"
+        fidelity = 1.0
+        left_node, right_node = source, target if source[0] < target[0] else target, source
+        left_chiplet, right_chiplet = self.get_node_chiplet(left_node), self.get_node_chiplet(right_node)
+        if left_chiplet.in_module_coord[0] == right_chiplet.in_module_coord[0]:
+            fidelity *= left_chiplet.intra_fide ** (right_node[0] - left_node[0])
+        else:
+            for i in range(left_chiplet.in_module_coord[0], right_chiplet.in_module_coord[0] + 1):
+                if i == left_chiplet.in_module_coord[0]:
+                    fidelity *= left_chiplet.intra_fide ** (left_chiplet.right - left_node[0])
+                elif i == right_chiplet.in_module_coord[0]:
+                    curr_chiplet = self.chiplet_matrix[(i, left_chiplet.in_module_coord[1])]
+                    fidelity *= curr_chiplet.intra_fide ** (right_node[0] - curr_chiplet.left)
+                else:
+                    curr_chiplet = self.chiplet_matrix[(i, left_chiplet.in_module_coord[1])]
+                    fidelity *= curr_chiplet.intra_fide ** (curr_chiplet.right - curr_chiplet.left)
+        moved_left_node = (right_node[0], left_node[1])
+        top_node, bottom_node = moved_left_node, right_node if moved_left_node[1] < right_node[1] else right_node, moved_left_node
+        top_chiplet, bottom_chiplet = self.get_node_chiplet(top_node), self.get_node_chiplet(bottom_node)
+        if top_chiplet.in_module_coord[1] == bottom_chiplet.in_module_coord[1]:
+            fidelity *= top_chiplet.intra_fide ** (bottom_node[1] - top_node[1])
+        else:
+            for i in range(top_chiplet.in_module_coord[1], bottom_chiplet.in_module_coord[1] + 1):
+                if i == top_chiplet.in_module_coord[1]:
+                    fidelity *= top_chiplet.intra_fide ** (top_chiplet.bottom - top_node[1])
+                elif i == bottom_chiplet.in_module_coord[1]:
+                    fidelity *= bottom_chiplet.intra_fide ** (bottom_node[1] - bottom_chiplet.top)
+                else:
+                    curr_chiplet = self.chiplet_matrix[(top_chiplet.in_module_coord[0], i)]
+                    fidelity *= curr_chiplet.intra_fide ** (curr_chiplet.bottom - curr_chiplet.top)
+        fidelity *= FuncArea.fab_model.inter_fide ** self.get_inter_distance(source, target)
+        return fidelity

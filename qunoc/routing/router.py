@@ -167,7 +167,7 @@ class Router:
         """
         
         logic_data_qubit_num = self.program.data_qubit_num
-        physical_data_qubit_list = self.package.get_data_qubit_list()
+        physical_data_qubit_list = self.package.get_registers()
         if logic_data_qubit_num > len(physical_data_qubit_list):
             raise ValueError("No enough physical qubits to map logic qubits.")
         for i in range(logic_data_qubit_num):
@@ -446,7 +446,7 @@ class Router:
         candidate_local_freq = dict()
         for i in range(chiplet_left, chiplet_right + 1):
             for j in range(chiplet_top, chiplet_bottom + 1):
-                if self.qubit_topology.nodes[(i, j)]["role"] == QubitRole.Data:
+                if self.qubit_topology.nodes[(i, j)]["role"] == QubitRole.Register:
                     cand_qubit = self.curr_p2l_map[(i, j)]
                     if cand_qubit not in stand_qubits:
                         candidate_local_freq[cand_qubit] = self.local_gate_freq[cand_qubit]

@@ -82,9 +82,7 @@ class IntraComputeRoad(Road):
         self.module = module
 
     def get_fidelity(self) -> float:
-        distance = self.module.get_distance(self.source, self.target)
-        inter_distance = self.module.get_inter_distance(self.source, self.target)
-        return self.module.fab_model ** (distance - inter_distance) * self.module.inter_fide ** inter_distance
+        return self.module.get_fidelity(self.source, self.target)
 
 class IntraTransferRoad(Road):
     """
@@ -520,11 +518,13 @@ class Package:
             if isinstance(func_area, ComputeModule):
                 self.package_graph.nodes[node]["type"] = NodeType.Compute
                 self.package_graph.nodes[node]["qubit"].type = NodeType.Compute
+                self.package_graph.nodes[node]["qubit"].role = QubitRole.Register
                 self.compute_nodes.add(node)
                 self.transfer_nodes.discard(node)
             elif isinstance(func_area, TransferLine):
                 self.package_graph.nodes[node]["type"] = NodeType.Transfer
                 self.package_graph.nodes[node]["qubit"].type = NodeType.Transfer
+                self.package_graph.nodes[node]["qubit"].role = QubitRole.Balise
                 self.transfer_nodes.add(node)
                 self.compute_nodes.discard(node)
 
@@ -1063,31 +1063,21 @@ class Package:
         cost = self.estimate_cost()
         return -math.log(1 - fide_avg) / cost
 
-    def get_data_qubit_num(self) -> int:
+    def get_registers(self) -> list[tuple[int, int]]:
         """
-        Get the number of physical qubits with data role in the package.
+        Get the list of register qubits in the package.
+        Note: call this function before routing.
 
         Returns:
-            int: The number of data qubits.
+            list[tuple[int, int]]: The list of register qubits.
         """
-        cnt = 0
-        for node in self.qubit_topology.nodes:
-            if self.qubit_topology.nodes[node]["qubit"].role == QubitRole.Data:
-                cnt += 1
-        return cnt
-
-    def get_data_qubit_list(self) -> list[tuple[int, int]]:
-        """
-        Get the list of physical qubits with data role in the package.
-
-        Returns:
-            list[tuple[int, int]]: The list of data qubits.
-        """
-        data_qubit_list = []
-        for node in self.qubit_topology.nodes:
-            if self.qubit_topology.nodes[node]["qubit"].role == QubitRole.Data:
-                data_qubit_list.append(node)
-        return data_qubit_list
+        if not hasattr(self, "registers"):
+            self.registers = []
+            for compute_module in self.compute_modules:
+                for node in compute_module.get_nodes():
+                    if self.package_graph.nodes[node]["qubit"].role == QubitRole.Register:
+                        self.registers.append(node)
+        return self.registers
 
     def get_node_chiplet(self, node: tuple[int, int]) -> Chiplet:
         """
@@ -1127,17 +1117,17 @@ class Package:
                 return line
         raise ValueError("Invalid physical qubit: {}".format(node))
 
-    def get_area_graph(self, area: FuncArea) -> nx.Graph:
-        """
-        Get the graph of function area in the package.
+    # def get_area_graph(self, area: FuncArea) -> nx.Graph:
+    #     """
+    #     Get the graph of function area in the package.
 
-        Args:
-            area (FuncArea): The function area.
+    #     Args:
+    #         area (FuncArea): The function area.
 
-        Returns:
-            nx.Graph: The subgraph view of qubit topology in the function area.
-        """
-        return self.qubit_topology.subgraph(area.get_nodes())
+    #     Returns:
+    #         nx.Graph: The subgraph view of qubit topology in the function area.
+    #     """
+    #     return self.qubit_topology.subgraph(area.get_nodes())
 
     # @staticmethod
     # def edge_metro_weight(u: tuple[int, int], v: tuple[int, int], attrs: dict) -> int:
