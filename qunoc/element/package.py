@@ -3,6 +3,7 @@ import random
 from itertools import product
 from collections import defaultdict
 
+import pickle
 import networkx as nx
 from anytree import Node
 import matplotlib.pyplot as plt
@@ -515,6 +516,7 @@ class Package:
     def complete_area(self, func_area: FuncArea):
         """
         Complete the node information of the package graph for nodes in function area.
+
         Note: called after the change of function area.
 
         Args:
@@ -844,6 +846,7 @@ class Package:
     def update_chiplets_and_gaps(self):
         """
         Update the chiplet and gap information from function areas.
+
         Note: called in the complete_package function.
         """
         self.compute_chiplets: list[ComputeChiplet] = []
@@ -867,6 +870,7 @@ class Package:
     def analysis_metro(self):
         """
         Update and analyze the metro topology.
+
         Note: called in the complete_package function.
         """
         self.metro_topology: nx.Graph = nx.Graph()
@@ -900,10 +904,10 @@ class Package:
     def complete_package(self):
         """
         Complete the package graph after design the function area.
-        Note: called before estimation or after design.
+        1) Update the chiplet and gap information from function areas.
+        2) Analyze the metro topology.
 
-        1. Update the chiplet and gap information from function areas.
-        2. Analyze the metro topology.
+        Note: called before estimation or after design.
         """
         self.update_chiplets_and_gaps()
         self.analysis_metro()
@@ -945,9 +949,24 @@ class Package:
     #     """
     #     return -math.log(attrs["coupler"].fide)
 
-    def get_shortest_path(self, source: tuple[int, int], target: tuple[int, int]) -> tuple[Path, float]:
+    def has_no_transfer_path(self, source: tuple[int, int], target: tuple[int, int]) -> bool:
         """
-        Get the shortest path between two physical qubits.
+        Check if there is a path between two physical qubits without transfer chiplet.
+
+        Args:
+            source (tuple[int, int]): The source node of the transfer pair.
+            target (tuple[int, int]): The target node of the transfer pair
+
+        Returns:
+            bool: Whether there is a path between the two nodes.
+        """
+        source_area = self.get_node_area(source)
+        target_area = self.get_node_area(target)
+        return isinstance(source_area, ComputeModule) and source_area == target_area
+
+    def get_shortest_no_transfer_path(self, source: tuple[int, int], target: tuple[int, int]) -> tuple[Path, float] | None:
+        """
+        Get the shortest path between two physical qubits without transfer chiplet.
 
         Args:
             source (tuple[int, int]): The source node of the transfer pair.
@@ -955,7 +974,25 @@ class Package:
 
         Returns:
             path (Path): The path with highest fidelity.
-            fidelity (float): The fidelity of the path
+            fidelity (float): The fidelity of the path.
+        """
+        assert self.has_no_transfer_path(source, target), "No path without transfer chiplet between {} and {}".format(source, target)
+        source_area = self.get_node_area(source)
+        path = Path([IntraComputeRoad(source, target, source_area)])
+        fidelity = path.get_fidelity()
+        return path, fidelity
+    
+    def get_shortest_transfer_path(self, source: tuple[int, int], target: tuple[int, int]) -> tuple[Path, float]:
+        """
+        Get the shortest path between two physical qubits with transfer chiplet.
+
+        Args:
+            source (tuple[int, int]): The source node of the transfer pair.
+            target (tuple[int, int]): The target node of the transfer pair
+
+        Returns:
+            path (Path): The path with highest fidelity.
+            fidelity (float): The fidelity of the path.
         """
         source_area = self.get_node_area(source)
         if isinstance(source_area, ComputeModule):
@@ -1000,9 +1037,23 @@ class Package:
         
         path = Path(roads)
         fidelity = path.get_fidelity()
-        if isinstance(source_area, ComputeModule) and source_area == target_area:
-            no_transfer_path = Path([IntraComputeRoad(source, target, source_area)])
-            no_transfer_fidelity = no_transfer_path.get_fidelity()
+        return path, fidelity
+
+    def get_shortest_path(self, source: tuple[int, int], target: tuple[int, int]) -> tuple[Path, float]:
+        """
+        Get the shortest path between two physical qubits.
+
+        Args:
+            source (tuple[int, int]): The source node of the transfer pair.
+            target (tuple[int, int]): The target node of the transfer pair
+
+        Returns:
+            path (Path): The path with highest fidelity.
+            fidelity (float): The fidelity of the path.
+        """
+        path, fidelity = self.get_shortest_transfer_path(source, target)
+        if self.has_no_transfer_path(source, target):
+            no_transfer_path, no_transfer_fidelity = self.get_shortest_no_transfer_path(source, target)
             if no_transfer_fidelity > fidelity:
                 path = no_transfer_path
                 fidelity = no_transfer_fidelity
@@ -1011,6 +1062,7 @@ class Package:
     def estimate_transfer(self, num: int = None) -> tuple[float, float]:
         """
         Estimate the transfer fidelity of the package.
+
         Note: call complete_package() before this function.
 
         Args:
@@ -1031,6 +1083,7 @@ class Package:
     def estimate_cost(self) -> float:
         """
         Estimate the cost of the package considering the yield cost.
+
         Note: call complete_package() before this function.
 
         Returns:
@@ -1046,6 +1099,7 @@ class Package:
     def estimate_score(self, num: int = None) -> float:
         """
         Estimate the efficiency of package considering the yield cost.
+
         Note: call complete_package() before this function.
 
         Args:
@@ -1064,6 +1118,7 @@ class Package:
     def get_registers(self) -> list[tuple[int, int]]:
         """
         Get the list of register qubits in the package.
+
         Note: call this function before routing.
 
         Returns:
@@ -1242,3 +1297,24 @@ class Package:
         if save_path:
             plt.savefig(save_path, bbox_inches="tight")
         plt.close()
+
+    def load(self, path: str):
+        """
+        Load the package from a file.
+
+        Args:
+            path (str): The path to load the package.
+        """
+        with open(path, "rb") as f:
+            package = pickle.load(f)
+            self.__dict__.update(package.__dict__)
+
+    def save(self, path: str):
+        """
+        Save the package to a file.
+
+        Args:
+            path (str): The path to save the package.
+        """
+        with open(path, "wb") as f:
+            pickle.dump(self, f)

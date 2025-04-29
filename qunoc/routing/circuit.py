@@ -297,6 +297,7 @@ class BoardingStage(CircuitStage):
     def add_alight_action(self, action: Alight) -> bool:
         """
         Add an Alight to the boarding stage.
+
         Note: The action is added to the end of the boarding actions list.
 
         Args:
@@ -333,6 +334,7 @@ class BoardingStage(CircuitStage):
     def add_interchange_action(self, action: Interchange) -> bool:
         """
         Add an Interchange to the boarding stage.
+
         Note: The action is added to the end of the boarding actions list.
 
         Args:
@@ -363,6 +365,7 @@ class BoardingStage(CircuitStage):
     def add_board_action(self, action: Board) -> bool:
         """
         Add a Board to the boarding stage.
+
         Note: The action is added to the end of the boarding actions list.
 
         Args:
@@ -393,6 +396,7 @@ class BoardingStage(CircuitStage):
     def add_ghz_action(self, action: GhzPreparation) -> bool:
         """
         Add a GhzPreparation to the boarding stage.
+
         Note: The action is added to the end of the boarding actions list.
 
         Args:
@@ -435,6 +439,7 @@ class RidingStage(CircuitStage):
     def add_transport_action(self, action: Transport) -> bool:
         """
         Add a Transport to the operating stage.
+
         Note: The action is added to the end of the operating actions list.
 
         Args:
@@ -467,6 +472,7 @@ class RidingStage(CircuitStage):
     def add_route_action(self, action: RouteToPlat) -> bool:
         """
         Add a RouteToPlat to the operating stage.
+
         Note: The action is added to the end of the operating actions list.
 
         Args:
@@ -488,6 +494,7 @@ class RidingStage(CircuitStage):
     def add_teleport_action(self, action: Teleport) -> bool:
         """
         Add a Teleport to the operating stage.
+
         Note: The action is added to the end of the operating actions list.
 
         Args:
@@ -507,6 +514,7 @@ class RidingStage(CircuitStage):
     def add_local_action(self, action: LocalGate) -> bool:
         """
         Add a LocalGate to the operating stage.
+
         Note: The action is added to the end of the operating actions list.
 
         Args:
@@ -568,6 +576,7 @@ class Circuit:
     def extend_stage(self, board_flag: bool):
         """
         Extend the circuit with a new stage.
+        
         Note: The new stage is added to the end of the circuit.
 
         Args:

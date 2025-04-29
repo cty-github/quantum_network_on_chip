@@ -10,7 +10,7 @@ class ComputeBlock:
     Represents a compute block in the quantum routing process.
 
     Attributes:
-        id (int): the id of the compute block.
+        id (int): The id of the compute block.
     """
     _counter = 0
 
@@ -26,8 +26,8 @@ class LocalBlock(ComputeBlock):
     Represents a compute block in which gates are executed locally.
 
     Attributes:
-        ctrl_gates (list[Control]): the control gates in the local block.
-        module (ComputeModule): the compute module where the local block is executed.
+        ctrl_gates (list[Control]): The control gates in the local block.
+        module (ComputeModule): The compute module where the local block is executed.
     """
 
     def __init__(self, ctrl_gates: list[Control], module: ComputeModule):
@@ -35,8 +35,8 @@ class LocalBlock(ComputeBlock):
         Initialize a LocalBlock.
 
         Args:
-            ctrl_gates (list[Control]): the control gates in the local block.
-            module (ComputeModule): the compute module where the local block is executed.
+            ctrl_gates (list[Control]): The control gates in the local block.
+            module (ComputeModule): The compute module where the local block is executed.
         """
         super().__init__()
         self.ctrl_gates = ctrl_gates
@@ -47,8 +47,8 @@ class TeleBlock(ComputeBlock):
     Represents a teleportation block in which gates are executed by teleportation.
 
     Attributes:
-        control_qubit (int): the control qubit of the teleportation block.
-        target_qubits (list[int]): the target qubits of the teleportation block.
+        control_qubit (int): The control qubit of the teleportation block.
+        target_qubits (list[int]): The target qubits of the teleportation block.
     """
 
     def __init__(self, control_qubit: int, target_qubits: list[int]):
@@ -56,8 +56,8 @@ class TeleBlock(ComputeBlock):
         Initialize a TeleBlock.
 
         Args:
-            control_qubit (int): the control qubit of the teleportation block.
-            target_qubits (list[int]): the target qubits of the teleportation block.
+            control_qubit (int): The control qubit of the teleportation block.
+            target_qubits (list[int]): The target qubits of the teleportation block.
         """
         super().__init__()
         self.control_qubit = control_qubit
@@ -68,10 +68,10 @@ class MoveBlock(ComputeBlock):
     Represents a move block in which gates are executed by moving qubits.
 
     Attributes:
-        ctrl_gates (list[Control]): the control gates in the move block.
-        involved_qubits (list[int]): the involved qubits in the move block.
-        chiplet (ComputeChiplet): the chiplet where the move block is executed.
-        swap_logic_pairs (list[tuple[int, int]]): the logic qubit pairs to be swapped.
+        ctrl_gates (list[Control]): The control gates in the move block.
+        involved_qubits (list[int]): The involved qubits in the move block.
+        chiplet (ComputeChiplet): The chiplet where the move block is executed.
+        swap_logic_pairs (list[tuple[int, int]]): The logic qubit pairs to be swapped.
     """
 
     def __init__(self, 
@@ -84,10 +84,10 @@ class MoveBlock(ComputeBlock):
         Initialize a MoveBlock.
 
         Args:
-            ctrl_gates (list[Control]): the control gates in the move block.
-            involved_qubits (list[int]): the involved qubits in the move block.
-            chiplet (ComputeChiplet): the chiplet where the move block is executed.
-            swap_logic_pairs (list[tuple[int, int]]): the logic qubit pairs to be swapped.
+            ctrl_gates (list[Control]): The control gates in the move block.
+            involved_qubits (list[int]): The involved qubits in the move block.
+            chiplet (ComputeChiplet): The chiplet where the move block is executed.
+            swap_logic_pairs (list[tuple[int, int]]): The logic qubit pairs to be swapped.
         """
         super().__init__()
         self.ctrl_gates = ctrl_gates
@@ -101,14 +101,18 @@ class Router:
     Represents a router for routing quantum programs on a package.
 
     Attributes:
-        package (Package): the package to be routed on.
-        program (Program): the quantum program to be routed.
-        qubit_topology: QubitTopology, the qubit topology of the package.
-        chiplet_topology: ChipletTopology, the chiplet topology of the package.
+        package (Package): The package to be routed on.
+        program (Program): The quantum program to be routed.
 
-        l2p_map: dict, map from logic qubit index to physical qubit index
-        p2l_map: dict, map from physical qubit index to logic qubit index
-        circuit: Circuit, the routing results with circuit level actions in stages.
+        init_l2p_map (dict[int, tuple[int, int]]): The initial mapping of logic qubits to physical qubits.
+        init_p2l_map (dict[tuple[int, int], int]): The initial mapping of physical qubits to logic qubits.
+        block_depend_graph (nx.DiGraph): The dependency graph of compute blocks.
+        action_depend_graph (nx.DiGraph): The dependency graph of actions.
+        circuit (Circuit): The physical quantum circuit after routing.
+
+        curr_l2p_map (dict[int, tuple[int, int]]): The current mapping of logic qubits to physical qubits.
+        curr_p2l_map (dict[tuple[int, int], int]): The current mapping of physical qubits to logic qubits.
+        local_gate_freq (dict[int, int]): The dictionary recording frequency of local gates for each logic qubit.
     """
 
     def __init__(self, package: Package, program: Program):
@@ -116,15 +120,15 @@ class Router:
         Initialize a Router.
 
         Args:
-            package (Package): the package to be routed on.
-            program (Program): the quantum program to be routed.
+            package (Package): The package to be routed on.
+            program (Program): The quantum program to be routed.
         """
         self.package = package
         self.program = program
 
         # self.qubit_topology = package.qubit_topology
         # self.chiplet_topology = package.chiplet_topology
-        self.metro_topology = package.metro_topology
+        # self.metro_topology = package.metro_topology
         # self.platform_list = package.get_platform_list()
         # self.station_list = package.get_station_list()
         # self.interchange_list = package.get_interchange_list()
@@ -147,22 +151,22 @@ class Router:
     def route_program_on_package(self):
         """
         Route the program on the package.
+        1) map logic qubits to physical qubits;
+        2) determine compute blocks;
+        3) transform compute blocks into circuit actions;
+        4) schedule actions to circuit.
         """
         self.map_qubits()
         self.curr_l2p_map = deepcopy(self.init_l2p_map)
         self.curr_p2l_map = deepcopy(self.init_p2l_map)
-
         self.determine_compute_blocks()
-
         self.transform_compute_blocks()
-
         self.circuit = Circuit(self.package, self.program.data_qubit_num, self.init_l2p_map, self.init_p2l_map, self.action_depend_graph)
         self.schedule_action_to_circuit()
 
     def map_qubits(self):
         """
-        Map logic qubits to physical qubits.
-        Left qubits beside the chiplet gaps, and take rest qubits in compute chiplets as compute qubits.
+        Map logic qubits to physical qubits which play as registers.
         """
         logic_data_qubit_num = self.program.data_qubit_num
         physical_data_qubit_list = self.package.get_registers()
@@ -192,14 +196,14 @@ class Router:
     def determine_compute_blocks(self):
         """
         Schedule control gates into compute blocks, either TeleBlock or MoveBlock.
-        Compute criteria: sequentially check gates in commutable block
+
+        Compute criteria: sequentially check gates in commutable block, 
         1) LocalBlock: collect gates whose control qubit and target qubit are in the same compute area and can realize with higher fidelity without transfer line.
         2) TeleBlock: collect following gates having the same control qubit with the first gate, if #gate > 2, then form a TeleBlock.
         3) MoveBlock: collect following gates, if #gate > #qubits*(#qubits-1)//4 and #gate < max(chiplet_capacity). If #gate > 2, then form a MoveBlock.
         4) Otherwise, form a TeleBlock.
-        Note: if all left gates in the commutable block is collected, then check the next commutable block.
 
-        self.compute_blocks: list[TeleBlock or MoveBlock], list of compute blocks.
+        Note: If all gates in the commutable block is collected, then check the next commutable block immediately.
         """
         for gate_id in self.gate_depend_graph.nodes:
             self.gate_depend_graph.nodes[gate_id]["pred"] = list(self.gate_depend_graph.predecessors(gate_id))
@@ -323,68 +327,24 @@ class Router:
                     for depend_block_id in depend_block_ids:
                         assert depend_block_id != move_block.id
                         self.block_depend_graph.add_edge(depend_block_id, move_block.id)
-                
-        # commute_blocks_copy = copy.deepcopy(self.commutable_blocks)
-        # last_tele_blocks = None
-        # while len(commute_blocks_copy) > 0:
-        #     commute_block = commute_blocks_copy.pop(0)
-
-        #     if last_tele_blocks:
-        #         max_extend_list = []
-        #         max_extend_block_index = -1
-        #         max_extend_type = None
-        #         max_gate_cluster = None
-        #         max_involved_qubits = None
-        #         for i in len(last_tele_blocks):
-        #             extend_list_tele = self.extend_to_tele_block(last_tele_blocks[i], commute_block)
-        #             if len(extend_list_tele) > len(max_extend_list):
-        #                 max_extend_list = extend_list_tele
-        #                 max_extend_block_index = i
-        #                 max_extend_type = 'tele'
-        #             extend_list_move, gate_cluster, involved_qubits = self.extend_to_move_block(last_tele_blocks[i], commute_block)
-        #             if len(extend_list_move) > len(max_extend_list):
-        #                 max_extend_list = extend_list_move
-        #                 max_extend_block_index = i
-        #                 max_extend_type = 'move'
-        #                 max_gate_cluster = gate_cluster
-        #                 max_involved_qubits = involved_qubits
-        #         for i in len(last_tele_blocks):
-        #             if i != max_extend_block_index:
-        #                 self.compute_blocks.append(last_tele_blocks[i])
-        #         if len(max_extend_list) > 0:
-        #             if max_extend_type == 'tele':
-        #                 tele_block = last_tele_blocks[max_extend_block_index]
-        #                 tele_block.target_qubits.extend([commute_block[i][1] for i in max_extend_list])
-        #                 self.compute_blocks.append(tele_block)
-        #                 for i in sorted(max_extend_list, reverse=True):
-        #                     commute_block.pop(i)
-        #             elif max_extend_type == 'move':
-        #                 chiplet = self.determine_chiplet(max_involved_qubits)
-        #                 move_block = MoveBlock(max_gate_cluster, max_involved_qubits, chiplet)
-        #                 self.compute_blocks.append(move_block)
-        #                 for i in sorted(max_extend_list, reverse=True):
-        #                     commute_block.pop(i)
-        #                 self.move_qubits_in_block(max_involved_qubits, chiplet)
-                    
-        #     local_blocks, pop_list = self.scan_local_block(commute_block)
-        #     for i in sorted(pop_list, reverse=True):
-        #         commute_block.pop(i)
-        #     self.compute_blocks.extend(local_blocks)
-        #     last_tele_blocks = self.scan_tele_block(commute_block)
-
-        # for i in range(len(last_tele_blocks)):
-        #     self.compute_blocks.append(last_tele_blocks[i])
 
     def check_local_gate(self, gate: Control) -> ComputeModule | None:
         """
         Check if the gate is a local gate.
+
         Local criteria: transfer chiplet involved in the shortest path.
+
+        Args:
+            gate (Control): The control gate to be checked.
+
+        Returns:
+            ComputeModule | None: The compute module to which the gate belongs if the gate is a local gate, otherwise None.
         """
         shortest_path, _ = self.package.get_shortest_path(self.curr_l2p_map[gate.control_qubit], self.curr_l2p_map[gate.target_qubit])
-        for node in shortest_path:
-            if self.qubit_topology.nodes[node]["type"] == NodeType.Transfer:
-                return None
-        return self.package.get_node_area(self.curr_l2p_map[gate.control_qubit])
+        if len(shortest_path.roads) == 1:
+            return self.package.get_node_area(self.curr_l2p_map[gate.control_qubit])
+        else:
+            return None
     
     def check_move_gate(self, gate: Control, move_gates: list[Control]) -> bool:
         """
@@ -862,138 +822,3 @@ class Router:
             int, the estimated depth of the circuit.
         """
         return self.circuit.estimate_depth()
-
-    # @staticmethod
-    # def check_commutable_gate(gate, control_qubits, target_qubits) -> bool:
-    #     """
-    #     Check if the gate is commutable with previous gates.
-    #     Commutable criteria: 1) no common involved qubits; 2) share the same control qubit.
-    #     """
-
-    #     involved_qubits = control_qubits + target_qubits
-    #     if gate[0] not in involved_qubits and gate[1] not in involved_qubits:
-    #         return True
-    #     elif gate[0] in control_qubits and gate[0] not in target_qubits:
-    #         return True
-    #     else:
-    #         return False
-    
-    # def check_commutable_block(self):
-    #     """
-    #     Check the commutable blocks in the program.
-    #     Commutable criteria: 1) no common involved qubits; 2) share the same control qubit.
-
-    #     self.commutable_blocks: list[list[tuple]], list of commutable blocks, each commutable blocks contains commutable control gates.
-    #     """
-
-    #     program_copy = copy.deepcopy(self.program)
-    #     commute_block = []
-    #     while len(program_copy) > 0:
-    #         gate = program_copy.pop(0)
-    #         if gate == 'barrier':
-    #             continue
-    #         else:
-    #             commute_block.append(gate)
-    #             checked_control_qubits = [gate[0]]
-    #             checked_target_qubits = [gate[1]]
-    #             pop_list = []
-    #             for i in range(len(program_copy)):
-    #                 if program_copy[i] == 'barrier':
-    #                     pop_list.append(i)
-    #                     break
-    #                 else:
-    #                     if self.check_commutable_gate(program_copy[i], checked_control_qubits, checked_target_qubits):
-    #                         commute_block.append(program_copy[i])
-    #                         pop_list.append(i)
-    #                     if program_copy[i][0] not in checked_control_qubits:
-    #                         checked_control_qubits.append(program_copy[i][0])
-    #                     if program_copy[i][1] not in checked_target_qubits:
-    #                         checked_target_qubits.append(program_copy[i][1])
-    #             for i in sorted(pop_list, reverse=True):
-    #                 program_copy.pop(i)
-    #             self.commutable_blocks.append(commute_block)
-    #             commute_block = []
-
-    # def scan_local_block(self, commute_block):
-    #     """
-    #     Scan the commutable block and find local blocks.
-    #     """
-
-    #     pop_list = []
-    #     local_block_dict = dict()
-    #     for i in range(len(commute_block)):
-    #         area = self.check_local_gate(commute_block[i])
-    #         if area:
-    #             if area in local_block_dict:
-    #                 local_block_dict[area].append(commute_block[i])
-    #             else:
-    #                 local_block_dict[area] = [commute_block[i]]
-    #             if commute_block[i][0] not in self.local_gate_freq:
-    #                 self.local_gate_freq[commute_block[i][0]] = 1
-    #             else:
-    #                 self.local_gate_freq[commute_block[i][0]] += 1
-    #             if commute_block[i][1] not in self.local_gate_freq:
-    #                 self.local_gate_freq[commute_block[i][1]] = 1
-    #             else:
-    #                 self.local_gate_freq[commute_block[i][1]] += 1
-    #             pop_list.append(i)
-    #     local_blocks = []
-    #     for key, value in local_block_dict.items():
-    #         local_block = LocalBlock(value, key)
-    #         local_blocks.append(local_block)
-    #     return local_blocks, pop_list
-    
-    # def scan_tele_block(self, commute_block):
-    #     """
-    #     Scan the commutable block and find tele blocks.
-    #     """
-
-    #     tele_blocks = []
-    #     pop_list = []
-    #     while len(commute_block) > 0:
-    #         gate = commute_block.pop(0)
-    #         ctrl_qubit = gate[0]
-    #         common_ctrl_target_qubits = [gate[1]]
-    #         for i in range(len(commute_block)):
-    #             if commute_block[i][0] == ctrl_qubit:
-    #                 common_ctrl_target_qubits.append(commute_block[i][1])
-    #                 pop_list.append(i)
-    #         for i in sorted(pop_list, reverse=True):
-    #             commute_block.pop(i)
-    #         tele_block = TeleBlock(ctrl_qubit, common_ctrl_target_qubits)
-    #         tele_blocks.append(tele_block)
-    #     return tele_blocks
-
-    # def extend_to_tele_block(self, tele_block, commute_block):
-    #     """
-    #     Extend the tele block with next commute block as tele block to include more gates.
-    #     """
-
-    #     ctrl_qubit = tele_block.control_qubit
-    #     extend_list = []
-    #     for i in range(len(commute_block)):
-    #         if self.check_local_gate(commute_block[i]):
-    #             continue
-    #         if commute_block[i][0] == ctrl_qubit:
-    #             extend_list.append(i)
-    #     return extend_list
-
-    # def extend_to_move_block(self, tele_block, commute_block):
-    #     """
-    #     Extend the tele block with next commute block as move block to include more gates.
-    #     """
-
-    #     gate_cluster = [(tele_block.control_qubit, _) for _ in tele_block.target_qubits]
-    #     involved_qubits = [tele_block.control_qubit] + tele_block.target_qubits
-    #     extend_list = []
-    #     for i in range(len(commute_block)):
-    #         if self.check_local_gate(commute_block[i]):
-    #             continue
-    #         if self.check_move_gate(commute_block[i], gate_cluster, involved_qubits):
-    #             extend_list.append(i)
-    #             gate_cluster.append(commute_block[i])
-    #             if commute_block[i][0] not in involved_qubits:
-    #                 involved_qubits.append(commute_block[i][0])
-    #             if commute_block[i][1] not in involved_qubits:
-    #                 involved_qubits.append(commute_block[i][1])
-    #     return extend_list, gate_cluster, involved_qubits
