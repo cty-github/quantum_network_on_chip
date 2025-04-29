@@ -5,6 +5,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from stable_baselines3.common.policies import ActorCriticPolicy
 
+from ..utils.utils import get_unique_file_save_path, make_gif
 from .env import QuNoCEnv
 from ..element.package import Package
 
@@ -75,20 +76,23 @@ class LayoutAgent:
     Attributes:
         env (QuNoCEnv): The environment to train the agent.
         model (PPO): The PPO model.
+        result_dir (str): Directory to save the results.
     """
 
-    def __init__(self, env: QuNoCEnv, pre_trained_model_path: str = None):
+    def __init__(self, env: QuNoCEnv, pre_trained_model_path: str = None, result_dir: str = None):
         """
         Initialize the agent.
 
         Args:
             env (QuNoCEnv): The environment to train the agent.
             pre_trained_model_path (str): Path to the pre-trained model.
+            result_dir (str): Directory to save the results.
         """
         self.env = env
-        self.model = PPO(policy=LayoutPolicy, env=env, verbose=1)
+        self.model = PPO(LayoutPolicy, env, verbose = 1)
         if pre_trained_model_path:
-            self.model.load(pre_trained_model_path)
+            self.load(pre_trained_model_path)
+        self.result_dir = result_dir
 
     def train(self, total_timesteps: int = 10000):
         """
@@ -98,7 +102,8 @@ class LayoutAgent:
             total_timesteps (int): Total timesteps for training.
         """
         print("Training agent...")
-        self.model.learn(total_timesteps=total_timesteps)
+        self.model.learn(total_timesteps = total_timesteps)
+        self.save(f"{self.result_dir}layout_agent.pth")
     
     def design(self) -> Package:
         """
@@ -109,10 +114,16 @@ class LayoutAgent:
         """
         print("Designing layout...")
         state, _ = self.env.reset()
+        print("Initial score: ", self.env.estimate())
+        self.env.render("machine", get_unique_file_save_path(self.result_dir, "rl_process_", ".jpg"))
         done = False
         while not done:
             action, _ = self.model.predict(state, deterministic=True)
             state, reward, done, _, _ = self.env.step(action)
+            print("New action: ", action)
+            print("New score: ", self.env.estimate())
+            self.env.render("machine", get_unique_file_save_path(self.result_dir, "rl_process_", ".jpg"))
+        make_gif(self.result_dir, "rl_process_", ".jpg", "rl_process.gif")
         return self.env.best_package
 
     def load(self, path: str):

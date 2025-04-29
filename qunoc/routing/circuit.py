@@ -2,159 +2,264 @@ import networkx as nx
 from copy import deepcopy
 
 from ..element.benchmark import *
+from ..element.chiplet import ComputeModule
+from ..element.package import Package
 
 
 class CircuitAction:
+    """
+    Represents the action in the circuit.
+
+    Attributes:
+        id (int): Unique identifier for the action.
+    """
     _counter = 0
+
     def __init__(self):
+        """
+        Initialize a circuit action.
+        """
         self.id = CircuitAction._counter
         CircuitAction._counter += 1
 
-
 class BoardingAction(CircuitAction):
+    """
+    Represents the boarding action in the circuit.
+    """
+    
     def __init__(self):
+        """
+        Initialize a boarding action.
+        """
         super().__init__()
 
+class RidingAction(CircuitAction):
+    """
+    Represents the riding action in the circuit.
+    """
 
-class OperatingAction(CircuitAction):
     def __init__(self):
+        """
+        Initialize a riding action.
+        """
         super().__init__()
-
 
 class GhzPreparation(BoardingAction):
-    def __init__(self, qubit_num: int, logic_qubits: list[int], 
-                 source_physical_qubits: list[tuple[int, int]], 
-                 target_physical_qubits: list[tuple[int, int]]):
-        """
-        Action to prepare GHZ state.
+    """
+    Represents the action to prepare GHZ state.
 
-        qubit_num: int, number of ancilla qubits in the GHZ state
-        logic_qubits: list[int], the data qubits that the GHZ state is serving for
-        source_physical_qubits: list[node], the list of physical qubits where the GHZ state is prepared
-        target_physical_qubits: list[node], the list of physical qubits where the GHZ state will be routed to
-        """
+    Attributes:
+        qubit_num (int): Number of ancilla qubits in the GHZ state.
+        logic_qubits (list[int]): The data qubits that the GHZ state is serving for.
+        source_physical_qubits (list[tuple[int, int]]): The list of physical qubits where the GHZ state is prepared.
+        target_physical_qubits (list[tuple[int, int]]): The list of physical qubits where the GHZ state will be routed to.
+    """
 
+    def __init__(self, 
+            qubit_num: int, 
+            logic_qubits: list[int], 
+            source_physical_qubits: list[tuple[int, int]], 
+            target_physical_qubits: list[tuple[int, int]], 
+        ):
+        """
+        Initialize the GHZ preparation action.
+
+        Args:
+            qubit_num (int): Number of ancilla qubits in the GHZ state.
+            logic_qubits (list[int]): The data qubits that the GHZ state is serving for.
+            source_physical_qubits (list[tuple[int, int]]): The list of physical qubits where the GHZ state is prepared.
+            target_physical_qubits (list[tuple[int, int]]): The list of physical qubits where the GHZ state will be routed to.
+        """
         super().__init__()
         self.qubit_num = qubit_num
         self.logic_qubits = logic_qubits
         self.source_physical_qubits = source_physical_qubits
         self.target_physical_qubits = target_physical_qubits
 
-
 class Board(BoardingAction):
+    """
+    Represents the action of a logic qubit boarding the transfer chiplet.
+    
+    Attributes:
+        logic_qubit (int): The logic qubit to board.
+        station (tuple[int, int]): The physical qubit on transfer chiplet where the logic qubit is boarding.
+        platform (tuple[int, int]): The physical qubit on compute chiplet where the logic qubit is boarding.
+    """
+
     def __init__(self, logic_qubit: int, station: tuple[int, int], platform: tuple[int, int]):
         """
-        Action of logic qubit boarding the transfer chiplet.
+        Initialize the boarding action.
 
-        logic_qubit: int, the logic qubit to board
-        station: node, the physical qubit on transfer chiplet where the logic qubit is boarding
-        platform: node, the physical qubit on compute chiplet where the logic qubit is boarding
+        Args:
+            logic_qubit (int): The logic qubit to board.
+            station (tuple[int, int]): The physical qubit on transfer chiplet where the logic qubit is boarding.
+            platform (tuple[int, int]): The physical qubit on compute chiplet where the logic qubit is boarding.
         """
-
         super().__init__()
         self.logic_qubit = logic_qubit
         self.station = station
         self.platform = platform
 
-
 class Alight(BoardingAction):
+    """
+    Represents the action of a logic qubit alighting the transfer chiplet.
+    
+    Attributes:
+        logic_qubit (int): The logic qubit to alight.
+        station (tuple[int, int]): The physical qubit on transfer chiplet where the logic qubit is alighting.
+        platform (tuple[int, int]): The physical qubit on compute chiplet where the logic qubit is alighting.
+        exit_flag (bool): The flag marking if the logic qubit is needed to exit from the platform.
+    """
+
     def __init__(self, logic_qubit: int, station: tuple[int, int], platform: tuple[int, int], exit_flag: bool):
         """
-        Action of logic qubit alighting the transfer chiplet.
+        Initialize the alighting action.
 
-        logic_qubit: int, the logic qubit to alight
-        station: node, the physical qubit on transfer chiplet where the logic qubit is alighting
-        paltform: node, the physical qubit on compute chiplet where the logic qubit is alighting
-        exit_flag: bool, True if the logic qubit is needed to exit from the platform
+        Args:
+            logic_qubit (int): The logic qubit to alight.
+            station (tuple[int, int]): The physical qubit on transfer chiplet where the logic qubit is alighting.
+            platform (tuple[int, int]): The physical qubit on compute chiplet where the logic qubit is alighting.
+            exit_flag (bool): The flag marking if the logic qubit is needed to exit from the platform.
         """
-
         super().__init__()
         self.logic_qubit = logic_qubit
         self.station = station
         self.platform = platform
         self.exit_flag = exit_flag
 
-
 class Interchange(BoardingAction):
+    """
+    Represents the action of transferring a logic qubit between two transfer chiplets.
+    
+    Attributes:
+        logic_qubit (int): The logic qubit to transfer.
+        interchange (tuple[tuple[int, int], tuple[int, int]]): The edge between two transfer chiplets for transfer.
+    """
+
     def __init__(self, logic_qubit: int, interchange: tuple[tuple[int, int], tuple[int, int]]):
         """
-        Action to transfer logic qubit between two transfer chiplets.
-
-        logic_qubit: int, the logic qubit to transfer
-        interchange: edge, the edge between two transfer chiplets for transfer
+        Initialize the interchange action.
+        
+        Args:
+            logic_qubit (int): The logic qubit to transfer.
+            interchange (tuple[tuple[int, int], tuple[int, int]]): The edge between two transfer chiplets for transfer.
         """
-
         super().__init__()
         self.logic_qubit = logic_qubit
         self.interchange = interchange
             
+class Transport(RidingAction):
+    """
+    Represents the action to transport a logic qubit inside the transfer chiplet.
+    
+    Attributes:
+        logic_qubit (int): The logic qubit to transport.
+        source_physical_qubit (tuple[int, int]): The node where the transport starts.
+        target_physical_qubit (tuple[int, int]): The node where the transport ends.
+    """
 
-class Transport(OperatingAction):
     def __init__(self, logic_qubit: int, source_physical_qubit: tuple[int, int], target_physical_qubit: tuple[int, int]):
         """
-        Action to transport a logic qubit inside the transfer chiplet.
+        Initialize the transport action.
 
-        logic_qubit: int, the logic qubit to transport
-        source_physical_qubit: node, where the transport start
-        target_physical_qubit: node, where the transport end
+        Args:
+            logic_qubit (int): The logic qubit to transport.
+            source_physical_qubit (tuple[int, int]): The node where the transport starts.
+            target_physical_qubit (tuple[int, int]): The node where the transport ends.
         """
-
         super().__init__()
         self.logic_qubit = logic_qubit
         self.source_physical_qubit = source_physical_qubit
         self.target_physical_qubit = target_physical_qubit
 
+class RouteToPlat(RidingAction):
+    """
+    Represents the action of routing a data qubit to a platform.
+    
+    Attributes:
+        logic_qubit (int): The data qubit to route.
+        platform (tuple[int, int]): The physical qubit on compute chiplet to route to.
+        enter_flag (bool): The flag marking if the data qubit is needed to route onto the platform.
+    """
 
-class RouteToPlat(OperatingAction):
     def __init__(self, logic_qubit: int, platform: tuple[int, int], enter_flag: bool):
         """
-        Action of routing a data qubit to platform.
+        Initialize the routing action.
 
-        logic_qubit: int, the data qubit to route
-        platform: node, the physical qubit on compute chiplet to route to
-        enter_flag: bool, True if the data qubit is needed to route onto the platform
+        Args:
+            logic_qubit (int): The data qubit to route.
+            platform (tuple[int, int]): The physical qubit on compute chiplet to route to.
+            enter_flag (bool): The flag marking if the data qubit is needed to route onto the platform.
         """
-
         super().__init__()
         self.logic_qubit = logic_qubit
         self.platform = platform
         self.enter_flag = enter_flag
 
+class Teleport(RidingAction):
+    """
+    Represents the action to teleport a logic qubit using a prepared GHZ state.
+    
+    Attributes:
+        logic_qubit (int): The logic qubit to teleport.
+        platform (tuple[int, int]): The physical qubit on compute chiplet where the ancilla qubit is located.
+        control_flag (bool): The flag marking if the data qubit is the control qubit.
+    """
 
-class Teleport(OperatingAction):
     def __init__(self, logic_qubit: int, platform: tuple[int, int], control_flag: bool):
         """
-        Action to complete the teleporation given prepared GHZ state.
+        Initialize the teleportation action.
 
-        logic_qubit: int, the logic qubit to teleport
-        platform: node, the physical qubit on compute chiplet where the ancilla qubit is located
-        control_flag: bool, True if the data qubit is the control qubit
+        Args:
+            logic_qubit (int): The logic qubit to teleport.
+            platform (tuple[int, int]): The physical qubit on compute chiplet where the ancilla qubit is located.
+            control_flag (bool): The flag marking if the data qubit is the control qubit.
         """
-
         super().__init__()
         self.logic_qubit = logic_qubit
         self.platform = platform
         self.control_flag = control_flag
 
+class LocalGate(RidingAction):
+    """
+    Represents the action of applying a local gate on a compute module.
 
-class LocalGate(OperatingAction):
-    def __init__(self, logic_gate: Control, area: dict):
+    Attributes:
+        logic_gate (Control): The logical control gate.
+        module (ComputeModule): The compute module where the control gate is executed.
+    """
+    
+    def __init__(self, logic_gate: Control, module: ComputeModule):
         """
-        Action of control gate within a compute area.
-
-        logic_gate: Control, the logical control gate
-        area: dict, the compute area where the control gate is executed
+        Initialize the local gate action.
+        
+        Args:
+            logic_gate (Control): The logical control gate.
+            module (ComputeModule): The compute module where the control gate is executed.
         """
-
         super().__init__()
         self.logic_gate = logic_gate
-        self.area = area
+        self.module = module
 
 
 class CircuitStage:
+    """
+    Represents a stage in the quantum circuit.
+    
+    Attributes:
+        id (int): Unique identifier for the stage.
+    """
     _counter = 0
 
     def __init__(self, init_occupied_balises: set[tuple[int, int]], init_occupied_platforms: set[tuple[int, int]], holding_ancilla_plats: set[tuple[int, int]]):
+        """
+        Initialize a circuit stage.
+        
+        Args:
+            init_occupied_balises (set[tuple[int, int]]): The initial occupied balises.
+            init_occupied_platforms (set[tuple[int, int]]): The initial occupied platforms.
+            holding_ancilla_plats (set[tuple[int, int]]): The platforms holding ancilla qubits.
+        """
         self.id = CircuitStage._counter
         CircuitStage._counter += 1
 
@@ -164,9 +269,22 @@ class CircuitStage:
         self.curr_occupied_platforms = deepcopy(init_occupied_platforms)
         self.holding_ancilla_plats = holding_ancilla_plats
 
-
 class BoardingStage(CircuitStage):
+    """
+    Represents the boarding stage in the quantum circuit.
+
+    Attributes:
+        boarding_actions (list[BoardingAction]): The list of boarding actions in the stage.
+        potential_free_balises (dict): The dictionary of potential free balises.
+        paired_balises (set): The set of paired balises.
+        potential_free_platforms (dict): The dictionary of potential free platforms.
+        paired_platforms (set): The set of paired platforms.
+    """
+    
     def __init__(self, init_occupied_balises, init_occupied_platforms, holding_ancilla_plats):
+        """
+        Initialize the boarding stage.
+        """
         super().__init__(init_occupied_balises, init_occupied_platforms, holding_ancilla_plats)
         assert self.id % 2 == 0, "Boarding stage id should be even"
         self.boarding_actions: list[BoardingAction] = []
@@ -179,9 +297,14 @@ class BoardingStage(CircuitStage):
     def add_alight_action(self, action: Alight) -> bool:
         """
         Add an Alight to the boarding stage.
-        The action is added to the end of the boarding actions list.
-        """
+        Note: The action is added to the end of the boarding actions list.
 
+        Args:
+            action (Alight): The alighting action to add.
+
+        Returns:
+            bool: Whether the action is successfully added.
+        """
         assert isinstance(action, Alight), "Action should be Alight"
         assert action.station in self.curr_occupied_balises, "Data qubit to alight should be in station."
 
@@ -210,9 +333,14 @@ class BoardingStage(CircuitStage):
     def add_interchange_action(self, action: Interchange) -> bool:
         """
         Add an Interchange to the boarding stage.
-        The action is added to the end of the boarding actions list.
-        """
+        Note: The action is added to the end of the boarding actions list.
 
+        Args:
+            action (Interchange): The interchange action to add.
+
+        Returns:
+            bool: Whether the action is successfully added.
+        """
         assert isinstance(action, Interchange), "Action should be Interchange"
         assert action.interchange[0] in self.curr_occupied_balises, "Data qubit to interchange should be in source interchange."
 
@@ -235,9 +363,14 @@ class BoardingStage(CircuitStage):
     def add_board_action(self, action: Board) -> bool:
         """
         Add a Board to the boarding stage.
-        The action is added to the end of the boarding actions list.
-        """
+        Note: The action is added to the end of the boarding actions list.
 
+        Args:
+            action (Board): The boarding action to add.
+        
+        Returns:
+            bool: Whether the action is successfully added.
+        """
         assert isinstance(action, Board), "Action should be Board"
         assert action.platform in self.curr_occupied_platforms or action.platform in self.paired_platforms, "Data qubit to board should be in platform."
         
@@ -260,9 +393,14 @@ class BoardingStage(CircuitStage):
     def add_ghz_action(self, action: GhzPreparation) -> bool:
         """
         Add a GhzPreparation to the boarding stage.
-        The action is added to the end of the boarding actions list.
-        """
+        Note: The action is added to the end of the boarding actions list.
 
+        Args:
+            action (GhzPreparation): The GHZ preparation action to add.
+
+        Returns:
+            bool: Whether the action is successfully added.
+        """
         assert isinstance(action, GhzPreparation), "Action should be GhzPreparation"
 
         for pysical_qubit in action.source_physical_qubits:
@@ -273,12 +411,23 @@ class BoardingStage(CircuitStage):
         self.boarding_actions.append(action)
         return True
 
+class RidingStage(CircuitStage):
+    """
+    Represents the riding stage in the quantum circuit.
+    
+    Attributes:
+        operating_actions (list[RidingAction]): The list of riding actions in the stage.
+        potential_free_balises (dict): The dictionary of potential free balises.
+        paired_balises (set): The set of paired balises.
+    """
 
-class OperatingStage(CircuitStage):
     def __init__(self, init_occupied_balises, init_occupied_platforms, holding_ancilla_plats):
+        """
+        Initialize the riding stage.
+        """
         super().__init__(init_occupied_balises, init_occupied_platforms, holding_ancilla_plats)
         assert self.id % 2 == 1, "Operating stage id should be odd"
-        self.operating_actions: list[OperatingAction] = []
+        self.operating_actions: list[RidingAction] = []
 
         self.potential_free_balises = dict()
         self.paired_balises = set()
@@ -286,9 +435,14 @@ class OperatingStage(CircuitStage):
     def add_transport_action(self, action: Transport) -> bool:
         """
         Add a Transport to the operating stage.
-        The action is added to the end of the operating actions list.
-        """
+        Note: The action is added to the end of the operating actions list.
 
+        Args:
+            action (Transport): The transport action to add.
+
+        Returns:
+            bool: Whether the action is successfully added.
+        """
         assert isinstance(action, Transport), "Action should be Transport"
         assert action.source_physical_qubit in self.curr_occupied_balises, "Data qubit to transport should be in source balise."
 
@@ -313,9 +467,14 @@ class OperatingStage(CircuitStage):
     def add_route_action(self, action: RouteToPlat) -> bool:
         """
         Add a RouteToPlat to the operating stage.
-        The action is added to the end of the operating actions list.
-        """
+        Note: The action is added to the end of the operating actions list.
 
+        Args:
+            action (RouteToPlat): The routing action to add.
+
+        Returns:
+            bool: Whether the action is successfully added.
+        """
         assert isinstance(action, RouteToPlat), "Action should be RouteToPlat"
 
         if action.enter_flag:
@@ -329,9 +488,14 @@ class OperatingStage(CircuitStage):
     def add_teleport_action(self, action: Teleport) -> bool:
         """
         Add a Teleport to the operating stage.
-        The action is added to the end of the operating actions list.
-        """
+        Note: The action is added to the end of the operating actions list.
 
+        Args:
+            action (Teleport): The teleportation action to add.
+
+        Returns:
+            bool: Whether the action is successfully added.
+        """
         assert isinstance(action, Teleport), "Action should be Teleport"
 
         self.curr_occupied_platforms.remove(action.platform)
@@ -343,24 +507,52 @@ class OperatingStage(CircuitStage):
     def add_local_action(self, action: LocalGate) -> bool:
         """
         Add a LocalGate to the operating stage.
-        The action is added to the end of the operating actions list.
-        """
+        Note: The action is added to the end of the operating actions list.
 
+        Args:
+            action (LocalGate): The local gate action to add.
+
+        Returns:
+            bool: Whether the action is successfully added.
+        """
         assert isinstance(action, LocalGate), "Action should be LocalGate"
 
         self.operating_actions.append(action)
         return True
 
 
-class Circuit: 
-    def __init__(self, package, logic_qubit_num, init_l2p_map: dict, init_p2l_map: dict, action_depend_graph: nx.DiGraph):
-        """
-        Structure of physical quantum circuit with enhanced quantum state transfer.
-        Circuit with enhanced quantum state transfer is a list interleaved with operating stage and boarding stage.
-        Operation stage: 1) transport on transfer chiplet; 2) local compute on compute chiplet; 3) routing to platforms; 4) teleportation.
-        Boarding stage: 1) alighting transfer chiplet; 2) boarding transfer chiplet; 3) GHZ state preparation; 4) transfer between transfer chiplets. 
-        """
+class Circuit:
+    """
+    Represents a physical quantum circuit with enhanced quantum state transfer.
+    Circuit with enhanced quantum state transfer is a list interleaved with boarding stage and riding stage.
+    Boarding stage: 1) alighting transfer chiplet; 2) boarding transfer chiplet; 3) GHZ state preparation; 4) transfer between transfer chiplets. 
+    Riding stage: 1) transport on transfer chiplet; 2) local compute on compute chiplet; 3) routing to platforms; 4) teleportation.
+
+    Attributes:
+        package (Package): The package to perform the quantum circuit.
+        logic_qubit_num (int): The number of logic qubits in the circuit.
+        init_l2p_map (dict): The initial mapping from logical qubits to physical qubits.
+        init_p2l_map (dict): The initial mapping from physical qubits to logical qubits.
+        action_depend_graph (nx.DiGraph): The directed acyclic graph representing dependencies between actions.
+
+        stages (list[CircuitStage]): The list of stages in the circuit.
         
+        curr_l2p_map (dict): The current mapping from logical qubits to physical qubits.
+        curr_p2l_map (dict): The current mapping from physical qubits to logical qubits.
+        hold_ancilla_plats (set): The set of platforms holding ancilla qubits.
+    """
+    
+    def __init__(self, package: Package, logic_qubit_num: int, init_l2p_map: dict, init_p2l_map: dict, action_depend_graph: nx.DiGraph):
+        """
+        Initialize the circuit.
+
+        Args:
+            package (Package): The package to perform the quantum circuit.
+            logic_qubit_num (int): The number of logic qubits in the circuit.
+            init_l2p_map (dict): The initial mapping from logical qubits to physical qubits.
+            init_p2l_map (dict): The initial mapping from physical qubits to logical qubits.
+            action_depend_graph (nx.DiGraph): The directed acyclic graph representing dependencies between actions.
+        """
         self.package = package
         self.logic_qubit_num = logic_qubit_num
         self.init_l2p_map = init_l2p_map
@@ -376,10 +568,11 @@ class Circuit:
     def extend_stage(self, board_flag: bool):
         """
         Extend the circuit with a new stage.
-        The new stage is added to the end of the circuit.
-        boarding_flag: bool, True if the new stage is a boarding stage
-        """
+        Note: The new stage is added to the end of the circuit.
 
+        Args:
+            board_flag (bool): The flag marking if the new stage is a boarding stage.
+        """
         if board_flag:
             assert len(self.stages) % 2 == 0, "Boarding stage should have even id"
         else:
@@ -389,31 +582,37 @@ class Circuit:
         if board_flag:
             new_stage = BoardingStage(curr_occupied_balises, curr_occupied_platforms, self.hold_ancilla_plats)
         else:
-            new_stage = OperatingStage(curr_occupied_balises, curr_occupied_platforms, self.hold_ancilla_plats)
+            new_stage = RidingStage(curr_occupied_balises, curr_occupied_platforms, self.hold_ancilla_plats)
         assert new_stage.id == len(self.stages), "Stage id should be equal to the length of existing stages"
         self.stages.append(new_stage)
         return new_stage
     
-    def estimate_fidelity(self):
+    def estimate_fidelity(self) -> float:
         """
-        Estimate the fidelity of the circuit.
-        """
+        Estimate the fidelity of the entire circuit.
 
+        Returns:
+            float: The estimated fidelity of the circuit.
+        """
         # TODO: complete the function
         pass
 
-    def estimate_average_qst_fide(self):
+    def estimate_average_qst_fide(self) -> float:
         """
         Estimate the average fidelity of each quantum state transfer in the circuit.
-        """
 
+        Returns:
+            float: The estimated average fidelity of quantum state transfer.
+        """
         # TODO: complete the function
         pass
     
-    def estimate_depth(self):
+    def estimate_depth(self) -> int:
         """
         Estimate the depth of the circuit.
-        """
 
+        Returns:
+            int: The estimated depth of the circuit.
+        """
         # TODO: complete the function
         pass

@@ -7,7 +7,7 @@ from .circuit import *
 
 class ComputeBlock:
     """
-    The base class for compute blocks.
+    Represents a compute block in the quantum routing process.
 
     Attributes:
         id (int): the id of the compute block.
@@ -15,9 +15,11 @@ class ComputeBlock:
     _counter = 0
 
     def __init__(self):
+        """
+        Initialize a compute block.
+        """
         self.id = ComputeBlock._counter
         ComputeBlock._counter += 1
-
 
 class LocalBlock(ComputeBlock):
     """
@@ -40,7 +42,6 @@ class LocalBlock(ComputeBlock):
         self.ctrl_gates = ctrl_gates
         self.module = module
 
-
 class TeleBlock(ComputeBlock):
     """
     Represents a teleportation block in which gates are executed by teleportation.
@@ -61,7 +62,6 @@ class TeleBlock(ComputeBlock):
         super().__init__()
         self.control_qubit = control_qubit
         self.target_qubits = target_qubits
-
 
 class MoveBlock(ComputeBlock):
     """
@@ -148,7 +148,6 @@ class Router:
         """
         Route the program on the package.
         """
-
         self.map_qubits()
         self.curr_l2p_map = deepcopy(self.init_l2p_map)
         self.curr_p2l_map = deepcopy(self.init_p2l_map)
@@ -165,7 +164,6 @@ class Router:
         Map logic qubits to physical qubits.
         Left qubits beside the chiplet gaps, and take rest qubits in compute chiplets as compute qubits.
         """
-        
         logic_data_qubit_num = self.program.data_qubit_num
         physical_data_qubit_list = self.package.get_registers()
         if logic_data_qubit_num > len(physical_data_qubit_list):
@@ -174,11 +172,17 @@ class Router:
             self.init_l2p_map[i] = physical_data_qubit_list[i]
             self.init_p2l_map[physical_data_qubit_list[i]] = i
 
-    def update_no_depend_gate_ids(self, no_depend_gate_ids, removed_gate_id):
+    def update_no_depend_gate_ids(self, no_depend_gate_ids: list[int], removed_gate_id: int) -> list[int]:
         """
         Update the no_depend_gate_ids list by checking removed gate's successors.
-        """
 
+        Args:
+            no_depend_gate_ids (list[int]): The original list of gate ids with no dependencies.
+            removed_gate_id (int): The id of the removed gate.
+
+        Returns:
+            list[int]: The updated list of gate ids with no dependencies.
+        """
         for succ_gate in self.gate_depend_graph.successors(removed_gate_id):
             self.gate_depend_graph.nodes[succ_gate]["pred"].remove(removed_gate_id)
             if len(self.gate_depend_graph.nodes[succ_gate]["pred"]) == 0:
@@ -197,7 +201,6 @@ class Router:
 
         self.compute_blocks: list[TeleBlock or MoveBlock], list of compute blocks.
         """
-
         for gate_id in self.gate_depend_graph.nodes:
             self.gate_depend_graph.nodes[gate_id]["pred"] = list(self.gate_depend_graph.predecessors(gate_id))
         no_depend_gate_ids = []
@@ -372,12 +375,11 @@ class Router:
         # for i in range(len(last_tele_blocks)):
         #     self.compute_blocks.append(last_tele_blocks[i])
 
-    def check_local_gate(self, gate: Control) -> dict:
+    def check_local_gate(self, gate: Control) -> ComputeModule | None:
         """
         Check if the gate is a local gate.
         Local criteria: transfer chiplet involved in the shortest path.
         """
-        
         shortest_path, _ = self.package.get_shortest_path(self.curr_l2p_map[gate.control_qubit], self.curr_l2p_map[gate.target_qubit])
         for node in shortest_path:
             if self.qubit_topology.nodes[node]["type"] == NodeType.Transfer:
@@ -416,7 +418,6 @@ class Router:
         """
         Determine the chiplet to move the qubits to.
         """
-
         chiplet_cnt = dict()
         for qubit in involved_qubits:
             physical_qubit = self.curr_l2p_map[qubit]
@@ -437,7 +438,6 @@ class Router:
         Return:
         list, the logic qubits on target chiplet to replace.
         """
-
         chiplet_info = chiplet.split("_")
         chiplet_left = int(chiplet_info[1])
         chiplet_top = int(chiplet_info[2])
@@ -459,7 +459,6 @@ class Router:
         """
         Move qubits in the block to the target chiplet.
         """
-
         in_qubits = []
         stand_qubits = []
         for qubit in involved_qubits:
@@ -483,7 +482,6 @@ class Router:
         """
         Update the no_depend_block_ids list by checking removed block's successors.
         """
-
         for succ_block in self.block_depend_graph.successors(removed_block_id):
             self.block_depend_graph.nodes[succ_block]["pred"].remove(removed_block_id)
             if len(self.block_depend_graph.nodes[succ_block]["pred"]) == 0:
@@ -494,7 +492,6 @@ class Router:
         """
         Transform compute blocks into circuit actions.
         """
-
         self.recent_logic_qubit_action_dict = {i: None for i in range(self.program.data_qubit_num)}
         for block_id in self.block_depend_graph:
             self.block_depend_graph.nodes[block_id]["pred"] = list(self.block_depend_graph.predecessors(block_id))
@@ -523,7 +520,6 @@ class Router:
 
         LocalGate.
         """
-        
         local_gate_ids = [local_gate.id for local_gate in local_block.ctrl_gates]
         local_gate_depent: nx.DiGraph = self.gate_depend_graph.subgraph(local_gate_ids)
         local_gates_topo_sort = list(nx.topological_sort(local_gate_depent))
@@ -551,7 +547,6 @@ class Router:
 
         GhzPreparation -> TransferChipletRoute & RouteToPlat -> Alight -> Teleport.
         """
-
         involved_qubits = [tele_block.control_qubit] + tele_block.target_qubits
         route_to_plat_acts = self.route_nearest_platform(involved_qubits, False)
 
@@ -600,7 +595,6 @@ class Router:
 
         RouteToPlat -> Board -> TransferChipletRoute -> Alight -> LocalGate.
         """
-        
         in_qubits = [swap_pair[0] for swap_pair in move_block.swap_logic_pairs]
         out_qubits = [swap_pair[1] for swap_pair in move_block.swap_logic_pairs]
         route_to_plat_acts = self.route_nearest_platform(in_qubits+out_qubits, True)
@@ -673,7 +667,6 @@ class Router:
         Return:
         RouteToPlat, the action to route the qubit to the platform.
         """
-
         route_to_plat_acts = []
         occupied_platforms = []
         for logic_qubit in logic_qubits:
@@ -696,7 +689,6 @@ class Router:
         """
         Get the nearest metro subgraph for a balise.
         """
-
         visited = set()
         queue = [balise_id]
         while queue and len(visited) < node_num:
@@ -715,7 +707,6 @@ class Router:
         Return:
         GhzPreparation, the action to allocate GHZ resource.
         """
-
         ancilla_qubit_num = len(involved_qubits)
         stations = [self.qubit_topology.nodes[platform]["station"] for platform in platforms]
         best_interchange_depth = None
@@ -741,7 +732,6 @@ class Router:
         Return:
         list[CircuitAction], the action list to route the qubit on transfer chiplets, including Transport and Interchange.
         """
-
         actions = []
         transfer_path = self.balise_station_distance_dict[source_physical_qubit][target_physical_qubit]["path"]
         on_rail_source_qubit = transfer_path[0]
@@ -757,7 +747,6 @@ class Router:
         """
         Update the no_depend_action_ids list by checking removed action's successors.
         """
-
         for succ_action in self.action_depend_graph.successors(removed_action_id):
             self.action_depend_graph.nodes[succ_action]["pred"].remove(removed_action_id)
             if len(self.action_depend_graph.nodes[succ_action]["pred"]) == 0:
@@ -768,7 +757,6 @@ class Router:
         """
         Schedule the actions to the circuit.
         """
-
         for action_id in self.action_depend_graph.nodes:
             self.action_depend_graph.nodes[action_id]["pred"] = list(self.action_depend_graph.predecessors(action_id))
         no_depend_action_ids = set()
@@ -847,6 +835,33 @@ class Router:
                         break
 
             board_flag = not board_flag
+    
+    def estimate_fidelity(self) -> float:
+        """
+        Estimate the fidelity of the circuit.
+
+        Return:
+            float, the estimated fidelity of the circuit.
+        """
+        return self.circuit.estimate_fidelity()
+
+    def estimate_average_qst_fide(self) -> float:
+        """
+        Estimate the average fidelity of each quantum state transfer in the circuit.
+
+        Returns:
+            float: The estimated average fidelity of quantum state transfer.
+        """
+        return self.circuit.estimate_average_qst_fide()
+    
+    def estimate_depth(self) -> int:
+        """
+        Estimate the depth of the circuit.
+
+        Return:
+            int, the estimated depth of the circuit.
+        """
+        return self.circuit.estimate_depth()
 
     # @staticmethod
     # def check_commutable_gate(gate, control_qubits, target_qubits) -> bool:

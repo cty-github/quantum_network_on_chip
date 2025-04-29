@@ -14,7 +14,6 @@ class QuNoCEnv(gym.Env):
     Attributes:
         package_size (tuple[int, int]): Size of the package to design.
         fab_model (FabricateModel): Fabrication model for the quantum chiplet.
-        result_dir (str): Directory to save the results.
         patience (int): Number of steps to wait before stopping if no improvement.
 
         package (Package): The package to perform training.
@@ -36,8 +35,7 @@ class QuNoCEnv(gym.Env):
     def __init__(self, 
         package_size: tuple[int, int] = (100, 100), 
         fab_model: FabricateModel = FabricateModel(), 
-        result_dir: str = None,
-        patience: int = 100, 
+        patience: int = 10, 
     ):
         """
         Initialize the quantum network-on-chip (NoC) layout environment.
@@ -45,13 +43,11 @@ class QuNoCEnv(gym.Env):
         Args:
             package_size (tuple[int, int]): Size of the package to design.
             fab_model (FabricateModel): Fabrication model for the quantum chiplet.
-            result_dir (str): Directory to save the results.
             patience (int): Number of steps to wait before stopping if no improvement.
         """
         super(QuNoCEnv, self).__init__()
         self.package_size = package_size
         self.fab_model = fab_model
-        self.result_dir = result_dir
         self.patience = patience
         
         low_per_channel = np.array([0, 0, 0, 0, 0], dtype=np.int32)
@@ -83,7 +79,7 @@ class QuNoCEnv(gym.Env):
 
     def reset(self, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[np.ndarray, dict[str, Any]]:
         super().reset(seed=seed, options=options)
-        self.package = Package(self.package_size, self.fab_model, design_strategy="rl", result_dir=self.result_dir)
+        self.package = Package(self.package_size, self.fab_model, design_strategy="rl")
         self.last_score = self.estimate()
         self.no_improve_steps = 0
         self.best_score = self.last_score
@@ -116,8 +112,8 @@ class QuNoCEnv(gym.Env):
             {},
         )
 
-    def render(self, mode="human"):
-        self.package.draw_qubits()
+    def render(self, mode = "human", save_path: str = None):
+        self.package.draw_qubits(show = True if mode == "human" else False, save_path = save_path)
 
     def estimate(self) -> float:
         """
@@ -127,7 +123,7 @@ class QuNoCEnv(gym.Env):
             float: The evaluation score of the package.
         """
         self.package.complete_package()
-        return self.package.estimate_efficiency()
+        return self.package.estimate_score()
 
     def deserialize_action(self, action_vector: list) -> dict | None:
         """
@@ -140,12 +136,12 @@ class QuNoCEnv(gym.Env):
             dict | None: The deserialized action dictionary or None if the action is invalid.
         """
         action_dict = {
-            "module": self.package.get_node_area((action_vector[0], action_vector[1])),
+            "old_module": self.package.get_node_area((action_vector[0], action_vector[1])),
             "template": DesignTemplate(action_vector[2]),
             "orient": DesignOrientation(action_vector[3]),
             "interval": (action_vector[4] + 1) * self.fab_model.max_square_size,
         }
-        if action_dict["module"].type == NodeType.Compute and Package.is_valid_to_design(**action_dict):
+        if isinstance(action_dict["old_module"], ComputeModule) and Package.is_valid_to_design(**action_dict):
             return action_dict
         else:
             return None
@@ -163,28 +159,28 @@ class QuNoCEnv(gym.Env):
             assert area is not None, "Area is None during layout design."
             if isinstance(area, ComputeModule):
                 observation[:, node[0], node[1]] = [
-                    area.type.value,
-                    area.left,
-                    area.right,
-                    area.top,
-                    area.bottom,
+                    NodeType.Compute.value,
+                    area.left[0],
+                    area.right[0],
+                    area.top[0],
+                    area.bottom[0],
                 ]
             elif isinstance(area, TransferLine):
                 if area.axis == 0:
                     observation[:, node[0], node[1]] = [
-                    area.type.value,
-                        area.start,
-                        area.end,
+                        NodeType.Transfer.value,
+                        area.start[0],
+                        area.end[0],
                         area.pos,
                         area.pos,
                     ]
                 elif area.axis == 1:
                     observation[:, node[0], node[1]] = [
-                    area.type.value,
+                        NodeType.Transfer.value,
                         area.pos,
                         area.pos,
-                        area.start,
-                        area.end,
+                        area.start[0],
+                        area.end[0],
                     ]
             else:
                 pass

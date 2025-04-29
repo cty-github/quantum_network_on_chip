@@ -27,13 +27,12 @@ for package_length in package_length_to_test:
     os.makedirs(result_dir, exist_ok=True)
     package_size = (package_length, package_length)
 
-    package_baseline = Package(package_size, fab_model, design_strategy="rl", result_dir=result_dir)
+    package_baseline = Package(package_size, fab_model, design_strategy="rl")
     package_greedy = Package(package_size, fab_model, design_strategy="greedy", result_dir=result_dir)
 
-    env = QuNoCEnv(package_size, fab_model, result_dir)
-    agent = LayoutAgent(env)
+    env = QuNoCEnv(package_size, fab_model)
+    agent = LayoutAgent(env, result_dir=result_dir)
     agent.train()
-    agent.save(f"{result_dir}rl_agent.pth")
     package_rl = agent.design()
 
     package_list = [package_baseline, package_greedy, package_rl]

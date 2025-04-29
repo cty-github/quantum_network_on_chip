@@ -236,6 +236,8 @@ class Package:
         for node in self.package_graph.nodes:
             self.package_graph.nodes[node]["type"] = NodeType.Empty
             self.package_graph.nodes[node]["qubit"] = Qubit(node, NodeType.Empty, self.fab_model.single_fide)
+        for edge in self.package_graph.edges:
+            self.package_graph.edges[edge]["type"] = EdgeType.Intra
         self.compute_nodes: set[tuple[int, int]] = set()
         self.transfer_nodes: set[tuple[int, int]] = set()
 
@@ -259,11 +261,16 @@ class Package:
             self.compute_modules, self.transfer_lines = self.check_func_area()
             self.complete_package()
         elif self.design_scheme == "top_down":
-            self.compute_modules = [ComputeModule(0, 0, package_size[0] - 1, package_size[1] - 1)]
             self.transfer_lines: list[TransferLine] = []
+            self.transfer_lines.append(TransferLine(1, 0, (0, True), (package_size[1] - 2, False)))
+            self.transfer_lines.append(TransferLine(0, 0, (1, False), (package_size[0] - 1, True)))
+            self.transfer_lines.append(TransferLine(1, package_size[0] - 1, (1, False), (package_size[1] - 1, True)))
+            self.transfer_lines.append(TransferLine(0, package_size[1] - 1, (0, True), (package_size[0] - 2, False)))
+            self.compute_modules = [ComputeModule(self.transfer_lines[0], self.transfer_lines[1], self.transfer_lines[2], self.transfer_lines[3])]
             self.design_tree_root = Node(self.compute_modules[0])
             self.design_tree_dict = {str(self.compute_modules[0]): self.design_tree_root}
-            self.complete_area(self.compute_modules[0])
+            for area in self.compute_modules + self.transfer_lines:
+                self.complete_area(area)
             if self.design_strategy == "heuristic":
                 old_compute_module = self.compute_modules[0]
                 length_width_ratio = max(self.package_size) / min(self.package_size)
@@ -321,12 +328,12 @@ class Package:
             elif self.design_strategy == "greedy":
                 os.makedirs(self.result_dir, exist_ok=True)
                 self.complete_package()
-                best_score = self.estimate_efficiency()
+                best_score = self.estimate_score()
                 print("Initial score: ", best_score)
                 self.draw_qubits(show=False, save_path=get_unique_file_save_path(self.result_dir, "greedy_process_", ".jpg"))
                 while True:
                     best_action: tuple = None
-                    candidate_modules: list[ComputeModule] = [area.name for area in list(self.design_tree_root.leaves) if area.name.type == NodeType.Compute]
+                    candidate_modules: list[ComputeModule] = [area.name for area in list(self.design_tree_root.leaves) if isinstance(area.name, ComputeModule)]
                     for action in product(
                         candidate_modules, 
                         list(DesignTemplate), 
@@ -461,7 +468,7 @@ class Package:
     # Functions for top down design
     @staticmethod
     def is_valid_to_design(
-        module: ComputeModule, 
+        old_module: ComputeModule, 
         template: DesignTemplate, 
         orient: DesignOrientation, 
         interval: int, 
@@ -478,8 +485,8 @@ class Package:
         Returns:
             bool: Whether the module is valid to design.
         """
-        if module.type != NodeType.Compute:
-            raise ValueError("Invalid module type: {}".format(module.type))
+        if not isinstance(old_module, ComputeModule):
+            raise ValueError("Invalid module type: {}".format(old_module))
         if not isinstance(template, DesignTemplate):
             raise ValueError("Invalid template type: {}".format(template))
         if not isinstance(orient, DesignOrientation):
@@ -488,20 +495,20 @@ class Package:
             return False
         if template == DesignTemplate.Strip:
             if orient == DesignOrientation.X:
-                if module.bottom - module.top + 1 < 2 * interval + 1:
+                if old_module.bottom[0] - old_module.top[0] + 1 < 2 * interval + 1:
                     return False
             elif orient == DesignOrientation.Y:
-                if module.right - module.left + 1 < 2 * interval + 1:
+                if old_module.right[0] - old_module.left[0] + 1 < 2 * interval + 1:
                     return False
         elif template == DesignTemplate.Radial:
-            if module.bottom - module.top + 1 < 3 * interval + 2:
+            if old_module.bottom[0] - old_module.top[0] + 1 < 3 * interval + 2:
                 return False
-            if module.right - module.left + 1 < 3 * interval + 2:
+            if old_module.right[0] - old_module.left[0] + 1 < 3 * interval + 2:
                 return False
         elif template == DesignTemplate.Grid:
-            if module.bottom - module.top + 1 < 2 * interval + 1:
+            if old_module.bottom[0] - old_module.top[0] + 1 < 2 * interval + 1:
                 return False
-            if module.right - module.left + 1 < 2 * interval + 1:
+            if old_module.right[0] - old_module.left[0] + 1 < 2 * interval + 1:
                 return False
         return True
 
@@ -513,20 +520,40 @@ class Package:
         Args:
             func_area (FuncArea): The function area to be completed.
         """
-        for node in func_area.get_nodes():
-            self.package_graph.nodes[node]["qubit"].area = func_area
-            if isinstance(func_area, ComputeModule):
-                self.package_graph.nodes[node]["type"] = NodeType.Compute
-                self.package_graph.nodes[node]["qubit"].type = NodeType.Compute
-                self.package_graph.nodes[node]["qubit"].role = QubitRole.Register
-                self.compute_nodes.add(node)
-                self.transfer_nodes.discard(node)
-            elif isinstance(func_area, TransferLine):
-                self.package_graph.nodes[node]["type"] = NodeType.Transfer
-                self.package_graph.nodes[node]["qubit"].type = NodeType.Transfer
-                self.package_graph.nodes[node]["qubit"].role = QubitRole.Balise
-                self.transfer_nodes.add(node)
-                self.compute_nodes.discard(node)
+        if isinstance(func_area, ComputeModule):
+            for chiplet in func_area.get_chiplets():
+                for node in chiplet.get_nodes():
+                    self.package_graph.nodes[node]["type"] = NodeType.Compute
+                    self.package_graph.nodes[node]["qubit"].type = NodeType.Compute
+                    self.package_graph.nodes[node]["qubit"].role = QubitRole.Register
+                    self.package_graph.nodes[node]["qubit"].chiplet = chiplet
+                    self.package_graph.nodes[node]["qubit"].area = func_area
+                    self.compute_nodes.add(node)
+                    self.transfer_nodes.discard(node)
+            for gap in func_area.get_compute_transfer_gaps() + func_area.get_intra_gaps():
+                for i in range(gap.start, gap.end + 1):
+                    node_u = get_full_space_tuple(gap.pos[0], gap.axis, i)
+                    node_v = get_full_space_tuple(gap.pos[1], gap.axis, i)
+                    if i in gap.get_couplers():
+                        self.package_graph.edges[(node_u, node_v)]['type'] = EdgeType.Inter
+                    else:
+                        self.package_graph.edges[(node_u, node_v)]['type'] = EdgeType.Empty
+            for edge in func_area.get_intra_edges():
+                self.package_graph.edges[edge]['type'] = EdgeType.Intra
+        elif isinstance(func_area, TransferLine):
+            for chiplet in func_area.get_chiplets():
+                for node in chiplet.get_nodes():
+                    self.package_graph.nodes[node]["type"] = NodeType.Transfer
+                    self.package_graph.nodes[node]["qubit"].type = NodeType.Transfer
+                    self.package_graph.nodes[node]["qubit"].role = QubitRole.Balise
+                    self.package_graph.nodes[node]["qubit"].chiplet = chiplet
+                    self.package_graph.nodes[node]["qubit"].area = func_area
+                    self.transfer_nodes.add(node)
+                    self.compute_nodes.discard(node)
+            for interchange in func_area.get_interchanges():
+                self.package_graph.edges[(interchange.qubit_u, interchange.qubit_v)]['type'] = EdgeType.Inter
+            for edge in func_area.get_intra_edges():
+                self.package_graph.edges[edge]['type'] = EdgeType.Intra
 
     def design_module_top_down(self, 
         old_module: ComputeModule, 
@@ -554,8 +581,8 @@ class Package:
         old_right_arg = old_right_line if old_right_line else old_right_coord
         old_bottom_coord, old_bottom_line, _ = old_module.bottom
         old_bottom_arg = old_bottom_line if old_bottom_line else old_bottom_coord
-        new_compute_modules = []
-        new_transfer_lines = []
+        new_compute_modules: list[ComputeModule] = []
+        new_transfer_lines: list[TransferLine] = []
         if template == DesignTemplate.Strip:
             if orient == DesignOrientation.X:
                 n_blocks = (old_bottom_coord - old_top_coord + 1) // (interval + 1)
@@ -567,12 +594,8 @@ class Package:
                         (old_right_coord, old_right_coord == self.package_size[0] - 1), 
                     ))
                 for i in range(n_blocks):
-                    new_top_arg = new_transfer_lines[i - 1]
-                    new_bottom_arg = new_transfer_lines[i]
-                    if i == 0:
-                        new_top_arg = old_top_arg
-                    elif i == n_blocks - 1:
-                        new_bottom_arg = old_bottom_arg
+                    new_top_arg = old_top_arg if i == 0 else new_transfer_lines[i - 1]
+                    new_bottom_arg = old_bottom_arg if i == n_blocks - 1 else new_transfer_lines[i]
                     new_compute_modules.append(ComputeModule(
                         old_left_arg, 
                         new_top_arg,
@@ -589,12 +612,8 @@ class Package:
                         (old_bottom_coord, old_bottom_coord == self.package_size[1] - 1), 
                     ))
                 for i in range(n_blocks):
-                    new_left_arg = new_transfer_lines[i - 1]
-                    new_right_arg = new_transfer_lines[i]
-                    if i == 0:
-                        new_left_arg = old_left_arg
-                    elif i == n_blocks - 1:
-                        new_right_arg = old_right_arg
+                    new_left_arg = old_left_arg if i == 0 else new_transfer_lines[i - 1]
+                    new_right_arg = old_right_arg if i == n_blocks - 1 else new_transfer_lines[i]
                     new_compute_modules.append(ComputeModule(
                         new_left_arg,
                         old_top_arg, 
@@ -720,10 +739,7 @@ class Package:
                     for j in range(n_units - 1):
                         new_pos = old_left_coord + (j + 1) * (interval + 1) - 1
                         new_start_coord = old_top_coord + i * (interval + 1)
-                        if i == n_blocks - 1:
-                            new_end_coord = old_bottom_coord
-                        else:
-                            new_end_coord = old_top_coord + i * (interval + 1) + interval - 1
+                        new_end_coord = old_bottom_coord if i == n_blocks - 1 else old_top_coord + i * (interval + 1) + interval - 1
                         new_transfer_lines.append(TransferLine(
                             1, 
                             new_pos, 
@@ -734,23 +750,15 @@ class Package:
                         new_transfer_lines.append(TransferLine(
                             0, 
                             old_top_coord + (i + 1) * (interval + 1) - 1, 
-                            old_left_coord, 
-                            old_right_coord,
+                            (old_left_coord, old_left_coord == 0), 
+                            (old_right_coord, old_right_coord == self.package_size[0] - 1),
                         ))
                 for i in range(n_blocks):
                     for j in range(n_units):
-                        new_top_arg = new_transfer_lines[i * (n_units - 1)]
-                        new_bottom_arg = new_transfer_lines[(i + 1) * (n_units - 1)]
-                        new_left_arg = new_transfer_lines[i * (n_units - 1) + j - 1]
-                        new_right_arg = new_transfer_lines[i * (n_units - 1) + j]
-                        if i == 0:
-                            new_top_arg = old_top_arg
-                        elif i == n_blocks - 1:
-                            new_bottom_arg = old_bottom_arg
-                        if j == 0:
-                            new_left_arg = old_left_arg
-                        elif j == n_units - 1:
-                            new_right_arg = old_right_arg
+                        new_top_arg = old_top_arg if i == 0 else new_transfer_lines[i * n_units - 1]
+                        new_bottom_arg = old_bottom_arg if i == n_blocks - 1 else new_transfer_lines[(i + 1) * n_units - 1]
+                        new_left_arg = old_left_arg if j == 0 else new_transfer_lines[i * n_units + j - 1]
+                        new_right_arg = old_right_arg if j == n_units - 1 else new_transfer_lines[i * n_units + j]
                         new_compute_modules.append(ComputeModule(
                             new_left_arg,
                             new_top_arg,
@@ -764,10 +772,7 @@ class Package:
                     for j in range(n_units - 1):
                         new_pos = old_top_coord + (j + 1) * (interval + 1) - 1
                         new_start_coord = old_left_coord + i * (interval + 1)
-                        if i == n_blocks - 1:
-                            new_end_coord = old_right_coord
-                        else:
-                            new_end_coord = old_left_coord + i * (interval + 1) + interval - 1
+                        new_end_coord = old_right_coord if i == n_blocks - 1 else old_left_coord + i * (interval + 1) + interval - 1
                         new_transfer_lines.append(TransferLine(
                             0, 
                             new_pos, 
@@ -778,23 +783,15 @@ class Package:
                         new_transfer_lines.append(TransferLine(
                             1, 
                             old_left_coord + (i + 1) * (interval + 1) - 1, 
-                            old_top_coord, 
-                            old_bottom_coord,
+                            (old_top_coord, old_top_coord == 0), 
+                            (old_bottom_coord, old_bottom_coord == self.package_size[1] - 1),
                         ))
                 for i in range(n_blocks):
                     for j in range(n_units):
-                        new_left_arg = new_transfer_lines[i * (n_units - 1)]
-                        new_right_arg = new_transfer_lines[(i + 1) * (n_units - 1)]
-                        new_top_arg = new_transfer_lines[i * (n_units - 1) + j - 1]
-                        new_bottom_arg = new_transfer_lines[i * (n_units - 1) + j]
-                        if i == 0:
-                            new_left_arg = old_left_arg
-                        elif i == n_blocks - 1:
-                            new_right_arg = old_right_arg
-                        if j == 0:
-                            new_top_arg = old_top_arg
-                        elif j == n_units - 1:
-                            new_bottom_arg = old_bottom_arg
+                        new_left_arg = old_left_arg if i == 0 else new_transfer_lines[i * n_units - 1]
+                        new_right_arg = old_right_arg if i == n_blocks - 1 else new_transfer_lines[(i + 1) * n_units - 1]
+                        new_top_arg = old_top_arg if j == 0 else new_transfer_lines[i * n_units + j - 1]
+                        new_bottom_arg = old_bottom_arg if j == n_units - 1 else new_transfer_lines[i * n_units + j]
                         new_compute_modules.append(ComputeModule(
                             new_left_arg,
                             new_top_arg,
@@ -830,13 +827,13 @@ class Package:
             return -math.inf
         self.design_module_top_down(old_module, template, orient, interval)
         self.complete_package()
-        score = self.estimate_efficiency()
+        score = self.estimate_score()
 
         # restore the package
         for child in list(self.design_tree_dict[str(old_module)].children):
-            if child.name.type == NodeType.Compute:
+            if isinstance(child.name, ComputeModule):
                 self.compute_modules.remove(child.name)
-            elif child.name.type == NodeType.Transfer:
+            elif isinstance(child.name, TransferLine):
                 self.transfer_lines.remove(child.name)
             child.parent = None
             self.design_tree_dict.pop(str(child.name))
@@ -847,6 +844,7 @@ class Package:
     def update_chiplets_and_gaps(self):
         """
         Update the chiplet and gap information from function areas.
+        Note: called in the complete_package function.
         """
         self.compute_chiplets: list[ComputeChiplet] = []
         self.stations: set[tuple[int, int]] = set()
@@ -859,6 +857,7 @@ class Package:
                 self.platform_stations_dict[platform].append(station)
                 self.package_graph.nodes[platform]["qubit"].role = QubitRole.Platform
                 self.package_graph.nodes[station]["qubit"].role = QubitRole.Station
+            # TODO: update the edge information
         self.transfer_chiplets: list[TransferChiplet] = []
         self.interchanges: set[Coupler] = set()
         for transfer_line in self.transfer_lines:
@@ -868,6 +867,7 @@ class Package:
     def analysis_metro(self):
         """
         Update and analyze the metro topology.
+        Note: called in the complete_package function.
         """
         self.metro_topology: nx.Graph = nx.Graph()
         for transfer_chiplet in self.transfer_chiplets:
@@ -876,27 +876,26 @@ class Package:
             transfer_chiplet_u = self.get_node_chiplet(interchange.qubit_u)
             transfer_chiplet_v = self.get_node_chiplet(interchange.qubit_v)
             self.metro_topology.add_edge(transfer_chiplet_u, transfer_chiplet_v, coupler=interchange)
-        least_transfer_chiplets_dict: dict[TransferChiplet, dict[TransferChiplet, list[TransferChiplet]]] = nx.shortest_path(self.metro_topology)
-        self.interchange_dict: dict[TransferChiplet, dict[TransferChiplet, Path]] = {}
-        for transfer_chiplet_u in self.transfer_chiplets:
-            self.interchange_dict[transfer_chiplet_u] = {}
-            for transfer_chiplet_v in self.transfer_chiplets:
-                least_transfer_chiplets = least_transfer_chiplets_dict[transfer_chiplet_u][transfer_chiplet_v]
+        all_pairs_shortest_path_dict = dict(nx.all_pairs_shortest_path(self.metro_topology))
+        self.interchange_path_dict: dict[TransferChiplet, dict[TransferChiplet, Path]] = {}
+        for transfer_chiplet_u, all_targets_dict in all_pairs_shortest_path_dict.items():
+            self.interchange_path_dict[transfer_chiplet_u] = {}
+            for transfer_chiplet_v, shortest_path in all_targets_dict.items():
                 nodes: list[tuple[int, int]] = []
-                for i in range(len(least_transfer_chiplets) - 1):
-                    interchange: Coupler = self.metro_topology.edges[(least_transfer_chiplets[i], least_transfer_chiplets[i + 1])]["coupler"]
-                    if least_transfer_chiplets[i].has_node(interchange.qubit_u):
+                for i in range(len(shortest_path) - 1):
+                    interchange: Coupler = self.metro_topology.edges[(shortest_path[i], shortest_path[i + 1])]["coupler"]
+                    if shortest_path[i].has_node(interchange.qubit_u):
                         nodes.extend([interchange.qubit_u, interchange.qubit_v])
-                    elif least_transfer_chiplets[i].has_node(interchange.qubit_v):
+                    elif shortest_path[i].has_node(interchange.qubit_v):
                         nodes.extend([interchange.qubit_v, interchange.qubit_u])
                 roads: list[Road] = []
                 for i in range(len(nodes) - 1):
                     if i % 2 == 0:
-                        road = InterChipletRoad(nodes[i], nodes[i + 1], least_transfer_chiplets[i // 2], least_transfer_chiplets[i // 2 + 1], self.fab_model.inter_fide)
+                        road = InterChipletRoad(nodes[i], nodes[i + 1], shortest_path[i // 2], shortest_path[i // 2 + 1], self.fab_model.inter_fide)
                     else:
-                        road = IntraTransferRoad(nodes[i], nodes[i + 1], least_transfer_chiplets[i // 2 + 1])
+                        road = IntraTransferRoad(nodes[i], nodes[i + 1], shortest_path[i // 2 + 1])
                     roads.append(road)
-                self.interchange_dict[transfer_chiplet_u][transfer_chiplet_v] = Path(roads)
+                self.interchange_path_dict[transfer_chiplet_u][transfer_chiplet_v] = Path(roads)
 
     def complete_package(self):
         """
@@ -908,14 +907,6 @@ class Package:
         """
         self.update_chiplets_and_gaps()
         self.analysis_metro()
-
-        # self.chiplet_topology: nx.Graph = nx.Graph()
-        # for compute_chiplet in self.compute_chiplets:
-        #     self.chiplet_topology.add_node(str(compute_chiplet), chiplet=compute_chiplet)
-        # for transfer_chiplet in self.transfer_chiplets:
-        #     self.chiplet_topology.add_node(str(transfer_chiplet), chiplet=transfer_chiplet)
-        # for gap in self.inter_gaps.values():
-        #     self.chiplet_topology.add_edge(str(gap.area_u), str(gap.area_v), gap=gap)
 
     # Functions for package operation and estimation
     def random_transfer_pair(self) -> tuple[tuple[int, int], tuple[int, int]]:
@@ -969,9 +960,14 @@ class Package:
         source_area = self.get_node_area(source)
         if isinstance(source_area, ComputeModule):
             source_platform = source_area.get_nearest_platform(source)
+            if source_platform is None:
+                path = Path([IntraComputeRoad(source, target, source_area)])
+                fidelity = path.get_fidelity()
+                return path, fidelity
             source_station = self.platform_stations_dict[source_platform][0]
             source_transfer_node = source_station
             source_transfer_chiplet = self.get_node_chiplet(source_station)
+            assert isinstance(source_transfer_chiplet, TransferChiplet), "{} not on a transfer chiplet".format(source_station)
         else:
             source_transfer_node = source
             source_transfer_chiplet = self.get_node_chiplet(source)
@@ -981,6 +977,7 @@ class Package:
             target_station = self.platform_stations_dict[target_platform][0]
             target_transfer_node = target_station
             target_transfer_chiplet = self.get_node_chiplet(target_station)
+            assert isinstance(target_transfer_chiplet, TransferChiplet), "{} not on a transfer chiplet".format(target_station)
         else:
             target_transfer_node = target
             target_transfer_chiplet = self.get_node_chiplet(target)
@@ -989,7 +986,8 @@ class Package:
         if isinstance(source_area, ComputeModule):
             roads.append(IntraComputeRoad(source, source_platform, source_area))
             roads.append(InterChipletRoad(source_platform, source_station, self.get_node_chiplet(source_platform), source_transfer_chiplet, self.fab_model.inter_fide))
-        interchange_path = self.interchange_dict[source_transfer_chiplet][target_transfer_chiplet]
+        assert target_transfer_chiplet in self.interchange_path_dict[source_transfer_chiplet], "Unlinked transfer chiplet: {} -> {}".format(source_transfer_chiplet, target_transfer_chiplet)
+        interchange_path = self.interchange_path_dict[source_transfer_chiplet][target_transfer_chiplet]
         if len(interchange_path.roads) == 0:
             roads.append(IntraTransferRoad(source_transfer_node, target_transfer_node, source_transfer_chiplet))
         else:
@@ -1045,7 +1043,7 @@ class Package:
             cost += self.fab_model.get_cost(transfer_chiplet.get_capacity())
         return cost
 
-    def estimate_efficiency(self, num: int = None) -> float:
+    def estimate_score(self, num: int = None) -> float:
         """
         Estimate the efficiency of package considering the yield cost.
         Note: call complete_package() before this function.
@@ -1089,14 +1087,9 @@ class Package:
         Returns:
             Chiplet: The chiplet that contains the node.
         """
+        if self.package_graph.nodes[node]["qubit"].chiplet == None:
+            raise ValueError("Invalid physical qubit: {}".format(node))
         return self.package_graph.nodes[node]["qubit"].chiplet
-        for chiplet in self.compute_chiplets:
-            if chiplet.in_area(node):
-                return chiplet
-        for chiplet in self.transfer_chiplets:
-            if chiplet.in_area(node):
-                return chiplet
-        raise ValueError("Invalid physical qubit: {}".format(node))
 
     def get_node_area(self, node: tuple[int, int]) -> FuncArea:
         """
@@ -1108,62 +1101,9 @@ class Package:
         Returns:
             FuncArea: The function area that contains the node.
         """
+        if self.package_graph.nodes[node]["qubit"].area == None:
+            raise ValueError("Invalid physical qubit: {}".format(node))
         return self.package_graph.nodes[node]["qubit"].area
-        for module in self.compute_modules:
-            if module.in_area(node):
-                return module
-        for line in self.transfer_lines:
-            if line.in_area(node):
-                return line
-        raise ValueError("Invalid physical qubit: {}".format(node))
-
-    # def get_area_graph(self, area: FuncArea) -> nx.Graph:
-    #     """
-    #     Get the graph of function area in the package.
-
-    #     Args:
-    #         area (FuncArea): The function area.
-
-    #     Returns:
-    #         nx.Graph: The subgraph view of qubit topology in the function area.
-    #     """
-    #     return self.qubit_topology.subgraph(area.get_nodes())
-
-    # @staticmethod
-    # def edge_metro_weight(u: tuple[int, int], v: tuple[int, int], attrs: dict) -> int:
-    #     """
-    #     Calculate the weight of the edge based on the role.
-
-    #     Args:
-    #         u (tuple[int, int]): The first node.
-    #         v (tuple[int, int]): The second node.
-    #         attrs (dict): The attributes of the edge.
-        
-    #     Returns:
-    #         int: The weight of the edge.
-    #     """
-    #     return attrs["coupler"].role.value
-
-    # def get_shortest_metro_path(self, source: tuple[int, int], target: tuple[int, int]) -> tuple[list[tuple[int, int]], int]:
-    #     """
-    #     Get the shortest path in metro topology.
-
-    #     Args:
-    #         source (tuple[int, int]): The source node of the transfer pair.
-    #         target (tuple[int, int]): The target node of the transfer pair.
-
-    #     Returns:
-    #         path (list[tuple[int, int]]): The path with least interchanges.
-    #         interchange_num (int): The number of interchanges on the path.
-    #     """
-    #     assert source in self.metro_topology.nodes and target in self.metro_topology.nodes
-    #     path = nx.shortest_path(
-    #         self.metro_topology, source, target, weight=Package.edge_metro_weight
-    #     )
-    #     interchange_num = 0
-    #     for i in range(len(path) - 1):
-    #         interchange_num += self.metro_topology.edges[(path[i], path[i + 1])]["coupler"].role.value
-    #     return path, interchange_num
 
     def draw_qubits(self, 
         marginrate: float = 0.2, 
@@ -1266,42 +1206,39 @@ class Package:
             plt.savefig(save_path, bbox_inches="tight")
         plt.close()
 
-    # def draw_chiplets(self, 
-    #     marginrate: float = 0.2, 
-    #     markersize: float = 4, 
-    #     linewidth_t: float = 1, 
-    #     linewidth_b: float = 2, 
-    #     show: bool = True, 
-    #     save_path: str = None, 
-    # ):
-    #     """
-    #     Draw the package graph in chiplet level.
+    def draw_metro(self, 
+        marginrate: float = 0.2, 
+        markersize: float = 4, 
+        linewidth_t: float = 1, 
+        linewidth_b: float = 2, 
+        show: bool = True, 
+        save_path: str = None, 
+    ):
+        """
+        Draw the metro topology graph.
 
-    #     Args:
-    #         marginrate (float): The margin rate of the package.
-    #         markersize (float): The size of the markers.
-    #         linewidth_t (float): The linewidth of the transfer lines.
-    #         linewidth_b (float): The linewidth of the compute lines.
-    #         show (bool): Whether to show the figure.
-    #         save_path (str): The path to save the figure.
-    #     """
-    #     plt.figure(figsize=self.package_size)
-    #     for node in self.chiplet_topology.nodes:
-    #         chiplet: Chiplet = self.chiplet_topology.nodes[node]["chiplet"]
-    #         plt.plot(*chiplet.get_coordinate(), "ko", markersize=markersize)
-    #     for node_u, node_v in self.chiplet_topology.edges:
-    #         pos_u = self.chiplet_topology.nodes[node_u]["chiplet"].get_coordinate()
-    #         pos_v = self.chiplet_topology.nodes[node_v]["chiplet"].get_coordinate()
-    #         plt.plot(
-    #             [pos_u[0], pos_v[0]], [pos_u[1], pos_v[1]], "k-", linewidth=linewidth_t
-    #         )
-    #     plt.axis("off")
-    #     plt.gca().spines["top"].set_visible(False)
-    #     plt.gca().spines["right"].set_visible(False)
-    #     plt.gca().spines["bottom"].set_visible(False)
-    #     plt.gca().spines["left"].set_visible(False)
-    #     if show:
-    #         plt.show()
-    #     if save_path:
-    #         plt.savefig(save_path, bbox_inches="tight")
-    #     plt.close()
+        Args:
+            marginrate (float): The margin rate of the package.
+            markersize (float): The size of the markers.
+            linewidth_t (float): The linewidth of the transfer lines.
+            linewidth_b (float): The linewidth of the compute lines.
+            show (bool): Whether to show the figure.
+            save_path (str): The path to save the figure.
+        """
+        plt.figure(figsize=self.package_size)
+        for node in self.metro_topology.nodes:
+            plt.plot(*node.get_coordinate(), "ko", markersize=markersize)
+        for node_u, node_v in self.metro_topology.edges:
+            pos_u = node_u.get_coordinate()
+            pos_v = node_v.get_coordinate()
+            plt.plot([pos_u[0], pos_v[0]], [pos_u[1], pos_v[1]], "k-", linewidth=linewidth_t)
+        plt.axis("off")
+        plt.gca().spines["top"].set_visible(False)
+        plt.gca().spines["right"].set_visible(False)
+        plt.gca().spines["bottom"].set_visible(False)
+        plt.gca().spines["left"].set_visible(False)
+        if show:
+            plt.show()
+        if save_path:
+            plt.savefig(save_path, bbox_inches="tight")
+        plt.close()
