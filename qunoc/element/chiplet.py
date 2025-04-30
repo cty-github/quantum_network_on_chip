@@ -921,6 +921,19 @@ class ComputeModule(FuncArea):
                     self.platforms_and_stations.append((coupler.qubit_u, coupler.qubit_v))
         return self.platforms_and_stations
 
+    def get_platforms(self) -> set[tuple[int, int]]:
+        """
+        Get the platforms in the compute module.
+
+        Returns:
+            platforms (set[tuple[int, int]]): The set of platforms in the compute module.
+        """
+        if not hasattr(self, "platforms"):
+            self.platforms: set[tuple[int, int]] = set()
+            for platform, _ in self.get_platform_station_pairs():
+                self.platforms.add(platform)
+        return self.platforms
+
     def get_node_chiplet(self, node: tuple[int, int]) -> ComputeChiplet:
         """
         Get the compute chiplet that contains the node.

@@ -133,6 +133,8 @@ class Router:
         # self.station_list = package.get_station_list()
         # self.interchange_list = package.get_interchange_list()
 
+        self.package_graph = package.package_graph
+        self.metro_graph: nx.Graph = package.package_graph.subgraph(self.package.transfer_nodes)
         self.gate_depend_graph = program.gate_depend_graph
 
         self.init_l2p_map: dict[int, tuple[int, int]] = dict()
@@ -349,7 +351,15 @@ class Router:
     def check_move_gate(self, gate: Control, move_gates: list[Control]) -> bool:
         """
         Check if the gate can be inserted into the move gates.
+
         Concentrate criteria: #gate > #qubits*(#qubits-1)//4 and #qubit < max(chiplet_capacity)
+
+        Args:
+            gate (Control): The control gate to be checked.
+            move_gates (list[Control]): The list of integrated move gates.
+
+        Returns:
+            bool: True if the gate can be inserted into the move gates, otherwise False.
         """
         involved_qubits = set()
         for move_gate in move_gates:
@@ -363,10 +373,8 @@ class Router:
         max_chiplet_capacity = 0
         for involved_qubit in involved_qubits:
             physical_qubit = self.curr_l2p_map[involved_qubit]
-            chiplet = self.qubit_topology.nodes[physical_qubit]["chiplet"]
-            chiplet_capacity = self.package.get_chiplet_capacity(chiplet)
-            if chiplet_capacity > max_chiplet_capacity:
-                max_chiplet_capacity = chiplet_capacity
+            chiplet: ComputeChiplet = self.package_graph.nodes[physical_qubit]["qubit"].chiplet
+            max_chiplet_capacity = max(max_chiplet_capacity, chiplet.get_capacity())
 
         if len(move_gates)+1 < len(involved_qubits) * (len(involved_qubits) - 1) // 3:
             return False
@@ -374,15 +382,21 @@ class Router:
             return False
         return True
 
-    def determine_chiplet(self, involved_qubits):
+    def determine_chiplet(self, involved_qubits: list[int]) -> ComputeChiplet:
         """
         Determine the chiplet to move the qubits to.
+
+        Args:
+            involved_qubits (list[int]): The list of involved qubits in the move block.
+
+        Returns:
+            ComputeChiplet: The chiplet to which the qubits will be moved.
         """
         chiplet_cnt = dict()
         for qubit in involved_qubits:
             physical_qubit = self.curr_l2p_map[qubit]
-            chiplet = self.qubit_topology.nodes[physical_qubit]["chiplet"]
-            chiplet_capacity = self.package.get_chiplet_capacity(chiplet)
+            chiplet: ComputeChiplet = self.package_graph.nodes[physical_qubit]["qubit"].chiplet
+            chiplet_capacity = chiplet.get_capacity(chiplet)
             if chiplet_capacity > len(involved_qubits):
                 if chiplet in chiplet_cnt:
                     chiplet_cnt[chiplet] += 1
@@ -391,22 +405,22 @@ class Router:
         chiplet = max(chiplet_cnt, key=chiplet_cnt.get)
         return chiplet
 
-    def find_qubits_to_swap(self, chiplet, in_qubits, stand_qubits):
+    def find_qubits_to_swap(self, chiplet: ComputeChiplet, in_qubits: list[int], stand_qubits: list[int]) -> list[int]:
         """
         Find the logic qubits on target chiplet to replace, which has less control gate with qubits in the same chiplet.
         
-        Return:
-        list, the logic qubits on target chiplet to replace.
+        Args:
+            chiplet (ComputeChiplet): The target chiplet to which the qubits will be moved.
+            in_qubits (list[int]): The list of qubits to be moved in.
+            stand_qubits (list[int]): The list of qubits that are already on the target chiplet.
+
+        Returns:
+            list[int]: The list of qubits to be swapped out.
         """
-        chiplet_info = chiplet.split("_")
-        chiplet_left = int(chiplet_info[1])
-        chiplet_top = int(chiplet_info[2])
-        chiplet_right = int(chiplet_info[3])
-        chiplet_bottom = int(chiplet_info[4])
         candidate_local_freq = dict()
-        for i in range(chiplet_left, chiplet_right + 1):
-            for j in range(chiplet_top, chiplet_bottom + 1):
-                if self.qubit_topology.nodes[(i, j)]["role"] == QubitRole.Register:
+        for i in range(chiplet.left, chiplet.right + 1):
+            for j in range(chiplet.top, chiplet.bottom + 1):
+                if self.package_graph.nodes[(i, j)]["qubit"].role == QubitRole.Register:
                     cand_qubit = self.curr_p2l_map[(i, j)]
                     if cand_qubit not in stand_qubits:
                         candidate_local_freq[cand_qubit] = self.local_gate_freq[cand_qubit]
@@ -415,19 +429,26 @@ class Router:
         self.local_gate_freq = {i: 0 for i in range(self.program.data_qubit_num)}
         return out_qubits
 
-    def move_qubits_in_block(self, involved_qubits, chiplet):
+    def move_qubits_in_block(self, involved_qubits: list[int], chiplet: ComputeChiplet) -> list[tuple[int, int]]:
         """
         Move qubits in the block to the target chiplet.
+
+        Args:
+            involved_qubits (list[int]): The list of involved qubits in the move block.
+            chiplet (ComputeChiplet): The target chiplet to which the qubits will be moved.
+
+        Returns:
+            list[tuple[int, int]]: The list of qubit pairs to be swapped.
         """
-        in_qubits = []
-        stand_qubits = []
+        in_qubits: list[int] = []
+        stand_qubits: list[int] = []
         for qubit in involved_qubits:
-            if self.qubit_topology.nodes[self.curr_l2p_map[qubit]]["chiplet"] != chiplet:
+            if self.package_graph.nodes[self.curr_l2p_map[qubit]]["qubit"].chiplet != chiplet:
                 in_qubits.append(qubit)
             else:
                 stand_qubits.append(qubit)
         out_qubits = self.find_qubits_to_swap(chiplet, in_qubits, stand_qubits)
-        swap_logic_pairs = []
+        swap_logic_pairs: list[tuple[int, int]] = []
         for i in len(in_qubits):
             swap_logic_pairs.append((in_qubits[i], out_qubits[i]))
             in_physical_qubit = self.curr_l2p_map[in_qubits[i]]
@@ -438,9 +459,16 @@ class Router:
             self.curr_p2l_map[in_physical_qubit] = out_qubits[i]
         return swap_logic_pairs
 
-    def update_no_depend_block_ids(self, no_depend_block_ids, removed_block_id):
+    def update_no_depend_block_ids(self, no_depend_block_ids: list[int], removed_block_id: int) -> list[int]:
         """
         Update the no_depend_block_ids list by checking removed block's successors.
+
+        Args:
+            no_depend_block_ids (list[int]): The original list of block ids with no dependencies.
+            removed_block_id (int): The id of the removed block.
+
+        Returns:
+            list[int]: The updated list of block ids with no dependencies.
         """
         for succ_block in self.block_depend_graph.successors(removed_block_id):
             self.block_depend_graph.nodes[succ_block]["pred"].remove(removed_block_id)
@@ -478,7 +506,7 @@ class Router:
         Transform local block into circuit actions.
         1) route local gates -> LocalGate.
 
-        LocalGate.
+        Action dependency: LocalGate.
         """
         local_gate_ids = [local_gate.id for local_gate in local_block.ctrl_gates]
         local_gate_depent: nx.DiGraph = self.gate_depend_graph.subgraph(local_gate_ids)
@@ -505,10 +533,10 @@ class Router:
         4) ancilla qubits get off chiplet -> Alight;
         5) teleport qubits -> Teleport.
 
-        GhzPreparation -> TransferChipletRoute & RouteToPlat -> Alight -> Teleport.
+        Action dependency: GhzPreparation -> TransferChipletRoute & RouteToPlat -> Alight -> Teleport.
         """
         involved_qubits = [tele_block.control_qubit] + tele_block.target_qubits
-        route_to_plat_acts = self.route_nearest_platform(involved_qubits, False)
+        route_to_plat_acts = self.route_nearest_platforms(involved_qubits, False)
 
         platforms = [act.platform for act in route_to_plat_acts]
         ghz_action = self.locate_ghz_state(involved_qubits, platforms)
@@ -553,11 +581,11 @@ class Router:
         4) data qubits get off chiplet -> Alight;
         5) route local gates -> LocalGate.
 
-        RouteToPlat -> Board -> TransferChipletRoute -> Alight -> LocalGate.
+        Action dependency: RouteToPlat -> Board -> TransferChipletRoute -> Alight -> LocalGate.
         """
         in_qubits = [swap_pair[0] for swap_pair in move_block.swap_logic_pairs]
         out_qubits = [swap_pair[1] for swap_pair in move_block.swap_logic_pairs]
-        route_to_plat_acts = self.route_nearest_platform(in_qubits+out_qubits, True)
+        route_to_plat_acts = self.route_nearest_platforms(in_qubits+out_qubits, True)
         route_to_plat_act_ids = dict()
         for act in route_to_plat_acts:
             self.action_depend_graph.add_node(act.id, action=act)
@@ -620,34 +648,45 @@ class Router:
                 self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[gate.target_qubit], local_action.id)
             self.recent_logic_qubit_action_dict[gate.target_qubit] = local_action.id
 
-    def route_nearest_platform(self, logic_qubits, enter_flag) -> list[RouteToPlat]:
+    def route_nearest_platforms(self, logic_qubits: list[int], enter_flag: bool) -> list[RouteToPlat]:
         """
         Find the nearest unoccupied platform for logic qubits and route to it.
 
+        Args:
+            logic_qubits (list[int]): The list of logic qubits to be routed.
+            enter_flag (bool): The flag marking whether the qubits are entering the platform.
+
         Return:
-        RouteToPlat, the action to route the qubit to the platform.
+            list[RouteToPlat]: The list of actions to route the qubits to the platform.
         """
         route_to_plat_acts = []
         occupied_platforms = []
         for logic_qubit in logic_qubits:
             physical_qubit = self.curr_l2p_map[logic_qubit]
-            physical_qubit_area = self.package.get_node_area(physical_qubit)
-            area_graph = self.package.get_area_graph(physical_qubit_area)
-            shortest_path_dict = nx.shortest_path(area_graph, physical_qubit)
-            for target in shortest_path_dict:
-                if self.qubit_topology.nodes[target]["role"] != QubitRole.Platform:
-                    shortest_path_dict.remove(target)
-            shortest_path_dict = sorted(shortest_path_dict, key=lambda x: len(shortest_path_dict[x]))
-            for platform in shortest_path_dict:
+            compute_module = self.package.get_node_area(physical_qubit)
+            assert isinstance(compute_module, ComputeModule)
+            nearest_platform = None
+            highest_fide = 0
+            for platform in compute_module.get_platforms():
                 if platform not in occupied_platforms:
-                    route_to_plat_acts.append(RouteToPlat(logic_qubit, platform, enter_flag))
-                    occupied_platforms.append(platform)
-                    break
+                    _, fide = self.package.get_shortest_no_transfer_path(physical_qubit, platform)
+                    if nearest_platform is None or fide > highest_fide:
+                        nearest_platform = platform
+                        highest_fide = fide
+            route_to_plat_acts.append(RouteToPlat(logic_qubit, platform, enter_flag))
+            occupied_platforms.append(platform)
         return route_to_plat_acts
 
-    def get_balise_nearest_metro_subgraph(self, balise_id, node_num) -> nx.Graph:
+    def get_balise_nearest_metro_subgraph(self, balise_id: tuple[int, int], node_num: int) -> nx.Graph:
         """
         Get the nearest metro subgraph for a balise.
+
+        Args:
+            balise_id (tuple[int, int]): The coordinate of the balise.
+            node_num (int): The number of nodes in the subgraph.
+
+        Return:
+            nx.Graph: The subgraph of the metro topology.
         """
         visited = set()
         queue = [balise_id]
@@ -655,8 +694,8 @@ class Router:
             node = queue.pop(0)
             if node not in visited:
                 visited.add(node)
-                queue.extend([nbr for nbr in self.metro_topology.neighbors(node) if nbr not in visited])
-        subgraph = self.metro_topology.subgraph(visited).copy()
+                queue.extend([nbr for nbr in self.metro_graph.neighbors(node) if nbr not in visited])
+        subgraph = self.metro_graph.subgraph(visited).copy()
         return subgraph
 
     def locate_ghz_state(self, involved_qubits, platforms) -> GhzPreparation:

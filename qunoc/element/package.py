@@ -359,6 +359,17 @@ class Package:
         else:
             raise ValueError("Invalid design scheme: {}".format(design_scheme))
 
+    def __init__(self, pre_designed_package_path: str):
+        """
+        Initialize a package from a pre-designed package.
+
+        Args:
+            pre_designed_package_path (str): The path to the pre-designed package.
+        """
+        self.load(pre_designed_package_path)
+        FuncArea.fab_model = self.fab_model
+        Gap.fab_model = self.fab_model
+
     # Functions for bottom up design
     def update_node(self, node: tuple[int, int], new_type: NodeType):
         """
