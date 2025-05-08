@@ -115,14 +115,22 @@ class LayoutAgent:
         print("Designing layout...")
         state, _ = self.env.reset()
         print("Initial score: ", self.env.estimate())
-        self.env.render("machine", get_unique_file_save_path(self.result_dir, "rl_process_", ".jpg"))
+        if self.result_dir:
+            try:
+                self.env.render("machine", get_unique_file_save_path(self.result_dir, "rl_process_", ".jpg"))
+            except Exception as e:
+                print("Error in drawing qubits: ", e)
         done = False
         while not done:
             action, _ = self.model.predict(state, deterministic=True)
-            state, reward, done, _, _ = self.env.step(action)
+            state, _, done, _, _ = self.env.step(action)
             print("New action: ", action)
             print("New score: ", self.env.estimate())
-            self.env.render("machine", get_unique_file_save_path(self.result_dir, "rl_process_", ".jpg"))
+            if self.result_dir:
+                try:
+                    self.env.render("machine", get_unique_file_save_path(self.result_dir, "rl_process_", ".jpg"))
+                except Exception as e:
+                    print("Error in drawing qubits: ", e)
         make_gif(self.result_dir, "rl_process_", ".jpg", "rl_process.gif")
         return self.env.best_package
 

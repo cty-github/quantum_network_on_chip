@@ -178,6 +178,7 @@ class Router:
             self.init_l2p_map[i] = physical_data_qubit_list[i]
             self.init_p2l_map[physical_data_qubit_list[i]] = i
 
+    # Functions for determining compute blocks
     def update_no_depend_gate_ids(self, no_depend_gate_ids: list[int], removed_gate_id: int) -> list[int]:
         """
         Update the no_depend_gate_ids list by checking removed gate's successors.
@@ -459,6 +460,7 @@ class Router:
             self.curr_p2l_map[in_physical_qubit] = out_qubits[i]
         return swap_logic_pairs
 
+    # Functions for transforming compute blocks into circuit actions
     def update_no_depend_block_ids(self, no_depend_block_ids: list[int], removed_block_id: int) -> list[int]:
         """
         Update the no_depend_block_ids list by checking removed block's successors.
@@ -698,22 +700,26 @@ class Router:
         subgraph = self.metro_graph.subgraph(visited).copy()
         return subgraph
 
-    def locate_ghz_state(self, involved_qubits, platforms) -> GhzPreparation:
+    def locate_ghz_state(self, involved_qubits: list[int], platforms: list[tuple[int, int]]) -> GhzPreparation:
         """
         Allocate GHZ resource for a list of logic qubits for teleportation.
         Ensure the total transfer distance is minimized.
 
+        Args:
+            involved_qubits (list[int]): The list of logic qubits to be teleported.
+            platforms (list[tuple[int, int]]): The list of platforms to which the qubits will be teleported.
+
         Return:
-        GhzPreparation, the action to allocate GHZ resource.
+            GhzPreparation: The action to allocate GHZ resource.
         """
         ancilla_qubit_num = len(involved_qubits)
-        stations = [self.qubit_topology.nodes[platform]["station"] for platform in platforms]
+        stations = [self.package.platform_stations_dict[platform][0] for platform in platforms]
         best_interchange_depth = None
         best_ghz_balises = None
-        for balise_id in self.metro_topology.nodes:
+        for balise_id in self.metro_graph.nodes:
             ghz_balise_graph = self.get_balise_nearest_metro_subgraph(balise_id, ancilla_qubit_num)
             ghz_balises = list(ghz_balise_graph.nodes)
-            interchange_depth = max([self.balise_station_distance_dict[ghz_balises[i]][stations[i]]["interchange"] for i in range(ancilla_qubit_num)])
+            interchange_depth = max([self.package.get_inter_chiplet_distance(ghz_balises[i], stations[i]) for i in range(ancilla_qubit_num)])
             if best_interchange_depth == None or interchange_depth < best_interchange_depth:
                 best_interchange_depth = interchange_depth
                 best_ghz_balises = ghz_balises
@@ -724,32 +730,43 @@ class Router:
             target_physical_qubits.append(stations[i])
         return GhzPreparation(ancilla_qubit_num, involved_qubits, source_physical_qubits, target_physical_qubits)
 
-    def route_on_transfer_chiplets(self, logic_qubit, source_physical_qubit, target_physical_qubit) -> list[Transport | Interchange]:
+    def route_on_transfer_chiplets(self, logic_qubit: int, source_physical_qubit: tuple[int, int], target_physical_qubit: tuple[int, int]) -> list[Transport | Interchange]:
         """
         Route the qubit on transfer chiplets with least transfer algorithm.
 
+        Args:
+            logic_qubit (int): The logic qubit to be routed.
+            source_physical_qubit (tuple[int, int]): The source physical qubit.
+            target_physical_qubit (tuple[int, int]): The target physical qubit.
+
         Return:
-        list[CircuitAction], the action list to route the qubit on transfer chiplets, including Transport and Interchange.
+            list[Transport | Interchange]: The action list to route the qubit on transfer chiplets.
         """
         actions = []
-        transfer_path = self.balise_station_distance_dict[source_physical_qubit][target_physical_qubit]["path"]
-        on_rail_source_qubit = transfer_path[0]
-        for i in range(len(transfer_path)-1):
-            if self.metro_topology.edges[transfer_path[i], transfer_path[i+1]]["role"] == QubitRole.Interchange:
-                if transfer_path[i] != on_rail_source_qubit:
-                    actions.append(Transport(logic_qubit, on_rail_source_qubit, transfer_path[i]))
-                actions.append(Interchange(logic_qubit, (transfer_path[i], transfer_path[i+1])))
-                on_rail_source_qubit = transfer_path[i+1]
+        transfer_path, _ = self.package.get_shortest_transfer_path(source_physical_qubit, target_physical_qubit)
+        for road in transfer_path.roads:
+            if isinstance(road, IntraTransferRoad):
+                actions.append(Transport(logic_qubit, road.source, road.target))
+            elif isinstance(road, InterChipletRoad):
+                actions.append(Interchange(logic_qubit, road.source, road.target))
         return actions
 
-    def update_no_depend_action_ids(self, no_depend_action_ids: set, removed_action_id):
+    # Functions for scheduling actions to circuit
+    def update_no_depend_action_ids(self, no_depend_action_ids: list[int], removed_action_id: int) -> list[int]:
         """
         Update the no_depend_action_ids list by checking removed action's successors.
+
+        Args:
+            no_depend_action_ids (list[int]): The original list of action ids with no dependencies.
+            removed_action_id (int): The id of the removed action.
+
+        Returns:
+            list[int]: The updated list of action ids with no dependencies.
         """
         for succ_action in self.action_depend_graph.successors(removed_action_id):
             self.action_depend_graph.nodes[succ_action]["pred"].remove(removed_action_id)
             if len(self.action_depend_graph.nodes[succ_action]["pred"]) == 0:
-                no_depend_action_ids.add(succ_action)
+                no_depend_action_ids.append(succ_action)
         return no_depend_action_ids
 
     def schedule_action_to_circuit(self):
@@ -758,10 +775,10 @@ class Router:
         """
         for action_id in self.action_depend_graph.nodes:
             self.action_depend_graph.nodes[action_id]["pred"] = list(self.action_depend_graph.predecessors(action_id))
-        no_depend_action_ids = set()
+        no_depend_action_ids = []
         for action_id in self.action_depend_graph.nodes:
             if len(self.action_depend_graph.nodes[action_id]["pred"]) == 0:
-                no_depend_action_ids.add(action_id)
+                no_depend_action_ids.append(action_id)
         board_flag = True
         while len(no_depend_action_ids) > 0:
             new_stage = self.circuit.extend_stage(board_flag)
@@ -788,7 +805,6 @@ class Router:
                             break
                     if not action_added:
                         break
-                
                 # schedule GhzPreparation actions
                 ghz_visited_action_ids = set()
                 while True:
@@ -809,7 +825,6 @@ class Router:
                     if isinstance(action, Transport) and new_stage.add_transport_action(action):
                         no_depend_action_ids.remove(action_id)
                         no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, action_id)
-
                 # schedule RouteToPlat, Teleport, and LocalGate actions
                 while True:
                     action_added = False
@@ -832,7 +847,6 @@ class Router:
                             break
                     if not action_added:
                         break
-
             board_flag = not board_flag
     
     def estimate_fidelity(self) -> float:

@@ -331,7 +331,11 @@ class Package:
                 self.complete_package()
                 best_score = self.estimate_score()
                 print("Initial score: ", best_score)
-                self.draw_qubits(show=False, save_path=get_unique_file_save_path(self.result_dir, "greedy_process_", ".jpg"))
+                if self.result_dir:
+                    try:
+                        self.draw_qubits(show=False, save_path=get_unique_file_save_path(self.result_dir, "greedy_process_", ".jpg"))
+                    except Exception as e:
+                        print("Error in drawing qubits: ", e)
                 while True:
                     best_action: tuple = None
                     candidate_modules: list[ComputeModule] = [area.name for area in list(self.design_tree_root.leaves) if isinstance(area.name, ComputeModule)]
@@ -351,7 +355,11 @@ class Package:
                     self.complete_package()
                     print("New action: ", best_action)
                     print("New score: ", best_score)
-                    self.draw_qubits(show=False, save_path=get_unique_file_save_path(self.result_dir, "greedy_process_", ".jpg"))
+                    if self.result_dir:
+                        try:
+                            self.draw_qubits(show=False, save_path=get_unique_file_save_path(self.result_dir, "greedy_process_", ".jpg"))
+                        except Exception as e:
+                            print("Error in drawing qubits: ", e)
                 make_gif(self.result_dir, "greedy_process_", ".jpg", "greedy_process.gif")
             elif self.design_strategy == "rl":
                 self.complete_package()
@@ -871,7 +879,6 @@ class Package:
                 self.platform_stations_dict[platform].append(station)
                 self.package_graph.nodes[platform]["qubit"].role = QubitRole.Platform
                 self.package_graph.nodes[station]["qubit"].role = QubitRole.Station
-            # TODO: update the edge information
         self.transfer_chiplets: list[TransferChiplet] = []
         self.interchanges: set[Coupler] = set()
         for transfer_line in self.transfer_lines:
@@ -944,21 +951,6 @@ class Package:
             list[tuple[tuple[int, int], tuple[int, int]]]: The list of transfer pairs.
         """
         return [self.random_transfer_pair() for _ in range(num)]
-
-    # @staticmethod
-    # def edge_fide_weight(u: tuple[int, int], v: tuple[int, int], attrs: dict) -> float:
-    #     """
-    #     Calculate the weight of the edge based on the fidelity.
-
-    #     Args:
-    #         u (tuple[int, int]): The first node.
-    #         v (tuple[int, int]): The second node.
-    #         attrs (dict): The attributes of the edge.
-        
-    #     Returns:
-    #         float: The weight of the edge.
-    #     """
-    #     return -math.log(attrs["coupler"].fide)
 
     def has_no_transfer_path(self, source: tuple[int, int], target: tuple[int, int]) -> bool:
         """
@@ -1069,6 +1061,20 @@ class Package:
                 path = no_transfer_path
                 fidelity = no_transfer_fidelity
         return path, fidelity
+
+    def get_inter_chiplet_distance(self, source: tuple[int, int], target: tuple[int, int]) -> int:
+        """
+        Get the number of inter-chiplet transfer operations between two physical qubits.
+
+        Args:
+            source (tuple[int, int]): The source node of the transfer pair.
+            target (tuple[int, int]): The target node of the transfer pair
+
+        Returns:
+            int: The number of inter-chiplet transfer operations.
+        """
+        path, _ = self.get_shortest_path(source, target)
+        return (len(path.roads) - 1) // 2
 
     def estimate_transfer(self, num: int = None) -> tuple[float, float]:
         """

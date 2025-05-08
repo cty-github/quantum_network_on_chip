@@ -281,9 +281,14 @@ class BoardingStage(CircuitStage):
         paired_platforms (set): The set of paired platforms.
     """
     
-    def __init__(self, init_occupied_balises, init_occupied_platforms, holding_ancilla_plats):
+    def __init__(self, init_occupied_balises: set[tuple[int, int]], init_occupied_platforms: set[tuple[int, int]], holding_ancilla_plats: set[tuple[int, int]]):
         """
         Initialize the boarding stage.
+        
+        Args:
+            init_occupied_balises (set[tuple[int, int]]): The initial occupied balises.
+            init_occupied_platforms (set[tuple[int, int]]): The initial occupied platforms.
+            holding_ancilla_plats (set[tuple[int, int]]): The platforms holding ancilla qubits.
         """
         super().__init__(init_occupied_balises, init_occupied_platforms, holding_ancilla_plats)
         assert self.id % 2 == 0, "Boarding stage id should be even"
@@ -425,9 +430,14 @@ class RidingStage(CircuitStage):
         paired_balises (set): The set of paired balises.
     """
 
-    def __init__(self, init_occupied_balises, init_occupied_platforms, holding_ancilla_plats):
+    def __init__(self, init_occupied_balises: set[tuple[int, int]], init_occupied_platforms: set[tuple[int, int]], holding_ancilla_plats: set[tuple[int, int]]):
         """
         Initialize the riding stage.
+        
+        Args:
+            init_occupied_balises (set[tuple[int, int]]): The initial occupied balises.
+            init_occupied_platforms (set[tuple[int, int]]): The initial occupied platforms.
+            holding_ancilla_plats (set[tuple[int, int]]): The platforms holding ancilla qubits.
         """
         super().__init__(init_occupied_balises, init_occupied_platforms, holding_ancilla_plats)
         assert self.id % 2 == 1, "Operating stage id should be odd"
@@ -567,13 +577,20 @@ class Circuit:
         self.init_p2l_map = init_p2l_map
         self.action_depend_graph = action_depend_graph
 
+        self.single_time: float = package.fab_model.single_time
+        self.intra_time: float = package.fab_model.intra_time
+        self.inter_time: float = package.fab_model.inter_time
+        self.qst_time_constant: float = package.fab_model.qst_time_constant
+        self.measure_time: float = package.fab_model.measure_time
+        self.reset_time: float = package.fab_model.reset_time
+
         self.stages: list[CircuitStage] = [] # only use extend_stage to add new stage
 
         self.curr_l2p_map = deepcopy(init_l2p_map)
         self.curr_p2l_map = deepcopy(init_p2l_map)
         self.hold_ancilla_plats = set()
     
-    def extend_stage(self, board_flag: bool):
+    def extend_stage(self, board_flag: bool) -> CircuitStage:
         """
         Extend the circuit with a new stage.
         
@@ -581,6 +598,9 @@ class Circuit:
 
         Args:
             board_flag (bool): The flag marking if the new stage is a boarding stage.
+
+        Returns:
+            CircuitStage: The new stage added to the circuit.
         """
         if board_flag:
             assert len(self.stages) % 2 == 0, "Boarding stage should have even id"
@@ -623,5 +643,41 @@ class Circuit:
         Returns:
             int: The estimated depth of the circuit.
         """
-        # TODO: complete the function
-        pass
+        depth = 0
+        for stage in self.stages:
+            if isinstance(stage, BoardingStage):
+                inter_chiplet_flag = False
+                ghz_flag = False
+                for action in stage.boarding_actions:
+                    if isinstance(action, Board) or isinstance(action, Alight) or isinstance(action, Interchange):
+                        inter_chiplet_flag = True
+                    elif isinstance(action, GhzPreparation):
+                        ghz_flag = True
+                inter_chiplet_depth = 2 * self.inter_time + 3 * self.single_time if inter_chiplet_flag else 0
+                ghz_depth = 2 * self.qst_time_constant + 2 * self.single_time if ghz_flag else 0
+                stage_depth = max(inter_chiplet_depth, ghz_depth)
+            elif isinstance(stage, RidingStage):
+                transport_actions = []
+                route_actions = []
+                teleport_control_flag = False
+                teleport_target_flag = False
+                local_actions = []
+                for action in stage.operating_actions:
+                    if isinstance(action, Transport):
+                        transport_actions.append(action)
+                    elif isinstance(action, RouteToPlat):
+                        route_actions.append(action)
+                    elif isinstance(action, Teleport):
+                        if action.control_flag:
+                            teleport_control_flag = True
+                        else:
+                            teleport_target_flag = True
+                    elif isinstance(action, LocalGate):
+                        local_actions.append(action)
+                transport_depth = len(transport_actions) * self.intra_time
+                route_depth = len(route_actions) * self.intra_time
+                teleport_depth = self.intra_time * (int(teleport_control_flag) + int(teleport_target_flag))
+                local_depth = len(local_actions) * self.intra_time
+                stage_depth = max(transport_depth, route_depth, teleport_depth, local_depth)
+            depth += stage_depth
+        return depth

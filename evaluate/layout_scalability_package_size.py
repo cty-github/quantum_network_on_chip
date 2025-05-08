@@ -12,7 +12,8 @@ import csv
 csv_path = f"{exp_dir}transfer_fidelity.csv"
 with open(csv_path, mode='w', newline='') as file:
     writer = csv.writer(file)
-    writer.writerow(["PackageSize", "Baseline", "Greedy", "RL"])
+    writer.writerow(["PackageSize", "Score", "", "", "Fidelity", "", ""])
+    writer.writerow(["", "Baseline", "Greedy", "RL", "Baseline", "Greedy", "RL"])
 
 # from qunoc.utils.utils import get_timestamp
 from qunoc.element.package import *
@@ -30,14 +31,15 @@ for package_length in package_length_to_test:
     package_baseline = Package(package_size, fab_model, design_strategy="rl")
     package_greedy = Package(package_size, fab_model, design_strategy="greedy", result_dir=result_dir)
 
-    env = QuNoCEnv(package_size, fab_model)
+    env = QuNoCEnv(package_size, fab_model, patience=5)
     agent = LayoutAgent(env, result_dir=result_dir)
-    agent.train()
+    agent.train(total_timesteps=100000)
     package_rl = agent.design()
 
     package_list = [package_baseline, package_greedy, package_rl]
-    fidelity_list = [package.estimate_transfer() for package in package_list]
+    score_list = [package.estimate_score() for package in package_list]
+    fidelity_list = [package.estimate_transfer()[0] for package in package_list]
 
     with open(csv_path, mode='a', newline='') as file:
         writer = csv.writer(file)
-        writer.writerow([package_length, *fidelity_list])
+        writer.writerow([package_length, *score_list, *fidelity_list])
