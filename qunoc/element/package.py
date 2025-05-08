@@ -210,6 +210,7 @@ class Package:
         top_down_max_step: int = 10, 
         bottom_up_init_type: np.ndarray = None, 
         result_dir: str = None,
+        pre_designed_package_path: str = None, 
     ):
         """
         Initialize a package.
@@ -222,161 +223,156 @@ class Package:
             top_down_max_step (int): The max number of steps for top down design.
             bottom_up_init_type (np.ndarray): The initial type of nodes used for bottom up design.
             result_dir (str): The directory to save the design results.
+            pre_designed_package_path (str): The path of pre-designed package for loading.
         """
-        self.package_size = package_size
-        self.node_num = package_size[0] * package_size[1]
-        self.fab_model = fab_model
-        FuncArea.fab_model = fab_model
-        Gap.fab_model = fab_model
-        self.design_scheme = design_scheme
-        self.design_strategy = design_strategy
-        self.top_down_max_step = top_down_max_step
-        self.result_dir = result_dir
+        if pre_designed_package_path:
+            self.load(pre_designed_package_path)
+            FuncArea.fab_model = self.fab_model
+            Gap.fab_model = self.fab_model
+        else:
+            self.package_size = package_size
+            self.node_num = package_size[0] * package_size[1]
+            self.fab_model = fab_model
+            FuncArea.fab_model = fab_model
+            Gap.fab_model = fab_model
+            self.design_scheme = design_scheme
+            self.design_strategy = design_strategy
+            self.top_down_max_step = top_down_max_step
+            self.result_dir = result_dir
 
-        self.package_graph: nx.Graph = nx.grid_2d_graph(*self.package_size)
-        for node in self.package_graph.nodes:
-            self.package_graph.nodes[node]["type"] = NodeType.Empty
-            self.package_graph.nodes[node]["qubit"] = Qubit(node, NodeType.Empty, self.fab_model.single_fide)
-        for edge in self.package_graph.edges:
-            self.package_graph.edges[edge]["type"] = EdgeType.Intra
-        self.compute_nodes: set[tuple[int, int]] = set()
-        self.transfer_nodes: set[tuple[int, int]] = set()
-
-        # determine compute rectangles and transfer lines
-        if self.design_scheme == "bottom_up":
-            if bottom_up_init_type is None:
-                bottom_up_init_type = np.zeros(self.package_size, dtype=np.int8)
-            else:
-                assert bottom_up_init_type.shape == self.package_size
+            self.package_graph: nx.Graph = nx.grid_2d_graph(*self.package_size)
             for node in self.package_graph.nodes:
-                self.package_graph.nodes[node]["type"] = NodeType(bottom_up_init_type[node[0], node[1]])
-                if bottom_up_init_type[node[0], node[1]]:
-                    self.package_graph.nodes[node]["qubit"].type = self.package_graph.nodes[node]["type"]
-                    if bottom_up_init_type[node[0], node[1]] == NodeType.Compute.value:
-                        self.compute_nodes.add(node)
-                    elif bottom_up_init_type[node[0], node[1]] == NodeType.Transfer.value:
-                        self.transfer_nodes.add(node)
+                self.package_graph.nodes[node]["type"] = NodeType.Empty
+                self.package_graph.nodes[node]["qubit"] = Qubit(node, NodeType.Empty, self.fab_model.single_fide)
+            for edge in self.package_graph.edges:
+                self.package_graph.edges[edge]["type"] = EdgeType.Intra
+            self.compute_nodes: set[tuple[int, int]] = set()
+            self.transfer_nodes: set[tuple[int, int]] = set()
+
+            # determine compute rectangles and transfer lines
+            if self.design_scheme == "bottom_up":
+                if bottom_up_init_type is None:
+                    bottom_up_init_type = np.zeros(self.package_size, dtype=np.int8)
                 else:
-                    self.package_graph.nodes[node]["qubit"] = None
-            self.design_qunoc_bottom_up()
-            self.compute_modules, self.transfer_lines = self.check_func_area()
-            self.complete_package()
-        elif self.design_scheme == "top_down":
-            self.transfer_lines: list[TransferLine] = []
-            self.transfer_lines.append(TransferLine(1, 0, (0, True), (package_size[1] - 2, False)))
-            self.transfer_lines.append(TransferLine(0, 0, (1, False), (package_size[0] - 1, True)))
-            self.transfer_lines.append(TransferLine(1, package_size[0] - 1, (1, False), (package_size[1] - 1, True)))
-            self.transfer_lines.append(TransferLine(0, package_size[1] - 1, (0, True), (package_size[0] - 2, False)))
-            self.compute_modules = [ComputeModule(self.transfer_lines[0], self.transfer_lines[1], self.transfer_lines[2], self.transfer_lines[3])]
-            self.design_tree_root = Node(self.compute_modules[0])
-            self.design_tree_dict = {str(self.compute_modules[0]): self.design_tree_root}
-            for area in self.compute_modules + self.transfer_lines:
-                self.complete_area(area)
-            if self.design_strategy == "heuristic":
-                old_compute_module = self.compute_modules[0]
-                length_width_ratio = max(self.package_size) / min(self.package_size)
-                if length_width_ratio > 1:
-                    if self.package_size[0] > self.package_size[1]:
-                        self.design_module_top_down(
-                            old_compute_module,
-                            DesignTemplate.Strip,
-                            DesignOrientation.Y,
-                            min(self.package_size[1] - 1, (self.package_size[0] + 1) // 2 - 1),
-                        )
+                    assert bottom_up_init_type.shape == self.package_size
+                for node in self.package_graph.nodes:
+                    self.package_graph.nodes[node]["type"] = NodeType(bottom_up_init_type[node[0], node[1]])
+                    if bottom_up_init_type[node[0], node[1]]:
+                        self.package_graph.nodes[node]["qubit"].type = self.package_graph.nodes[node]["type"]
+                        if bottom_up_init_type[node[0], node[1]] == NodeType.Compute.value:
+                            self.compute_nodes.add(node)
+                        elif bottom_up_init_type[node[0], node[1]] == NodeType.Transfer.value:
+                            self.transfer_nodes.add(node)
                     else:
-                        self.design_module_top_down(
-                            old_compute_module,
-                            DesignTemplate.Strip,
-                            DesignOrientation.X,
-                            min(self.package_size[0] - 1, (self.package_size[1] + 1) // 2 - 1),
-                        )
-                    old_compute_module = self.compute_modules[len(self.compute_modules) // 2]
-                grid_round = len(self.compute_modules) - 1
-                radial_round = (
-                    min(self.package_size) - 2 * self.fab_model.max_square_size
-                ) // (4 * self.fab_model.max_square_size)
-                for i in range(radial_round):
-                    self.design_module_top_down(
-                        old_compute_module,
-                        DesignTemplate.Radial,
-                        DesignOrientation.X,
-                        2 * self.fab_model.max_square_size - 1,
-                    )
-                    old_compute_module = self.compute_modules[-1]
-                for i in range(grid_round):
+                        self.package_graph.nodes[node]["qubit"] = None
+                self.design_qunoc_bottom_up()
+                self.compute_modules, self.transfer_lines = self.check_func_area()
+                self.complete_package()
+            elif self.design_scheme == "top_down":
+                self.transfer_lines: list[TransferLine] = []
+                self.transfer_lines.append(TransferLine(1, 0, (0, True), (package_size[1] - 2, False)))
+                self.transfer_lines.append(TransferLine(0, 0, (1, False), (package_size[0] - 1, True)))
+                self.transfer_lines.append(TransferLine(1, package_size[0] - 1, (1, False), (package_size[1] - 1, True)))
+                self.transfer_lines.append(TransferLine(0, package_size[1] - 1, (0, True), (package_size[0] - 2, False)))
+                self.compute_modules = [ComputeModule(self.transfer_lines[0], self.transfer_lines[1], self.transfer_lines[2], self.transfer_lines[3])]
+                self.design_tree_root = Node(self.compute_modules[0])
+                self.design_tree_dict = {str(self.compute_modules[0]): self.design_tree_root}
+                for area in self.compute_modules + self.transfer_lines:
+                    self.complete_area(area)
+                if self.design_strategy == "heuristic":
                     old_compute_module = self.compute_modules[0]
-                    if self.package_size[0] > self.package_size[1]:
+                    length_width_ratio = max(self.package_size) / min(self.package_size)
+                    if length_width_ratio > 1:
+                        if self.package_size[0] > self.package_size[1]:
+                            self.design_module_top_down(
+                                old_compute_module,
+                                DesignTemplate.Strip,
+                                DesignOrientation.Y,
+                                min(self.package_size[1] - 1, (self.package_size[0] + 1) // 2 - 1),
+                            )
+                        else:
+                            self.design_module_top_down(
+                                old_compute_module,
+                                DesignTemplate.Strip,
+                                DesignOrientation.X,
+                                min(self.package_size[0] - 1, (self.package_size[1] + 1) // 2 - 1),
+                            )
+                        old_compute_module = self.compute_modules[len(self.compute_modules) // 2]
+                    grid_round = len(self.compute_modules) - 1
+                    radial_round = (
+                        min(self.package_size) - 2 * self.fab_model.max_square_size
+                    ) // (4 * self.fab_model.max_square_size)
+                    for i in range(radial_round):
                         self.design_module_top_down(
                             old_compute_module,
-                            DesignTemplate.Grid,
+                            DesignTemplate.Radial,
                             DesignOrientation.X,
-                            min(
-                                3 * self.fab_model.max_square_size - 1,
-                                (min(self.package_size[1], old_compute_module.right - old_compute_module.left + 1) + 1) // 2 - 1,
-                            ),
+                            2 * self.fab_model.max_square_size - 1,
                         )
-                    else:
-                        self.design_module_top_down(
-                            old_compute_module,
-                            DesignTemplate.Grid,
-                            DesignOrientation.Y,
-                            min(
-                                3 * self.fab_model.max_square_size - 1,
-                                (min(self.package_size[0], old_compute_module.bottom - old_compute_module.top + 1) + 1) // 2 - 1,
-                            ),
-                        )
-                self.complete_package()
-            elif self.design_strategy == "greedy":
-                os.makedirs(self.result_dir, exist_ok=True)
-                self.complete_package()
-                best_score = self.estimate_score()
-                print("Initial score: ", best_score)
-                if self.result_dir:
-                    try:
-                        self.draw_qubits(show=False, save_path=get_unique_file_save_path(self.result_dir, "greedy_process_", ".jpg"))
-                    except Exception as e:
-                        print("Error in drawing qubits: ", e)
-                while True:
-                    best_action: tuple = None
-                    candidate_modules: list[ComputeModule] = [area.name for area in list(self.design_tree_root.leaves) if isinstance(area.name, ComputeModule)]
-                    for action in product(
-                        candidate_modules, 
-                        list(DesignTemplate), 
-                        list(DesignOrientation), 
-                        range(self.fab_model.max_square_size, max(self.package_size)//2, self.fab_model.max_square_size)
-                    ):  
-                        score = self.try_design_module(*action)
-                        if score > best_score:
-                            best_action = action
-                            best_score = score
-                    if best_action is None:
-                        break
-                    self.design_module_top_down(*best_action)
+                        old_compute_module = self.compute_modules[-1]
+                    for i in range(grid_round):
+                        old_compute_module = self.compute_modules[0]
+                        if self.package_size[0] > self.package_size[1]:
+                            self.design_module_top_down(
+                                old_compute_module,
+                                DesignTemplate.Grid,
+                                DesignOrientation.X,
+                                min(
+                                    3 * self.fab_model.max_square_size - 1,
+                                    (min(self.package_size[1], old_compute_module.right - old_compute_module.left + 1) + 1) // 2 - 1,
+                                ),
+                            )
+                        else:
+                            self.design_module_top_down(
+                                old_compute_module,
+                                DesignTemplate.Grid,
+                                DesignOrientation.Y,
+                                min(
+                                    3 * self.fab_model.max_square_size - 1,
+                                    (min(self.package_size[0], old_compute_module.bottom - old_compute_module.top + 1) + 1) // 2 - 1,
+                                ),
+                            )
                     self.complete_package()
-                    print("New action: ", best_action)
-                    print("New score: ", best_score)
+                elif self.design_strategy == "greedy":
+                    os.makedirs(self.result_dir, exist_ok=True)
+                    self.complete_package()
+                    best_score = self.estimate_score()
+                    print("Initial score: ", best_score)
                     if self.result_dir:
                         try:
                             self.draw_qubits(show=False, save_path=get_unique_file_save_path(self.result_dir, "greedy_process_", ".jpg"))
                         except Exception as e:
                             print("Error in drawing qubits: ", e)
-                make_gif(self.result_dir, "greedy_process_", ".jpg", "greedy_process.gif")
-            elif self.design_strategy == "rl":
-                self.complete_package()
-                # The rest rl design process is implemented outside in the LayoutAgent.
-        else:
-            raise ValueError("Invalid design scheme: {}".format(design_scheme))
-
-    def __init__(self, pre_designed_package_path: str):
-        """
-        Initialize a package from a pre-designed package.
-
-        Args:
-            pre_designed_package_path (str): The path to the pre-designed package.
-        """
-        self.load(pre_designed_package_path)
-        FuncArea.fab_model = self.fab_model
-        Gap.fab_model = self.fab_model
+                    while True:
+                        best_action: tuple = None
+                        candidate_modules: list[ComputeModule] = [area.name for area in list(self.design_tree_root.leaves) if isinstance(area.name, ComputeModule)]
+                        for action in product(
+                            candidate_modules, 
+                            list(DesignTemplate), 
+                            list(DesignOrientation), 
+                            range(self.fab_model.max_square_size, max(self.package_size)//2, self.fab_model.max_square_size)
+                        ):  
+                            score = self.try_design_module(*action)
+                            if score > best_score:
+                                best_action = action
+                                best_score = score
+                        if best_action is None:
+                            break
+                        self.design_module_top_down(*best_action)
+                        self.complete_package()
+                        print("New action: ", best_action)
+                        print("New score: ", best_score)
+                        if self.result_dir:
+                            try:
+                                self.draw_qubits(show=False, save_path=get_unique_file_save_path(self.result_dir, "greedy_process_", ".jpg"))
+                            except Exception as e:
+                                print("Error in drawing qubits: ", e)
+                    make_gif(self.result_dir, "greedy_process_", ".jpg", "greedy_process.gif")
+                elif self.design_strategy == "rl":
+                    self.complete_package()
+                    # The rest rl design process is implemented outside in the LayoutAgent.
+            else:
+                raise ValueError("Invalid design scheme: {}".format(design_scheme))
 
     # Functions for bottom up design
     def update_node(self, node: tuple[int, int], new_type: NodeType):
