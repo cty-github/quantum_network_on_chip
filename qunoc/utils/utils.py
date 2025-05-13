@@ -1,8 +1,13 @@
 import os
+import numpy as np
 from PIL import Image
 from datetime import datetime
+import networkx as nx
 
 color_pool = ['#D9D9D9', '#C9E0E5', '#BED2C6', '#FFD19D', '#FEB29B', '#ED8687']
+
+def log_decay(x, a, b):
+    return 1 - a * np.log(1 + b * x)
 
 def get_full_space_tuple(pos: int, axis: int, index: int) -> tuple[int, int]:
     """
@@ -62,3 +67,22 @@ def make_gif(dir: str, prefix, ext: str, filename: str, duration: int = 1000):
         duration=duration,
         loop=0
     )
+
+def find_longest_topo_distance(G: nx.DiGraph) -> int:
+    """
+    Find the length of the longest path in a directed acyclic graph (DAG).
+
+    Args:
+        G (nx.DiGraph): The directed acyclic graph.
+
+    Returns:
+        int: The length of the longest path in the graph.
+    """
+    topo_order = list(nx.topological_sort(G))
+    dist = {node: 0 for node in G.nodes()}
+    for u in topo_order:
+        for v in G.successors(u):
+            if dist[v] < dist[u] + 1:
+                dist[v] = dist[u] + 1
+    farthest_node = max(dist, key=dist.get)
+    return dist[farthest_node]

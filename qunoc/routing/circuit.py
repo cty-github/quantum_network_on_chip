@@ -1,3 +1,4 @@
+import pickle
 import networkx as nx
 from copy import deepcopy
 
@@ -75,6 +76,9 @@ class GhzPreparation(BoardingAction):
         self.logic_qubits = logic_qubits
         self.source_physical_qubits = source_physical_qubits
         self.target_physical_qubits = target_physical_qubits
+    
+    def __repr__(self):
+        return f"{str(self.__class__.__name__)} for logic qubits {self.logic_qubits} on physical qubits {self.source_physical_qubits}, which will be transport to physical qubits {self.target_physical_qubits}."
 
 class Board(BoardingAction):
     """
@@ -99,6 +103,9 @@ class Board(BoardingAction):
         self.logic_qubit = logic_qubit
         self.station = station
         self.platform = platform
+    
+    def __repr__(self):
+        return f"{str(self.__class__.__name__)} of logic qubit {self.logic_qubit} from physical qubit {self.platform} to physical qubit {self.station}."
 
 class Alight(BoardingAction):
     """
@@ -126,6 +133,9 @@ class Alight(BoardingAction):
         self.station = station
         self.platform = platform
         self.exit_flag = exit_flag
+    
+    def __repr__(self):
+        return f"{str(self.__class__.__name__)} of logic qubit {self.logic_qubit} from physical qubit {self.station} to physical qubit {self.platform}."
 
 class Interchange(BoardingAction):
     """
@@ -147,7 +157,10 @@ class Interchange(BoardingAction):
         super().__init__()
         self.logic_qubit = logic_qubit
         self.interchange = interchange
-            
+    
+    def __repr__(self):
+        return f"{str(self.__class__.__name__)} of logic qubit {self.logic_qubit} between physical qubits {self.interchange}."
+
 class Transport(RidingAction):
     """
     Represents the action to transport a logic qubit inside the transfer chiplet.
@@ -171,6 +184,9 @@ class Transport(RidingAction):
         self.logic_qubit = logic_qubit
         self.source_physical_qubit = source_physical_qubit
         self.target_physical_qubit = target_physical_qubit
+    
+    def __repr__(self):
+        return f"{str(self.__class__.__name__)} of logic qubit {self.logic_qubit} from physical qubit {self.source_physical_qubit} to physical qubit {self.target_physical_qubit}."
 
 class RouteToPlat(RidingAction):
     """
@@ -195,6 +211,9 @@ class RouteToPlat(RidingAction):
         self.logic_qubit = logic_qubit
         self.platform = platform
         self.enter_flag = enter_flag
+    
+    def __repr__(self):
+        return f"{str(self.__class__.__name__)} logic qubit {self.logic_qubit} to physical qubit {self.platform}."
 
 class Teleport(RidingAction):
     """
@@ -219,6 +238,9 @@ class Teleport(RidingAction):
         self.logic_qubit = logic_qubit
         self.platform = platform
         self.control_flag = control_flag
+    
+    def __repr__(self):
+        return f"{str(self.__class__.__name__)} for logic qubit {self.logic_qubit} on physical qubit {self.platform}."
 
 class LocalGate(RidingAction):
     """
@@ -240,6 +262,9 @@ class LocalGate(RidingAction):
         super().__init__()
         self.logic_gate = logic_gate
         self.module = module
+    
+    def __repr__(self):
+        return f"{str(self.__class__.__name__)} {self.logic_gate} on module {self.module}."
 
 
 class CircuitStage:
@@ -441,7 +466,7 @@ class RidingStage(CircuitStage):
         """
         super().__init__(init_occupied_balises, init_occupied_platforms, holding_ancilla_plats)
         assert self.id % 2 == 1, "Operating stage id should be odd"
-        self.operating_actions: list[RidingAction] = []
+        self.riding_actions: list[RidingAction] = []
 
         self.potential_free_balises = dict()
         self.paired_balises = set()
@@ -476,7 +501,7 @@ class RidingStage(CircuitStage):
             self.curr_occupied_balises.remove(action.source_physical_qubit)
             self.curr_occupied_balises.add(action.target_physical_qubit)
         
-        self.operating_actions.append(action)
+        self.riding_actions.append(action)
         return True
     
     def add_route_action(self, action: RouteToPlat) -> bool:
@@ -498,7 +523,7 @@ class RidingStage(CircuitStage):
                 return False
             self.curr_occupied_platforms.add(action.platform)
             
-        self.operating_actions.append(action)
+        self.riding_actions.append(action)
         return True
     
     def add_teleport_action(self, action: Teleport) -> bool:
@@ -518,7 +543,7 @@ class RidingStage(CircuitStage):
         self.curr_occupied_platforms.remove(action.platform)
         self.holding_ancilla_plats.remove(action.platform)
 
-        self.operating_actions.append(action)
+        self.riding_actions.append(action)
         return True
 
     def add_local_action(self, action: LocalGate) -> bool:
@@ -535,7 +560,7 @@ class RidingStage(CircuitStage):
         """
         assert isinstance(action, LocalGate), "Action should be LocalGate"
 
-        self.operating_actions.append(action)
+        self.riding_actions.append(action)
         return True
 
 
@@ -577,18 +602,31 @@ class Circuit:
         self.init_p2l_map = init_p2l_map
         self.action_depend_graph = action_depend_graph
 
-        self.single_time: float = package.fab_model.single_time
-        self.intra_time: float = package.fab_model.intra_time
-        self.inter_time: float = package.fab_model.inter_time
-        self.qst_time_constant: float = package.fab_model.qst_time_constant
-        self.measure_time: float = package.fab_model.measure_time
-        self.reset_time: float = package.fab_model.reset_time
+        # self.single_time: float = package.fab_model.single_time
+        # self.intra_time: float = package.fab_model.intra_time
+        # self.inter_time: float = package.fab_model.inter_time
+        # self.qst_time_constant: float = package.fab_model.qst_time_constant
+        # self.measure_time: float = package.fab_model.measure_time
+        # self.reset_time: float = package.fab_model.reset_time
 
         self.stages: list[CircuitStage] = [] # only use extend_stage to add new stage
 
         self.curr_l2p_map = deepcopy(init_l2p_map)
         self.curr_p2l_map = deepcopy(init_p2l_map)
         self.hold_ancilla_plats = set()
+
+    def __repr__(self):
+        if not hasattr(self, "string_repr"):
+            self.string_repr = str()
+            for stage in self.stages:
+                self.string_repr += "=" * 20 + str(stage.__class__.__name__) + "=" * 20 + "\n"
+                if isinstance(stage, BoardingStage):
+                    for action in stage.boarding_actions:
+                        self.string_repr += str(action) + "\n"
+                elif isinstance(stage, RidingStage):
+                    for action in stage.riding_actions:
+                        self.string_repr += str(action) + "\n"
+        return self.string_repr
     
     def extend_stage(self, board_flag: bool) -> CircuitStage:
         """
@@ -662,7 +700,7 @@ class Circuit:
                 teleport_control_flag = False
                 teleport_target_flag = False
                 local_actions = []
-                for action in stage.operating_actions:
+                for action in stage.riding_actions:
                     if isinstance(action, Transport):
                         transport_actions.append(action)
                     elif isinstance(action, RouteToPlat):
@@ -681,3 +719,24 @@ class Circuit:
                 stage_depth = max(transport_depth, route_depth, teleport_depth, local_depth)
             depth += stage_depth
         return depth
+
+    def load(self, path: str):
+        """
+        Load the package from a file.
+
+        Args:
+            path (str): The path to load the package.
+        """
+        with open(path, "rb") as f:
+            package = pickle.load(f)
+            self.__dict__.update(package.__dict__)
+
+    def save(self, path: str):
+        """
+        Save the package to a file.
+
+        Args:
+            path (str): The path to save the package.
+        """
+        with open(path, "wb") as f:
+            pickle.dump(self, f)

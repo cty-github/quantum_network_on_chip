@@ -1,6 +1,7 @@
 import networkx as nx
 from random import sample
 import matplotlib.pyplot as plt
+from ..utils.utils import find_longest_topo_distance
 
 
 class Gate:
@@ -134,16 +135,48 @@ class Program:
         assert nx.is_directed_acyclic_graph(self.gate_depend_graph)
     
     def __repr__(self):
-        return ", ".join([str(self.gate_depend_graph.nodes[id]["gate"]) for id in nx.topological_sort(self.gate_depend_graph)])
+        return f"{self.algo_name} program: " + ", ".join([str(self.gate_depend_graph.nodes[id]["gate"]) for id in nx.topological_sort(self.gate_depend_graph)])
 
-    def draw(self):
+    def draw(self, 
+        marginrate: float = 0.2, 
+        markersize: float = 5, 
+        linewidth_t: float = 1, 
+        linewidth_b: float = 2, 
+        show: bool = True, 
+        save_path: str = None, 
+    ):
         """
         Draw the gate dependency graph to present the program.
         """
         pos = nx.spring_layout(self.gate_depend_graph)
-        plt.figure()
-        nx.draw(self.gate_depend_graph, pos, with_labels=True, arrows=True, node_size=1000, node_color='lightblue', edge_color='gray')
+        figsize = (find_longest_topo_distance(self.gate_depend_graph), find_longest_topo_distance(self.gate_depend_graph))
+        plt.figure(figsize=figsize)
+        nx.draw(
+            self.gate_depend_graph, 
+            pos, 
+            with_labels=False, 
+            arrows=True, 
+            node_size=markersize, 
+            width=linewidth_t,
+            node_color='black', 
+            edge_color='black', 
+        )
+        labels = {node: str(node) for node in self.gate_depend_graph.nodes()}
+        label_offset = (-0.04, 0.03)
+        label_pos = {k: (v[0] + label_offset[0], v[1] + label_offset[1]) for k, v in pos.items()}
+        nx.draw_networkx_labels(
+            self.gate_depend_graph,
+            label_pos,
+            labels=labels,
+            font_size=10,
+            font_color='black'
+        )
         plt.title(f"Program {self.algo_name}-{self.data_qubit_num}")
+        if show:
+            plt.show()
+        if save_path:
+            plt.savefig(save_path)
+        plt.close()
 
 def VQE(data_qubit_num: int) -> Program:
     """
@@ -161,7 +194,7 @@ def VQE(data_qubit_num: int) -> Program:
         logic_gates.extend([Barrier(j) for j in range(data_qubit_num-1)])
         control_gates = [Control(i, j) for j in range(i+1, data_qubit_num)]
         logic_gates.extend(control_gates)
-    return Program("vqe", data_qubit_num, logic_gates)
+    return Program("VQE", data_qubit_num, logic_gates)
 
 def QFT(data_qubit_num: int) -> Program:
     """
@@ -179,7 +212,7 @@ def QFT(data_qubit_num: int) -> Program:
         logic_gates.extend([Barrier(j) for j in range(data_qubit_num-1)])
         control_gates = [Control(j, i) for j in range(i+1, data_qubit_num)]
         logic_gates.extend(control_gates)
-    return Program("qft", data_qubit_num, logic_gates)
+    return Program("QFT", data_qubit_num, logic_gates)
 
 def QAOA(data_qubit_num: int, percentage: float = 0.5, blocklayer: int = 1) -> Program:
     """
@@ -201,7 +234,7 @@ def QAOA(data_qubit_num: int, percentage: float = 0.5, blocklayer: int = 1) -> P
         logic_gates.append(Control(*gate))
         if (i+1) % (data_qubit_num*blocklayer) == 0 and (i+1) != len(control_gates):
             logic_gates.extend([Barrier(j) for j in range(data_qubit_num-1)])
-    return Program("qaoa", data_qubit_num, logic_gates)
+    return Program("QAOA", data_qubit_num, logic_gates)
 
 def BV(data_qubit_num: int, percentage: float = 0.5) -> Program:
     """
@@ -221,4 +254,4 @@ def BV(data_qubit_num: int, percentage: float = 0.5) -> Program:
     logic_gates = []
     for gate in control_gates:
         logic_gates.append(Control(*gate))
-    return Program("bv", data_qubit_num, logic_gates)
+    return Program("BV", data_qubit_num, logic_gates)

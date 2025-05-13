@@ -1145,6 +1145,19 @@ class Package:
                         self.registers.append(node)
         return self.registers
 
+    def get_register_num(self) -> int:
+        """
+        Get the number of register qubits in the package.
+
+        Note: call this function before routing.
+
+        Returns:
+            int: The number of register qubits.
+        """
+        if not hasattr(self, "register_num"):
+            self.register_num = len(self.get_registers())
+        return self.register_num
+
     def get_node_chiplet(self, node: tuple[int, int]) -> Chiplet:
         """
         Get the chiplet that contains the node.

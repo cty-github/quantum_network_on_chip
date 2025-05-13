@@ -3,7 +3,7 @@ import numpy as np
 from enum import Enum, auto
 from scipy.optimize import curve_fit
 
-from ..utils.utils import get_full_space_tuple
+from ..utils.utils import log_decay, get_full_space_tuple
 
 
 class NodeType(Enum):
@@ -64,7 +64,6 @@ class FabricateModel:
         inter_sparsity (int): The sparsity of coupler between chiplets.
         single_fide (float): The fidelity of single gate.
         intra_fide_params (tuple[float, float]): The parameters of the intra_fide function.
-        intra_fide_log_decay (function): The function to calculate intra_fide.
         enhanced_fide (float): The unit fidelity of enhanced qst.
         inter_fide (float): The fidelity of inter-chiplet CZ.
         yield_5 (float): The yield of 5-qubit chiplet.
@@ -105,15 +104,12 @@ class FabricateModel:
         self.inter_sparsity = inter_sparsity
 
         self.single_fide = single_fide
-        def log_decay(x, a, b):
-            return 1 - a * np.log(1 + b * x)
         self.intra_fide_params, _ = curve_fit(
             log_decay,
             np.array(list(intra_fide_dict.keys())),
             np.array(list(intra_fide_dict.values())),
             p0=[0.01, 0.01],
         )
-        self.intra_fide_log_decay = log_decay
         self.enhanced_fide = enhanced_fide
         self.inter_fide = inter_fide
 
@@ -130,7 +126,7 @@ class FabricateModel:
         Returns:
             float: The fidelity of intra-chiplet CZ.
         """
-        return self.intra_fide_log_decay(qubit_num, *self.intra_fide_params)
+        return log_decay(qubit_num, *self.intra_fide_params)
 
     def get_yield(self, qubit_num: int) -> float:
         """
