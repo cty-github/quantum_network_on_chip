@@ -131,7 +131,8 @@ class LayoutAgent:
                     self.env.render("machine", get_unique_file_save_path(self.result_dir, "rl_process_", ".jpg"))
                 except Exception as e:
                     print("Error in drawing qubits: ", e)
-        make_gif(self.result_dir, "rl_process_", ".jpg", "rl_process.gif")
+        if self.result_dir:
+            make_gif(self.result_dir, "rl_process_", ".jpg", "rl_process.gif")
         return self.env.best_package
 
     def load(self, path: str):

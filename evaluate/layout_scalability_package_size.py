@@ -29,12 +29,15 @@ for package_length in package_length_to_test:
     package_size = (package_length, package_length)
 
     package_baseline = Package(package_size, fab_model, design_strategy="rl")
-    package_greedy = Package(package_size, fab_model, design_strategy="greedy", result_dir=result_dir)
+    package_baseline.save(f"{result_dir}layout_baseline.pkl")
+    package_greedy = Package(package_size, fab_model, design_strategy="greedy")
+    package_greedy.save(f"{result_dir}layout_greedy.pkl")
 
     env = QuNoCEnv(package_size, fab_model, patience=5)
-    agent = LayoutAgent(env, result_dir=result_dir)
+    agent = LayoutAgent(env)
     agent.train(total_timesteps=100000)
     package_rl = agent.design()
+    package_rl.save(f"{result_dir}layout_rl.pkl")
 
     package_list = [package_baseline, package_greedy, package_rl]
     score_list = [package.estimate_score() for package in package_list]

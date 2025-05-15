@@ -334,7 +334,8 @@ class Package:
                             )
                     self.complete_package()
                 elif self.design_strategy == "greedy":
-                    os.makedirs(self.result_dir, exist_ok=True)
+                    if self.result_dir:
+                        os.makedirs(self.result_dir, exist_ok=True)
                     self.complete_package()
                     best_score = self.estimate_score()
                     print("Initial score: ", best_score)
@@ -367,7 +368,8 @@ class Package:
                                 self.draw_qubits(show=False, save_path=get_unique_file_save_path(self.result_dir, "greedy_process_", ".jpg"))
                             except Exception as e:
                                 print("Error in drawing qubits: ", e)
-                    make_gif(self.result_dir, "greedy_process_", ".jpg", "greedy_process.gif")
+                    if self.result_dir:
+                        make_gif(self.result_dir, "greedy_process_", ".jpg", "greedy_process.gif")
                 elif self.design_strategy == "rl":
                     self.complete_package()
                     # The rest rl design process is implemented outside in the LayoutAgent.
