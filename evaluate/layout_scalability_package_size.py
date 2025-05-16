@@ -34,7 +34,7 @@ for package_length in package_length_to_test:
     package_greedy.save(f"{result_dir}layout_greedy.pkl")
 
     env = QuNoCEnv(package_size, fab_model, patience=5)
-    agent = LayoutAgent(env)
+    agent = LayoutAgent(env, result_dir=result_dir)
     agent.train(total_timesteps=100000)
     package_rl = agent.design()
     package_rl.save(f"{result_dir}layout_rl.pkl")

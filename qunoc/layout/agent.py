@@ -105,9 +105,12 @@ class LayoutAgent:
         self.model.learn(total_timesteps = total_timesteps)
         self.save(f"{self.result_dir}layout_agent.pth")
     
-    def design(self) -> Package:
+    def design(self, save_process: bool = False) -> Package:
         """
         Design the layout using the trained agent.
+
+        Args:
+            save_process (bool): Whether to save the design process.
 
         Returns:
             Package: The designed package.
@@ -115,7 +118,7 @@ class LayoutAgent:
         print("Designing layout...")
         state, _ = self.env.reset()
         print("Initial score: ", self.env.estimate())
-        if self.result_dir:
+        if save_process:
             try:
                 self.env.render("machine", get_unique_file_save_path(self.result_dir, "rl_process_", ".jpg"))
             except Exception as e:
@@ -126,12 +129,12 @@ class LayoutAgent:
             state, _, done, _, _ = self.env.step(action)
             print("New action: ", action)
             print("New score: ", self.env.estimate())
-            if self.result_dir:
+            if save_process:
                 try:
                     self.env.render("machine", get_unique_file_save_path(self.result_dir, "rl_process_", ".jpg"))
                 except Exception as e:
                     print("Error in drawing qubits: ", e)
-        if self.result_dir:
+        if save_process:
             make_gif(self.result_dir, "rl_process_", ".jpg", "rl_process.gif")
         return self.env.best_package
 
