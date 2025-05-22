@@ -1035,6 +1035,22 @@ class ComputeModule(FuncArea):
         # assert nearest_platform is not None, f"No metro system in the package!!!"
         return nearest_platform
 
+    def get_swap_path(self, source: tuple[int, int], target: tuple[int, int]) -> list[tuple[int, int]]:
+        """
+        Get the swap path between two nodes in the compute module.
+
+        Args:
+            source (tuple[int, int]): The coordinate of the source node.
+            target (tuple[int, int]): The coordinate of the target node.
+
+        Returns:
+            path (list[tuple[int, int]]): The list of nodes in the swap path.
+        """
+        assert self.has_node(source), f"source {source} is not in the compute module {self}"
+        assert self.has_node(target), f"target {target} is not in the compute module {self}"
+        path = []
+        return path
+
     def get_fidelity(self, source: tuple[int, int], target: tuple[int, int]) -> float:
         """
         Get the fidelity of the shortest path between two nodes in the compute module.

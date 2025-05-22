@@ -188,32 +188,58 @@ class Transport(RidingAction):
     def __repr__(self):
         return f"{str(self.__class__.__name__)} of logic qubit {self.logic_qubit} from physical qubit {self.source_physical_qubit} to physical qubit {self.target_physical_qubit}."
 
-class RouteToPlat(RidingAction):
+class SwapGate(RidingAction):
     """
-    Represents the action of routing a data qubit to a platform.
-    
-    Attributes:
-        logic_qubit (int): The data qubit to route.
-        platform (tuple[int, int]): The physical qubit on compute chiplet to route to.
-        enter_flag (bool): The flag marking if the data qubit is needed to route onto the platform.
-    """
+    Represents the action of applying a swap gate on a compute module.
 
-    def __init__(self, logic_qubit: int, platform: tuple[int, int], enter_flag: bool):
+    Attributes:
+        qubit_u (tuple[int, int]): The first qubit of the swap gate.
+        qubit_v (tuple[int, int]): The second qubit of the swap gate.
+    """
+    
+    def __init__(self, qubit_u: tuple[int, int], qubit_v: tuple[int, int]):
         """
-        Initialize the routing action.
+        Initialize the swap gate action.
 
         Args:
-            logic_qubit (int): The data qubit to route.
-            platform (tuple[int, int]): The physical qubit on compute chiplet to route to.
-            enter_flag (bool): The flag marking if the data qubit is needed to route onto the platform.
+            qubit_u (tuple[int, int]): The first qubit of the swap gate.
+            qubit_v (tuple[int, int]): The second qubit of the swap gate.
         """
         super().__init__()
-        self.logic_qubit = logic_qubit
-        self.platform = platform
-        self.enter_flag = enter_flag
-    
+        self.qubit_u = qubit_u
+        self.qubit_v = qubit_v
+        
     def __repr__(self):
-        return f"{str(self.__class__.__name__)} logic qubit {self.logic_qubit} to physical qubit {self.platform}."
+        return f"{str(self.__class__.__name__)} between physical qubits {self.qubit_u} and {self.qubit_v}."
+
+# class RouteToPlat(RidingAction):
+#     """
+#     Represents the action of routing a data qubit to a platform.
+    
+#     Attributes:
+#         logic_qubit (int): The data qubit to route.
+#         platform (tuple[int, int]): The physical qubit on compute chiplet to route to.
+#         enter_flag (bool): The flag marking if the data qubit is needed to route onto the platform.
+#     """
+
+#     def __init__(self, logic_qubit: int, platform: tuple[int, int], enter_flag: bool, swap_gates: list[tuple[tuple[int, int], tuple[int, int]]]):
+#         """
+#         Initialize the routing action.
+
+#         Args:
+#             logic_qubit (int): The data qubit to route.
+#             platform (tuple[int, int]): The physical qubit on compute chiplet to route to.
+#             enter_flag (bool): The flag marking if the data qubit is needed to route onto the platform.
+#             swap_gates (list[tuple[tuple[int, int], tuple[int, int]]]): The list of swap gates to be applied.
+#         """
+#         super().__init__()
+#         self.logic_qubit = logic_qubit
+#         self.platform = platform
+#         self.enter_flag = enter_flag
+#         self.swap_gates = swap_gates
+    
+#     def __repr__(self):
+#         return f"{str(self.__class__.__name__)} logic qubit {self.logic_qubit} to physical qubit {self.platform}."
 
 class Teleport(RidingAction):
     """
@@ -242,7 +268,7 @@ class Teleport(RidingAction):
     def __repr__(self):
         return f"{str(self.__class__.__name__)} for logic qubit {self.logic_qubit} on physical qubit {self.platform}."
 
-class LocalGate(RidingAction):
+class DirectGate(RidingAction):
     """
     Represents the action of applying a local gate on a compute module.
 
@@ -504,20 +530,22 @@ class RidingStage(CircuitStage):
         self.riding_actions.append(action)
         return True
     
-    def add_route_action(self, action: RouteToPlat) -> bool:
+    def add_swap_action(self, action: SwapGate) -> bool:
         """
-        Add a RouteToPlat to the operating stage.
+        Add a SwapGate to the operating stage.
 
         Note: The action is added to the end of the operating actions list.
 
         Args:
-            action (RouteToPlat): The routing action to add.
+            action (SwapGate): The routing action to add.
 
         Returns:
             bool: Whether the action is successfully added.
         """
-        assert isinstance(action, RouteToPlat), "Action should be RouteToPlat"
+        assert isinstance(action, SwapGate), "Action should be SwapGate"
 
+        phy_qubit_u = action.qubit_u
+        phy_qubit_v = action.qubit_v
         if action.enter_flag:
             if action.platform in self.curr_occupied_platforms:
                 return False
@@ -546,7 +574,7 @@ class RidingStage(CircuitStage):
         self.riding_actions.append(action)
         return True
 
-    def add_local_action(self, action: LocalGate) -> bool:
+    def add_direct_action(self, action: DirectGate) -> bool:
         """
         Add a LocalGate to the operating stage.
 
@@ -558,7 +586,7 @@ class RidingStage(CircuitStage):
         Returns:
             bool: Whether the action is successfully added.
         """
-        assert isinstance(action, LocalGate), "Action should be LocalGate"
+        assert isinstance(action, DirectGate), "Action should be LocalGate"
 
         self.riding_actions.append(action)
         return True
@@ -696,26 +724,26 @@ class Circuit:
                 stage_depth = max(inter_chiplet_depth, ghz_depth)
             elif isinstance(stage, RidingStage):
                 transport_actions = []
-                route_actions = []
+                swap_actions = []
                 teleport_control_flag = False
                 teleport_target_flag = False
-                local_actions = []
+                direct_actions = []
                 for action in stage.riding_actions:
                     if isinstance(action, Transport):
                         transport_actions.append(action)
-                    elif isinstance(action, RouteToPlat):
-                        route_actions.append(action)
+                    elif isinstance(action, SwapGate):
+                        swap_actions.append(action)
                     elif isinstance(action, Teleport):
                         if action.control_flag:
                             teleport_control_flag = True
                         else:
                             teleport_target_flag = True
-                    elif isinstance(action, LocalGate):
-                        local_actions.append(action)
+                    elif isinstance(action, DirectGate):
+                        direct_actions.append(action)
                 transport_depth = len(transport_actions) * self.intra_time
-                route_depth = len(route_actions) * self.intra_time
+                route_depth = len(swap_actions) * self.intra_time
                 teleport_depth = self.intra_time * (int(teleport_control_flag) + int(teleport_target_flag))
-                local_depth = len(local_actions) * self.intra_time
+                local_depth = len(direct_actions) * self.intra_time
                 stage_depth = max(transport_depth, route_depth, teleport_depth, local_depth)
             depth += stage_depth
         return depth
