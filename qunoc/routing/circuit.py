@@ -115,10 +115,9 @@ class Alight(BoardingAction):
         logic_qubit (int): The logic qubit to alight.
         station (tuple[int, int]): The physical qubit on transfer chiplet where the logic qubit is alighting.
         platform (tuple[int, int]): The physical qubit on compute chiplet where the logic qubit is alighting.
-        exit_flag (bool): The flag marking if the logic qubit is needed to exit from the platform.
     """
 
-    def __init__(self, logic_qubit: int, station: tuple[int, int], platform: tuple[int, int], exit_flag: bool):
+    def __init__(self, logic_qubit: int, station: tuple[int, int], platform: tuple[int, int]):
         """
         Initialize the alighting action.
 
@@ -126,13 +125,11 @@ class Alight(BoardingAction):
             logic_qubit (int): The logic qubit to alight.
             station (tuple[int, int]): The physical qubit on transfer chiplet where the logic qubit is alighting.
             platform (tuple[int, int]): The physical qubit on compute chiplet where the logic qubit is alighting.
-            exit_flag (bool): The flag marking if the logic qubit is needed to exit from the platform.
         """
         super().__init__()
         self.logic_qubit = logic_qubit
         self.station = station
         self.platform = platform
-        self.exit_flag = exit_flag
     
     def __repr__(self):
         return f"{str(self.__class__.__name__)} of logic qubit {self.logic_qubit} from physical qubit {self.station} to physical qubit {self.platform}."
@@ -188,59 +185,6 @@ class Transport(RidingAction):
     def __repr__(self):
         return f"{str(self.__class__.__name__)} of logic qubit {self.logic_qubit} from physical qubit {self.source_physical_qubit} to physical qubit {self.target_physical_qubit}."
 
-class SwapGate(RidingAction):
-    """
-    Represents the action of applying a swap gate on a compute module.
-
-    Attributes:
-        qubit_u (tuple[int, int]): The first qubit of the swap gate.
-        qubit_v (tuple[int, int]): The second qubit of the swap gate.
-    """
-    
-    def __init__(self, qubit_u: tuple[int, int], qubit_v: tuple[int, int]):
-        """
-        Initialize the swap gate action.
-
-        Args:
-            qubit_u (tuple[int, int]): The first qubit of the swap gate.
-            qubit_v (tuple[int, int]): The second qubit of the swap gate.
-        """
-        super().__init__()
-        self.qubit_u = qubit_u
-        self.qubit_v = qubit_v
-        
-    def __repr__(self):
-        return f"{str(self.__class__.__name__)} between physical qubits {self.qubit_u} and {self.qubit_v}."
-
-# class RouteToPlat(RidingAction):
-#     """
-#     Represents the action of routing a data qubit to a platform.
-    
-#     Attributes:
-#         logic_qubit (int): The data qubit to route.
-#         platform (tuple[int, int]): The physical qubit on compute chiplet to route to.
-#         enter_flag (bool): The flag marking if the data qubit is needed to route onto the platform.
-#     """
-
-#     def __init__(self, logic_qubit: int, platform: tuple[int, int], enter_flag: bool, swap_gates: list[tuple[tuple[int, int], tuple[int, int]]]):
-#         """
-#         Initialize the routing action.
-
-#         Args:
-#             logic_qubit (int): The data qubit to route.
-#             platform (tuple[int, int]): The physical qubit on compute chiplet to route to.
-#             enter_flag (bool): The flag marking if the data qubit is needed to route onto the platform.
-#             swap_gates (list[tuple[tuple[int, int], tuple[int, int]]]): The list of swap gates to be applied.
-#         """
-#         super().__init__()
-#         self.logic_qubit = logic_qubit
-#         self.platform = platform
-#         self.enter_flag = enter_flag
-#         self.swap_gates = swap_gates
-    
-#     def __repr__(self):
-#         return f"{str(self.__class__.__name__)} logic qubit {self.logic_qubit} to physical qubit {self.platform}."
-
 class Teleport(RidingAction):
     """
     Represents the action to teleport a logic qubit using a prepared GHZ state.
@@ -267,6 +211,84 @@ class Teleport(RidingAction):
     
     def __repr__(self):
         return f"{str(self.__class__.__name__)} for logic qubit {self.logic_qubit} on physical qubit {self.platform}."
+
+class Enter(RidingAction):
+    """
+    Represents the action of entering a platform with a logic qubit.
+
+    Attributes:
+        logic_qubit (int): The logic qubit to enter.
+        platform (tuple[int, int]): The physical qubit on compute chiplet where the logic qubit is entering.
+        register (tuple[int, int]): The physical qubit on compute chiplet where the logic qubit is exiting.
+    """
+
+    def __init__(self, logic_qubit: int, platform: tuple[int, int], register: tuple[int, int]):
+        """
+        Initialize the enter action.
+
+        Args:
+            logic_qubit (int): The logic qubit to enter.
+            platform (tuple[int, int]): The physical qubit on compute chiplet where the logic qubit is entering.
+            register (tuple[int, int]): The physical qubit on compute chiplet where the logic qubit is exiting.
+        """
+        super().__init__()
+        self.logic_qubit = logic_qubit
+        self.platform = platform
+        self.register = register
+    
+    def __repr__(self):
+        return f"{str(self.__class__.__name__)} of logic qubit {self.logic_qubit} to physical qubit {self.platform} from physical qubit {self.register}."
+    
+class Exit(RidingAction):
+    """
+    Represents the action of exiting a platform with a logic qubit.
+
+    Attributes:
+        logic_qubit (int): The logic qubit to exit.
+        platform (tuple[int, int]): The physical qubit on compute chiplet where the logic qubit is exiting.
+        register (tuple[int, int]): The physical qubit on compute chiplet where the logic qubit is entering.
+    """
+
+    def __init__(self, logic_qubit: int, platform: tuple[int, int], register: tuple[int, int]):
+        """
+        Initialize the exit action.
+
+        Args:
+            logic_qubit (int): The logic qubit to exit.
+            platform (tuple[int, int]): The physical qubit on compute chiplet where the logic qubit is exiting.
+            register (tuple[int, int]): The physical qubit on compute chiplet where the logic qubit is entering.
+        """
+        super().__init__()
+        self.logic_qubit = logic_qubit
+        self.platform = platform
+        self.register = register
+    
+    def __repr__(self):
+        return f"{str(self.__class__.__name__)} of logic qubit {self.logic_qubit} from physical qubit {self.platform} to physical qubit {self.register}."
+
+class SwapGate(RidingAction):
+    """
+    Represents the action of applying a swap gate on a compute module.
+
+    Attributes:
+        qubit_u (tuple[int, int]): The first qubit of the swap gate.
+        qubit_v (tuple[int, int]): The second qubit of the swap gate.
+    """
+    
+    def __init__(self, qubit_u: tuple[int, int], qubit_v: tuple[int, int]):
+        """
+        Initialize the swap gate action.
+
+        Args:
+            qubit_u (tuple[int, int]): The first qubit of the swap gate.
+            qubit_v (tuple[int, int]): The second qubit of the swap gate.
+        """
+        super().__init__()
+        self.qubit_u = qubit_u
+        self.qubit_v = qubit_v
+        
+    def __repr__(self):
+        return f"{str(self.__class__.__name__)} between physical qubits {self.qubit_u} and {self.qubit_v}."
 
 class DirectGate(RidingAction):
     """
@@ -302,11 +324,19 @@ class CircuitStage:
     """
     _counter = 0
 
-    def __init__(self, init_occupied_balises: set[tuple[int, int]], init_occupied_platforms: set[tuple[int, int]], holding_ancilla_plats: set[tuple[int, int]]):
+    def __init__(self, 
+        init_l2p_map: dict[int, tuple[int, int]], 
+        init_p2l_map: dict[tuple[int, int], int], 
+        init_occupied_balises: set[tuple[int, int]], 
+        init_occupied_platforms: set[tuple[int, int]], 
+        holding_ancilla_plats: set[tuple[int, int]]
+    ):
         """
         Initialize a circuit stage.
         
         Args:
+            init_l2p_map (dict[int, tuple[int, int]]): The initial mapping from logical qubits to physical qubits.
+            init_p2l_map (dict[tuple[int, int], int]): The initial mapping from physical qubits to logical qubits.
             init_occupied_balises (set[tuple[int, int]]): The initial occupied balises.
             init_occupied_platforms (set[tuple[int, int]]): The initial occupied platforms.
             holding_ancilla_plats (set[tuple[int, int]]): The platforms holding ancilla qubits.
@@ -314,6 +344,10 @@ class CircuitStage:
         self.id = CircuitStage._counter
         CircuitStage._counter += 1
 
+        self.init_l2p_map = init_l2p_map
+        self.curr_l2p_map = deepcopy(init_l2p_map)
+        self.init_p2l_map = init_p2l_map
+        self.curr_p2l_map = deepcopy(init_p2l_map)
         self.init_occupied_balises = init_occupied_balises
         self.curr_occupied_balises = deepcopy(init_occupied_balises)
         self.init_occupied_platforms = init_occupied_platforms
@@ -332,16 +366,24 @@ class BoardingStage(CircuitStage):
         paired_platforms (set): The set of paired platforms.
     """
     
-    def __init__(self, init_occupied_balises: set[tuple[int, int]], init_occupied_platforms: set[tuple[int, int]], holding_ancilla_plats: set[tuple[int, int]]):
+    def __init__(self, 
+        init_l2p_map: dict[int, tuple[int, int]], 
+        init_p2l_map: dict[tuple[int, int], int], 
+        init_occupied_balises: set[tuple[int, int]], 
+        init_occupied_platforms: set[tuple[int, int]], 
+        holding_ancilla_plats: set[tuple[int, int]]
+    ):
         """
         Initialize the boarding stage.
         
         Args:
+            init_l2p_map (dict[int, tuple[int, int]]): The initial mapping from logical qubits to physical qubits.
+            init_p2l_map (dict[tuple[int, int], int]): The initial mapping from physical qubits to logical qubits.
             init_occupied_balises (set[tuple[int, int]]): The initial occupied balises.
             init_occupied_platforms (set[tuple[int, int]]): The initial occupied platforms.
             holding_ancilla_plats (set[tuple[int, int]]): The platforms holding ancilla qubits.
         """
-        super().__init__(init_occupied_balises, init_occupied_platforms, holding_ancilla_plats)
+        super().__init__(init_l2p_map, init_p2l_map, init_occupied_balises, init_occupied_platforms, holding_ancilla_plats)
         assert self.id % 2 == 0, "Boarding stage id should be even"
         self.boarding_actions: list[BoardingAction] = []
 
@@ -481,16 +523,24 @@ class RidingStage(CircuitStage):
         paired_balises (set): The set of paired balises.
     """
 
-    def __init__(self, init_occupied_balises: set[tuple[int, int]], init_occupied_platforms: set[tuple[int, int]], holding_ancilla_plats: set[tuple[int, int]]):
+    def __init__(self, 
+        init_l2p_map: dict[int, tuple[int, int]], 
+        init_p2l_map: dict[tuple[int, int], int], 
+        init_occupied_balises: set[tuple[int, int]], 
+        init_occupied_platforms: set[tuple[int, int]], 
+        holding_ancilla_plats: set[tuple[int, int]]
+    ):
         """
         Initialize the riding stage.
         
         Args:
+            init_l2p_map (dict[int, tuple[int, int]]): The initial mapping from logical qubits to physical qubits.
+            init_p2l_map (dict[tuple[int, int], int]): The initial mapping from physical qubits to logical qubits.
             init_occupied_balises (set[tuple[int, int]]): The initial occupied balises.
             init_occupied_platforms (set[tuple[int, int]]): The initial occupied platforms.
             holding_ancilla_plats (set[tuple[int, int]]): The platforms holding ancilla qubits.
         """
-        super().__init__(init_occupied_balises, init_occupied_platforms, holding_ancilla_plats)
+        super().__init__(init_l2p_map, init_p2l_map, init_occupied_balises, init_occupied_platforms, holding_ancilla_plats)
         assert self.id % 2 == 1, "Operating stage id should be odd"
         self.riding_actions: list[RidingAction] = []
 
@@ -530,30 +580,6 @@ class RidingStage(CircuitStage):
         self.riding_actions.append(action)
         return True
     
-    def add_swap_action(self, action: SwapGate) -> bool:
-        """
-        Add a SwapGate to the operating stage.
-
-        Note: The action is added to the end of the operating actions list.
-
-        Args:
-            action (SwapGate): The routing action to add.
-
-        Returns:
-            bool: Whether the action is successfully added.
-        """
-        assert isinstance(action, SwapGate), "Action should be SwapGate"
-
-        phy_qubit_u = action.qubit_u
-        phy_qubit_v = action.qubit_v
-        if action.enter_flag:
-            if action.platform in self.curr_occupied_platforms:
-                return False
-            self.curr_occupied_platforms.add(action.platform)
-            
-        self.riding_actions.append(action)
-        return True
-    
     def add_teleport_action(self, action: Teleport) -> bool:
         """
         Add a Teleport to the operating stage.
@@ -570,6 +596,65 @@ class RidingStage(CircuitStage):
 
         self.curr_occupied_platforms.remove(action.platform)
         self.holding_ancilla_plats.remove(action.platform)
+
+        self.riding_actions.append(action)
+        return True
+
+    def add_enter_action(self, action: Enter) -> bool:
+        """
+        Add an Enter to the operating stage.
+
+        Note: The action is added to the end of the operating actions list.
+
+        Args:
+            action (Enter): The enter action to add.
+
+        Returns:
+            bool: Whether the action is successfully added.
+        """
+        assert isinstance(action, Enter), "Action should be Enter"
+
+        if action.platform in self.curr_occupied_platforms:
+            return False
+        self.curr_occupied_platforms.add(action.platform)
+        
+        self.riding_actions.append(action)
+        return True
+    
+    def add_exit_action(self, action: Exit) -> bool:
+        """
+        Add an Exit to the operating stage.
+
+        Note: The action is added to the end of the operating actions list.
+
+        Args:
+            action (Exit): The exit action to add.
+
+        Returns:
+            bool: Whether the action is successfully added.
+        """
+        assert isinstance(action, Exit), "Action should be Exit"
+
+        if action.platform not in self.curr_occupied_platforms:
+            return False
+        self.curr_occupied_platforms.remove(action.platform)
+
+        self.riding_actions.append(action)
+        return True
+    
+    def add_swap_action(self, action: SwapGate) -> bool:
+        """
+        Add a SwapGate to the operating stage.
+
+        Note: The action is added to the end of the operating actions list.
+
+        Args:
+            action (SwapGate): The routing action to add.
+
+        Returns:
+            bool: Whether the action is successfully added.
+        """
+        assert isinstance(action, SwapGate), "Action should be SwapGate"
 
         self.riding_actions.append(action)
         return True
