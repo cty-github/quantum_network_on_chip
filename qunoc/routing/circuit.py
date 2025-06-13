@@ -388,109 +388,10 @@ class BoardingStage(CircuitStage):
         self.boarding_actions: list[BoardingAction] = []
 
         self.potential_free_balises = dict()
-        self.paired_balises = set()
+        self.paired_balises_to_free = set()
         self.potential_free_platforms = dict()
-        self.paired_platforms = set()
+        self.paired_platforms_to_free = set()
 
-    def add_alight_action(self, action: Alight) -> bool:
-        """
-        Add an Alight to the boarding stage.
-
-        Note: The action is added to the end of the boarding actions list.
-
-        Args:
-            action (Alight): The alighting action to add.
-
-        Returns:
-            bool: Whether the action is successfully added.
-        """
-        assert isinstance(action, Alight), "Action should be Alight"
-        assert action.station in self.curr_occupied_balises, "Data qubit to alight should be in station."
-
-        if action.platform in self.curr_occupied_platforms:
-            if action.platform in self.potential_free_platforms and self.potential_free_platforms[action.platform] == action.station:
-                self.potential_free_platforms.pop(action.platform)
-                self.paired_platforms.add(action.platform)
-            elif action.station in self.paired_balises:
-                self.paired_balises.remove(action.station)
-            else:
-                self.potential_free_balises[action.station] = action.platform
-                return False
-            if action.exit_flag:
-                self.curr_occupied_platforms.remove(action.platform)
-            else:
-                self.holding_ancilla_plats.add(action.platform)
-        else:
-            self.curr_occupied_balises.remove(action.station)
-            if not action.exit_flag:
-                self.curr_occupied_platforms.add(action.platform)
-                self.holding_ancilla_plats.add(action.platform)
-
-        self.boarding_actions.append(action)
-        return True
-    
-    def add_interchange_action(self, action: Interchange) -> bool:
-        """
-        Add an Interchange to the boarding stage.
-
-        Note: The action is added to the end of the boarding actions list.
-
-        Args:
-            action (Interchange): The interchange action to add.
-
-        Returns:
-            bool: Whether the action is successfully added.
-        """
-        assert isinstance(action, Interchange), "Action should be Interchange"
-        assert action.interchange[0] in self.curr_occupied_balises, "Data qubit to interchange should be in source interchange."
-
-        if action.interchange[1] in self.curr_occupied_balises:
-            if action.interchange[1] in self.potential_free_balises and self.potential_free_balises[action.interchange[1]] == action.interchange[0]:
-                self.potential_free_balises.pop(action.interchange[1])
-                self.paired_balises.add(action.interchange[1])
-            elif action.interchange[0] in self.paired_balises:
-                self.paired_balises.remove(action.interchange[0])
-            else:
-                self.potential_free_balises[action.interchange[0]] = action.interchange[1]
-                return False
-        else:
-            self.curr_occupied_balises.remove(action.interchange[0])
-            self.curr_occupied_balises.add(action.interchange[1])
-
-        self.boarding_actions.append(action)
-        return True
-    
-    def add_board_action(self, action: Board) -> bool:
-        """
-        Add a Board to the boarding stage.
-
-        Note: The action is added to the end of the boarding actions list.
-
-        Args:
-            action (Board): The boarding action to add.
-        
-        Returns:
-            bool: Whether the action is successfully added.
-        """
-        assert isinstance(action, Board), "Action should be Board"
-        assert action.platform in self.curr_occupied_platforms or action.platform in self.paired_platforms, "Data qubit to board should be in platform."
-        
-        if action.station in self.curr_occupied_balises:
-            if action.station in self.potential_free_balises and self.potential_free_balises[action.station] == action.platform:
-                self.potential_free_balises.pop(action.station)
-                self.paired_balises.add(action.station)
-            elif action.platform in self.paired_platforms:
-                self.paired_platforms.remove(action.platform)
-            else:
-                self.potential_free_platforms[action.platform] = action.station
-                return False
-        else:
-            self.curr_occupied_platforms.remove(action.platform)
-            self.curr_occupied_balises.add(action.station)
-
-        self.boarding_actions.append(action)
-        return True
-    
     def add_ghz_action(self, action: GhzPreparation) -> bool:
         """
         Add a GhzPreparation to the boarding stage.
@@ -513,6 +414,99 @@ class BoardingStage(CircuitStage):
         self.boarding_actions.append(action)
         return True
 
+    def add_board_action(self, action: Board) -> bool:
+        """
+        Add a Board to the boarding stage.
+
+        Note: The action is added to the end of the boarding actions list.
+
+        Args:
+            action (Board): The boarding action to add.
+        
+        Returns:
+            bool: Whether the action is successfully added.
+        """
+        assert isinstance(action, Board), "Action should be Board"
+        assert action.platform in self.curr_occupied_platforms, "Data qubit to board should be in platform."
+        
+        if action.station in self.curr_occupied_balises:
+            if action.station in self.potential_free_balises and self.potential_free_balises[action.station] == action.platform:
+                self.potential_free_balises.pop(action.station)
+                self.paired_balises_to_free.add(action.station)
+            elif action.platform in self.paired_platforms_to_free:
+                self.paired_platforms_to_free.remove(action.platform)
+            else:
+                self.potential_free_platforms[action.platform] = action.station
+                return False
+        else:
+            self.curr_occupied_platforms.remove(action.platform)
+            self.curr_occupied_balises.add(action.station)
+
+        self.boarding_actions.append(action)
+        return True
+    
+    def add_alight_action(self, action: Alight) -> bool:
+        """
+        Add an Alight to the boarding stage.
+
+        Note: The action is added to the end of the boarding actions list.
+
+        Args:
+            action (Alight): The alighting action to add.
+
+        Returns:
+            bool: Whether the action is successfully added.
+        """
+        assert isinstance(action, Alight), "Action should be Alight"
+        assert action.station in self.curr_occupied_balises, "Data qubit to alight should be in station."
+
+        if action.platform in self.curr_occupied_platforms:
+            if action.platform in self.potential_free_platforms and self.potential_free_platforms[action.platform] == action.station:
+                self.potential_free_platforms.pop(action.platform)
+                self.paired_platforms_to_free.add(action.platform)
+            elif action.station in self.paired_balises_to_free:
+                self.paired_balises_to_free.remove(action.station)
+            else:
+                self.potential_free_balises[action.station] = action.platform
+                return False
+        else:
+            self.curr_occupied_balises.remove(action.station)
+            self.curr_occupied_platforms.add(action.platform)
+
+        self.boarding_actions.append(action)
+        return True
+    
+    def add_interchange_action(self, action: Interchange) -> bool:
+        """
+        Add an Interchange to the boarding stage.
+
+        Note: The action is added to the end of the boarding actions list.
+
+        Args:
+            action (Interchange): The interchange action to add.
+
+        Returns:
+            bool: Whether the action is successfully added.
+        """
+        assert isinstance(action, Interchange), "Action should be Interchange"
+        assert action.interchange[0] in self.curr_occupied_balises, "Data qubit to interchange should be in source interchange."
+
+        if action.interchange[1] in self.curr_occupied_balises:
+            if action.interchange[1] in self.potential_free_balises and self.potential_free_balises[action.interchange[1]] == action.interchange[0]:
+                self.potential_free_balises.pop(action.interchange[1])
+                self.paired_balises_to_free.add(action.interchange[1])
+            elif action.interchange[0] in self.paired_balises_to_free:
+                self.paired_balises_to_free.remove(action.interchange[0])
+            else:
+                self.potential_free_balises[action.interchange[0]] = action.interchange[1]
+                return False
+        else:
+            self.curr_occupied_balises.remove(action.interchange[0])
+            self.curr_occupied_balises.add(action.interchange[1])
+
+        self.boarding_actions.append(action)
+        return True
+    
 class RidingStage(CircuitStage):
     """
     Represents the riding stage in the quantum circuit.
@@ -545,7 +539,11 @@ class RidingStage(CircuitStage):
         self.riding_actions: list[RidingAction] = []
 
         self.potential_free_balises = dict()
-        self.paired_balises = set()
+        self.paired_balises_to_free = set()
+        self.potential_free_platforms = dict()
+        self.paired_platforms_to_free = set()
+        self.potential_free_registers = dict()
+        self.paired_registers_to_free = set()
     
     def add_transport_action(self, action: Transport) -> bool:
         """
@@ -567,9 +565,9 @@ class RidingStage(CircuitStage):
         elif action.target_physical_qubit in self.curr_occupied_balises:
             if action.target_physical_qubit in self.potential_free_balises and self.potential_free_balises[action.target_physical_qubit] == action.source_physical_qubit:
                 self.potential_free_balises.pop(action.target_physical_qubit)
-                self.paired_balises.add(action.target_physical_qubit)
-            elif action.source_physical_qubit in self.paired_balises:
-                self.paired_balises.remove(action.source_physical_qubit)
+                self.paired_balises_to_free.add(action.target_physical_qubit)
+            elif action.source_physical_qubit in self.paired_balises_to_free:
+                self.paired_balises_to_free.remove(action.source_physical_qubit)
             else:
                 self.potential_free_balises[action.source_physical_qubit] = action.target_physical_qubit
                 return False
@@ -593,6 +591,7 @@ class RidingStage(CircuitStage):
             bool: Whether the action is successfully added.
         """
         assert isinstance(action, Teleport), "Action should be Teleport"
+        assert action.platform in self.curr_occupied_platforms, "Ancilla qubit for teleportation should be in platform."
 
         self.curr_occupied_platforms.remove(action.platform)
         self.holding_ancilla_plats.remove(action.platform)
@@ -613,10 +612,21 @@ class RidingStage(CircuitStage):
             bool: Whether the action is successfully added.
         """
         assert isinstance(action, Enter), "Action should be Enter"
+        assert self.curr_p2l_map[action.register] == action.logic_qubit, "Data qubit to enter should be in register."
 
         if action.platform in self.curr_occupied_platforms:
-            return False
-        self.curr_occupied_platforms.add(action.platform)
+            if action.platform in self.potential_free_platforms and self.potential_free_platforms[action.platform] == action.register:
+                self.potential_free_platforms.pop(action.platform)
+                self.paired_platforms_to_free.add(action.platform)
+            elif action.register in self.paired_registers_to_free:
+                self.paired_registers_to_free.remove(action.register)
+            else:
+                self.potential_free_registers[action.register] = action.platform
+                return False
+        else:
+            self.curr_occupied_platforms.add(action.platform)
+            self.curr_p2l_map[action.register] = -1
+        self.curr_l2p_map[action.logic_qubit] = None
         
         self.riding_actions.append(action)
         return True
@@ -634,10 +644,21 @@ class RidingStage(CircuitStage):
             bool: Whether the action is successfully added.
         """
         assert isinstance(action, Exit), "Action should be Exit"
+        assert action.platform in self.curr_occupied_platforms, "Data qubit to exit should be in platform."
 
-        if action.platform not in self.curr_occupied_platforms:
-            return False
-        self.curr_occupied_platforms.remove(action.platform)
+        if self.curr_p2l_map[action.register] == -1:
+            self.curr_occupied_platforms.remove(action.platform)
+        else:
+            if action.register in self.potential_free_registers and self.potential_free_registers[action.register] == action.platform:
+                self.potential_free_registers.pop(action.register)
+                self.paired_registers_to_free.add(action.register)
+            elif action.platform in self.paired_platforms_to_free:
+                self.paired_platforms_to_free.remove(action.platform)
+            else:
+                self.potential_free_platforms[action.platform] = action.register
+                return False
+        self.curr_p2l_map[action.register] = action.logic_qubit
+        self.curr_l2p_map[action.logic_qubit] = action.register
 
         self.riding_actions.append(action)
         return True
@@ -656,6 +677,15 @@ class RidingStage(CircuitStage):
         """
         assert isinstance(action, SwapGate), "Action should be SwapGate"
 
+        logic_qubit_u = self.curr_p2l_map[action.qubit_u]
+        logic_qubit_v = self.curr_p2l_map[action.qubit_v]
+        self.curr_p2l_map[action.qubit_u] = logic_qubit_v
+        self.curr_p2l_map[action.qubit_v] = logic_qubit_u
+        if logic_qubit_u != -1:
+            self.curr_l2p_map[logic_qubit_u] = action.qubit_v
+        if logic_qubit_v != -1:
+            self.curr_l2p_map[logic_qubit_v] = action.qubit_u
+
         self.riding_actions.append(action)
         return True
 
@@ -672,6 +702,12 @@ class RidingStage(CircuitStage):
             bool: Whether the action is successfully added.
         """
         assert isinstance(action, DirectGate), "Action should be LocalGate"
+        
+        physical_qubit_control = self.curr_l2p_map[action.logic_gate.control_qubit]
+        physical_qubit_target = self.curr_l2p_map[action.logic_gate.target_qubit]
+        assert (physical_qubit_control[0] == physical_qubit_target[0] and abs(physical_qubit_control[1] - physical_qubit_target[1]) == 1) or \
+               (physical_qubit_control[1] == physical_qubit_target[1] and abs(physical_qubit_control[0] - physical_qubit_target[0]) == 1), \
+               "Control and target qubits should be adjacent on the compute module."
 
         self.riding_actions.append(action)
         return True

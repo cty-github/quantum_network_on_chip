@@ -23,6 +23,10 @@ class Gate:
 class Control(Gate):
     """
     Represents a control gate in the program.
+
+    Attributes:
+        control_qubit (int): The qubit that controls the gate.
+        target_qubit (int): The qubit that is affected by the gate.
     """
     
     def __init__(self, control_qubit: int, target_qubit: int):
@@ -43,6 +47,9 @@ class Control(Gate):
 class Barrier(Gate):
     """
     Represents a barrier gate in the program.
+
+    Attributes:
+        qubit (int): The qubit that the barrier is applied to.
     """
     
     def __init__(self, qubit: int):

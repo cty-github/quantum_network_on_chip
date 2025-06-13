@@ -951,17 +951,27 @@ class Router:
                     action_added = False
                     for action_id in no_depend_action_ids:
                         action = self.action_depend_graph.nodes[action_id]["action"]
-                        if isinstance(action, Teleport) and new_stage.add_teleport_action(action):
-                            no_depend_action_ids.remove(action_id)
-                            no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, action_id)
-                            action_added = True
-                            break
-                        elif isinstance(action, SwapGate) and new_stage.add_swap_action(action):
+                        if isinstance(action, SwapGate) and new_stage.add_swap_action(action):
                             no_depend_action_ids.remove(action_id)
                             no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, action_id)
                             action_added = True
                             break
                         elif isinstance(action, DirectGate) and new_stage.add_direct_action(action):
+                            no_depend_action_ids.remove(action_id)
+                            no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, action_id)
+                            action_added = True
+                            break
+                        elif isinstance(action, Teleport) and new_stage.add_teleport_action(action):
+                            no_depend_action_ids.remove(action_id)
+                            no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, action_id)
+                            action_added = True
+                            break
+                        elif isinstance(action, Exit) and new_stage.add_exit_action(action):
+                            no_depend_action_ids.remove(action_id)
+                            no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, action_id)
+                            action_added = True
+                            break
+                        elif isinstance(action, Enter) and new_stage.add_enter_action(action):
                             no_depend_action_ids.remove(action_id)
                             no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, action_id)
                             action_added = True
