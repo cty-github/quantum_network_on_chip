@@ -888,10 +888,7 @@ class Router:
     def schedule_actions_to_circuit(self):
         """
         Schedule the actions to the circuit.
-        """
-        self.curr_l2p_map = deepcopy(self.init_l2p_map)
-        self.curr_p2l_map = deepcopy(self.init_p2l_map)
-        
+        """  
         for action_id in self.action_depend_graph.nodes:
             self.action_depend_graph.nodes[action_id]["pred"] = set(self.action_depend_graph.predecessors(action_id))
         no_depend_action_ids: set[int] = set()
@@ -946,7 +943,7 @@ class Router:
                     if isinstance(action, Transport) and new_stage.add_transport_action(action):
                         no_depend_action_ids.remove(action_id)
                         no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, action_id)
-                # schedule RouteToPlat, Teleport, and LocalGate actions
+                # schedule SwapGate, DirectGate, Teleport, Exit, and Enter actions
                 while True:
                     action_added = False
                     for action_id in no_depend_action_ids:

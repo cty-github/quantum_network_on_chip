@@ -321,37 +321,38 @@ class CircuitStage:
     
     Attributes:
         id (int): Unique identifier for the stage.
+        curr_l2p_map (dict[int, tuple[int, int]]): Recording the current mapping from logical qubits to physical qubits.
+        curr_p2l_map (dict[tuple[int, int], int]): Recording the current mapping from physical qubits to logical qubits.
+        occupied_balises (set[tuple[int, int]]): Recording the occupied balises.
+        occupied_platforms (set[tuple[int, int]]): Recording the occupied platforms.
+        holding_ancilla_plats (set[tuple[int, int]]): Recording the platforms holding ancilla qubits.
     """
     _counter = 0
 
     def __init__(self, 
-        init_l2p_map: dict[int, tuple[int, int]], 
-        init_p2l_map: dict[tuple[int, int], int], 
-        init_occupied_balises: set[tuple[int, int]], 
-        init_occupied_platforms: set[tuple[int, int]], 
+        curr_l2p_map: dict[int, tuple[int, int]], 
+        curr_p2l_map: dict[tuple[int, int], int], 
+        occupied_balises: set[tuple[int, int]], 
+        occupied_platforms: set[tuple[int, int]], 
         holding_ancilla_plats: set[tuple[int, int]]
     ):
         """
         Initialize a circuit stage.
         
         Args:
-            init_l2p_map (dict[int, tuple[int, int]]): The initial mapping from logical qubits to physical qubits.
-            init_p2l_map (dict[tuple[int, int], int]): The initial mapping from physical qubits to logical qubits.
-            init_occupied_balises (set[tuple[int, int]]): The initial occupied balises.
-            init_occupied_platforms (set[tuple[int, int]]): The initial occupied platforms.
-            holding_ancilla_plats (set[tuple[int, int]]): The platforms holding ancilla qubits.
+            curr_l2p_map (dict[int, tuple[int, int]]): Recording the current mapping from logical qubits to physical qubits.
+            curr_p2l_map (dict[tuple[int, int], int]): Recording the current mapping from physical qubits to logical qubits.
+            occupied_balises (set[tuple[int, int]]): Recording the occupied balises.
+            occupied_platforms (set[tuple[int, int]]): Recording the occupied platforms.
+            holding_ancilla_plats (set[tuple[int, int]]): Recording the platforms holding ancilla qubits.
         """
         self.id = CircuitStage._counter
         CircuitStage._counter += 1
 
-        self.init_l2p_map = init_l2p_map
-        self.curr_l2p_map = deepcopy(init_l2p_map)
-        self.init_p2l_map = init_p2l_map
-        self.curr_p2l_map = deepcopy(init_p2l_map)
-        self.init_occupied_balises = init_occupied_balises
-        self.curr_occupied_balises = deepcopy(init_occupied_balises)
-        self.init_occupied_platforms = init_occupied_platforms
-        self.curr_occupied_platforms = deepcopy(init_occupied_platforms)
+        self.curr_l2p_map = curr_l2p_map
+        self.curr_p2l_map = curr_p2l_map
+        self.occupied_balises = occupied_balises
+        self.occupied_platforms = occupied_platforms
         self.holding_ancilla_plats = holding_ancilla_plats
 
 class BoardingStage(CircuitStage):
@@ -361,29 +362,29 @@ class BoardingStage(CircuitStage):
     Attributes:
         boarding_actions (list[BoardingAction]): The list of boarding actions in the stage.
         potential_free_balises (dict): The dictionary of potential free balises.
-        paired_balises (set): The set of paired balises.
+        paired_balises_to_free (set): The set of paired balises to free.
         potential_free_platforms (dict): The dictionary of potential free platforms.
-        paired_platforms (set): The set of paired platforms.
+        paired_platforms_to_free (set): The set of paired platforms to free.
     """
     
     def __init__(self, 
-        init_l2p_map: dict[int, tuple[int, int]], 
-        init_p2l_map: dict[tuple[int, int], int], 
-        init_occupied_balises: set[tuple[int, int]], 
-        init_occupied_platforms: set[tuple[int, int]], 
+        curr_l2p_map: dict[int, tuple[int, int]], 
+        curr_p2l_map: dict[tuple[int, int], int], 
+        occupied_balises: set[tuple[int, int]], 
+        occupied_platforms: set[tuple[int, int]], 
         holding_ancilla_plats: set[tuple[int, int]]
     ):
         """
         Initialize the boarding stage.
         
         Args:
-            init_l2p_map (dict[int, tuple[int, int]]): The initial mapping from logical qubits to physical qubits.
-            init_p2l_map (dict[tuple[int, int], int]): The initial mapping from physical qubits to logical qubits.
-            init_occupied_balises (set[tuple[int, int]]): The initial occupied balises.
-            init_occupied_platforms (set[tuple[int, int]]): The initial occupied platforms.
-            holding_ancilla_plats (set[tuple[int, int]]): The platforms holding ancilla qubits.
+            curr_l2p_map (dict[int, tuple[int, int]]): Recording the current mapping from logical qubits to physical qubits.
+            curr_p2l_map (dict[tuple[int, int], int]): Recording the current mapping from physical qubits to logical qubits.
+            occupied_balises (set[tuple[int, int]]): Recording the occupied balises.
+            occupied_platforms (set[tuple[int, int]]): Recording the occupied platforms.
+            holding_ancilla_plats (set[tuple[int, int]]): Recording the platforms holding ancilla qubits.
         """
-        super().__init__(init_l2p_map, init_p2l_map, init_occupied_balises, init_occupied_platforms, holding_ancilla_plats)
+        super().__init__(curr_l2p_map, curr_p2l_map, occupied_balises, occupied_platforms, holding_ancilla_plats)
         assert self.id % 2 == 0, "Boarding stage id should be even"
         self.boarding_actions: list[BoardingAction] = []
 
@@ -407,9 +408,9 @@ class BoardingStage(CircuitStage):
         assert isinstance(action, GhzPreparation), "Action should be GhzPreparation"
 
         for pysical_qubit in action.source_physical_qubits:
-            if pysical_qubit in self.curr_occupied_balises:
+            if pysical_qubit in self.occupied_balises:
                 return False
-        self.curr_occupied_balises.update(action.source_physical_qubits)
+        self.occupied_balises.update(action.source_physical_qubits)
 
         self.boarding_actions.append(action)
         return True
@@ -427,9 +428,9 @@ class BoardingStage(CircuitStage):
             bool: Whether the action is successfully added.
         """
         assert isinstance(action, Board), "Action should be Board"
-        assert action.platform in self.curr_occupied_platforms, "Data qubit to board should be in platform."
+        assert action.platform in self.occupied_platforms, "Data qubit to board should be in platform."
         
-        if action.station in self.curr_occupied_balises:
+        if action.station in self.occupied_balises:
             if action.station in self.potential_free_balises and self.potential_free_balises[action.station] == action.platform:
                 self.potential_free_balises.pop(action.station)
                 self.paired_balises_to_free.add(action.station)
@@ -439,8 +440,8 @@ class BoardingStage(CircuitStage):
                 self.potential_free_platforms[action.platform] = action.station
                 return False
         else:
-            self.curr_occupied_platforms.remove(action.platform)
-            self.curr_occupied_balises.add(action.station)
+            self.occupied_platforms.remove(action.platform)
+            self.occupied_balises.add(action.station)
 
         self.boarding_actions.append(action)
         return True
@@ -458,9 +459,9 @@ class BoardingStage(CircuitStage):
             bool: Whether the action is successfully added.
         """
         assert isinstance(action, Alight), "Action should be Alight"
-        assert action.station in self.curr_occupied_balises, "Data qubit to alight should be in station."
+        assert action.station in self.occupied_balises, "Data qubit to alight should be in station."
 
-        if action.platform in self.curr_occupied_platforms:
+        if action.platform in self.occupied_platforms:
             if action.platform in self.potential_free_platforms and self.potential_free_platforms[action.platform] == action.station:
                 self.potential_free_platforms.pop(action.platform)
                 self.paired_platforms_to_free.add(action.platform)
@@ -470,8 +471,8 @@ class BoardingStage(CircuitStage):
                 self.potential_free_balises[action.station] = action.platform
                 return False
         else:
-            self.curr_occupied_balises.remove(action.station)
-            self.curr_occupied_platforms.add(action.platform)
+            self.occupied_balises.remove(action.station)
+            self.occupied_platforms.add(action.platform)
 
         self.boarding_actions.append(action)
         return True
@@ -489,9 +490,9 @@ class BoardingStage(CircuitStage):
             bool: Whether the action is successfully added.
         """
         assert isinstance(action, Interchange), "Action should be Interchange"
-        assert action.interchange[0] in self.curr_occupied_balises, "Data qubit to interchange should be in source interchange."
+        assert action.interchange[0] in self.occupied_balises, "Data qubit to interchange should be in source interchange."
 
-        if action.interchange[1] in self.curr_occupied_balises:
+        if action.interchange[1] in self.occupied_balises:
             if action.interchange[1] in self.potential_free_balises and self.potential_free_balises[action.interchange[1]] == action.interchange[0]:
                 self.potential_free_balises.pop(action.interchange[1])
                 self.paired_balises_to_free.add(action.interchange[1])
@@ -501,8 +502,8 @@ class BoardingStage(CircuitStage):
                 self.potential_free_balises[action.interchange[0]] = action.interchange[1]
                 return False
         else:
-            self.curr_occupied_balises.remove(action.interchange[0])
-            self.curr_occupied_balises.add(action.interchange[1])
+            self.occupied_balises.remove(action.interchange[0])
+            self.occupied_balises.add(action.interchange[1])
 
         self.boarding_actions.append(action)
         return True
@@ -512,29 +513,33 @@ class RidingStage(CircuitStage):
     Represents the riding stage in the quantum circuit.
     
     Attributes:
-        operating_actions (list[RidingAction]): The list of riding actions in the stage.
+        riding_actions (list[RidingAction]): The list of riding actions in the stage.
         potential_free_balises (dict): The dictionary of potential free balises.
-        paired_balises (set): The set of paired balises.
+        paired_balises_to_free (set): The set of paired balises to free.
+        potential_free_platforms (dict): The dictionary of potential free platforms.
+        paired_platforms_to_free (set): The set of paired platforms to free.
+        potential_free_registers (dict): The dictionary of potential free registers.
+        paired_registers_to_free (set): The set of paired registers to free.
     """
 
     def __init__(self, 
-        init_l2p_map: dict[int, tuple[int, int]], 
-        init_p2l_map: dict[tuple[int, int], int], 
-        init_occupied_balises: set[tuple[int, int]], 
-        init_occupied_platforms: set[tuple[int, int]], 
+        curr_l2p_map: dict[int, tuple[int, int]], 
+        curr_p2l_map: dict[tuple[int, int], int], 
+        occupied_balises: set[tuple[int, int]], 
+        occupied_platforms: set[tuple[int, int]], 
         holding_ancilla_plats: set[tuple[int, int]]
     ):
         """
         Initialize the riding stage.
         
         Args:
-            init_l2p_map (dict[int, tuple[int, int]]): The initial mapping from logical qubits to physical qubits.
-            init_p2l_map (dict[tuple[int, int], int]): The initial mapping from physical qubits to logical qubits.
-            init_occupied_balises (set[tuple[int, int]]): The initial occupied balises.
-            init_occupied_platforms (set[tuple[int, int]]): The initial occupied platforms.
-            holding_ancilla_plats (set[tuple[int, int]]): The platforms holding ancilla qubits.
+            curr_l2p_map (dict[int, tuple[int, int]]): Recording the current mapping from logical qubits to physical qubits.
+            curr_p2l_map (dict[tuple[int, int], int]): Recording the current mapping from physical qubits to logical qubits.
+            occupied_balises (set[tuple[int, int]]): Recording the occupied balises.
+            occupied_platforms (set[tuple[int, int]]): Recording the occupied platforms.
+            holding_ancilla_plats (set[tuple[int, int]]): Recording the platforms holding ancilla qubits.
         """
-        super().__init__(init_l2p_map, init_p2l_map, init_occupied_balises, init_occupied_platforms, holding_ancilla_plats)
+        super().__init__(curr_l2p_map, curr_p2l_map, occupied_balises, occupied_platforms, holding_ancilla_plats)
         assert self.id % 2 == 1, "Operating stage id should be odd"
         self.riding_actions: list[RidingAction] = []
 
@@ -558,11 +563,11 @@ class RidingStage(CircuitStage):
             bool: Whether the action is successfully added.
         """
         assert isinstance(action, Transport), "Action should be Transport"
-        assert action.source_physical_qubit in self.curr_occupied_balises, "Data qubit to transport should be in source balise."
+        assert action.source_physical_qubit in self.occupied_balises, "Data qubit to transport should be in source balise."
 
         if action.target_physical_qubit == action.source_physical_qubit:
             pass
-        elif action.target_physical_qubit in self.curr_occupied_balises:
+        elif action.target_physical_qubit in self.occupied_balises:
             if action.target_physical_qubit in self.potential_free_balises and self.potential_free_balises[action.target_physical_qubit] == action.source_physical_qubit:
                 self.potential_free_balises.pop(action.target_physical_qubit)
                 self.paired_balises_to_free.add(action.target_physical_qubit)
@@ -572,8 +577,8 @@ class RidingStage(CircuitStage):
                 self.potential_free_balises[action.source_physical_qubit] = action.target_physical_qubit
                 return False
         else:
-            self.curr_occupied_balises.remove(action.source_physical_qubit)
-            self.curr_occupied_balises.add(action.target_physical_qubit)
+            self.occupied_balises.remove(action.source_physical_qubit)
+            self.occupied_balises.add(action.target_physical_qubit)
         
         self.riding_actions.append(action)
         return True
@@ -591,9 +596,9 @@ class RidingStage(CircuitStage):
             bool: Whether the action is successfully added.
         """
         assert isinstance(action, Teleport), "Action should be Teleport"
-        assert action.platform in self.curr_occupied_platforms, "Ancilla qubit for teleportation should be in platform."
+        assert action.platform in self.occupied_platforms, "Ancilla qubit for teleportation should be in platform."
 
-        self.curr_occupied_platforms.remove(action.platform)
+        self.occupied_platforms.remove(action.platform)
         self.holding_ancilla_plats.remove(action.platform)
 
         self.riding_actions.append(action)
@@ -614,7 +619,7 @@ class RidingStage(CircuitStage):
         assert isinstance(action, Enter), "Action should be Enter"
         assert self.curr_p2l_map[action.register] == action.logic_qubit, "Data qubit to enter should be in register."
 
-        if action.platform in self.curr_occupied_platforms:
+        if action.platform in self.occupied_platforms:
             if action.platform in self.potential_free_platforms and self.potential_free_platforms[action.platform] == action.register:
                 self.potential_free_platforms.pop(action.platform)
                 self.paired_platforms_to_free.add(action.platform)
@@ -624,7 +629,7 @@ class RidingStage(CircuitStage):
                 self.potential_free_registers[action.register] = action.platform
                 return False
         else:
-            self.curr_occupied_platforms.add(action.platform)
+            self.occupied_platforms.add(action.platform)
             self.curr_p2l_map[action.register] = -1
         self.curr_l2p_map[action.logic_qubit] = None
         
@@ -644,10 +649,10 @@ class RidingStage(CircuitStage):
             bool: Whether the action is successfully added.
         """
         assert isinstance(action, Exit), "Action should be Exit"
-        assert action.platform in self.curr_occupied_platforms, "Data qubit to exit should be in platform."
+        assert action.platform in self.occupied_platforms, "Data qubit to exit should be in platform."
 
         if self.curr_p2l_map[action.register] == -1:
-            self.curr_occupied_platforms.remove(action.platform)
+            self.occupied_platforms.remove(action.platform)
         else:
             if action.register in self.potential_free_registers and self.potential_free_registers[action.register] == action.platform:
                 self.potential_free_registers.pop(action.register)
@@ -657,8 +662,8 @@ class RidingStage(CircuitStage):
             else:
                 self.potential_free_platforms[action.platform] = action.register
                 return False
-        self.curr_p2l_map[action.register] = action.logic_qubit
         self.curr_l2p_map[action.logic_qubit] = action.register
+        self.curr_p2l_map[action.register] = action.logic_qubit
 
         self.riding_actions.append(action)
         return True
@@ -729,8 +734,6 @@ class Circuit:
 
         stages (list[CircuitStage]): The list of stages in the circuit.
         
-        curr_l2p_map (dict): The current mapping from logical qubits to physical qubits.
-        curr_p2l_map (dict): The current mapping from physical qubits to logical qubits.
         hold_ancilla_plats (set): The set of platforms holding ancilla qubits.
     """
     
@@ -759,10 +762,12 @@ class Circuit:
         # self.reset_time: float = package.fab_model.reset_time
 
         self.stages: list[CircuitStage] = [] # only use extend_stage to add new stage
-
+        
         self.curr_l2p_map = deepcopy(init_l2p_map)
         self.curr_p2l_map = deepcopy(init_p2l_map)
-        self.hold_ancilla_plats = set()
+        self.occupied_balises = set()
+        self.occupied_platforms = set()
+        self.holding_ancilla_plats = set()
 
     def __repr__(self):
         if not hasattr(self, "string_repr"):
@@ -793,12 +798,10 @@ class Circuit:
             assert len(self.stages) % 2 == 0, "Boarding stage should have even id"
         else:
             assert len(self.stages) % 2 == 1, "Operating stage should have odd id"
-        curr_occupied_balises = self.stages[-1].curr_occupied_balises if len(self.stages) else set()
-        curr_occupied_platforms = self.stages[-1].curr_occupied_platforms if len(self.stages) else set()
         if board_flag:
-            new_stage = BoardingStage(curr_occupied_balises, curr_occupied_platforms, self.hold_ancilla_plats)
+            new_stage = BoardingStage(self.curr_l2p_map, self.curr_p2l_map, self.occupied_balises, self.occupied_platforms, self.holding_ancilla_plats)
         else:
-            new_stage = RidingStage(curr_occupied_balises, curr_occupied_platforms, self.hold_ancilla_plats)
+            new_stage = RidingStage(self.curr_l2p_map, self.curr_p2l_map, self.occupied_balises, self.occupied_platforms, self.holding_ancilla_plats)
         assert new_stage.id == len(self.stages), "Stage id should be equal to the length of existing stages"
         self.stages.append(new_stage)
         return new_stage
