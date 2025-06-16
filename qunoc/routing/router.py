@@ -109,13 +109,15 @@ class Router:
 
         init_l2p_map (dict[int, tuple[int, int]]): The initial mapping of logic qubits to physical qubits.
         init_p2l_map (dict[tuple[int, int], int]): The initial mapping of physical qubits to logic qubits.
+
         block_depend_graph (nx.DiGraph): The dependency graph of compute blocks.
         action_depend_graph (nx.DiGraph): The dependency graph of actions.
-        circuit (Circuit): The physical quantum circuit after routing.
-
         curr_l2p_map (dict[int, tuple[int, int]]): The current mapping of logic qubits to physical qubits.
         curr_p2l_map (dict[tuple[int, int], int]): The current mapping of physical qubits to logic qubits.
         local_gate_freq (dict[int, int]): The dictionary recording frequency of local gates for each logic qubit.
+        recent_logic_qubit_action_dict (dict[int, int]): The dictionary recording the most recent action for each logic qubit.
+
+        circuit (Circuit): The physical quantum circuit after routing.
     """
 
     def __init__(self, package: Package, program: Program):
@@ -129,22 +131,9 @@ class Router:
         self.package = package
         self.program = program
 
-        # self.qubit_topology = package.qubit_topology
-        # self.chiplet_topology = package.chiplet_topology
-        # self.metro_topology = package.metro_topology
-        # self.platform_list = package.get_platform_list()
-        # self.station_list = package.get_station_list()
-        # self.interchange_list = package.get_interchange_list()
-
         self.package_graph = package.package_graph
         self.metro_graph: nx.Graph = package.package_graph.subgraph(self.package.transfer_nodes)
         self.gate_depend_graph = program.gate_depend_graph
-
-        self.init_l2p_map: dict[int, tuple[int, int]] = dict()
-        self.init_p2l_map: dict[tuple[int, int], int] = defaultdict(lambda: -1)
-        self.block_depend_graph = nx.DiGraph()
-        self.action_depend_graph = nx.DiGraph()
-        self.circuit: Circuit = None
 
     def route_program_on_package(self) -> Circuit:
         """
@@ -159,9 +148,6 @@ class Router:
         """
         self.map_qubits()
         self.compile_blocks_and_actions()
-        print("Compute blocks: ", self.block_depend_graph.nodes)
-        print("Actions: ", self.action_depend_graph.nodes)
-        self.circuit = Circuit(self.package, self.program.data_qubit_num, self.init_l2p_map, self.init_p2l_map, self.action_depend_graph)
         self.schedule_actions_to_circuit()
         return self.circuit
 
@@ -169,6 +155,8 @@ class Router:
         """
         Map logic qubits to physical qubits which play as registers.
         """
+        self.init_l2p_map: dict[int, tuple[int, int]] = dict()
+        self.init_p2l_map: dict[tuple[int, int], int] = defaultdict(lambda: -1)
         logic_data_qubit_num = self.program.data_qubit_num
         physical_data_qubit_set = set(self.package.get_registers())
         if logic_data_qubit_num > len(physical_data_qubit_set):
@@ -188,10 +176,12 @@ class Router:
         3) MoveBlock: collect following gates, if #gate > #qubits*(#qubits-1)//4 and #gate < max(chiplet_capacity). If #gate > 2, then form a MoveBlock.
         4) Otherwise, form a TeleBlock.
         """
+        self.block_depend_graph = nx.DiGraph()
+        self.action_depend_graph = nx.DiGraph()
+        self.action_depend_graph.add_node(-1, action=None)
         self.curr_l2p_map = deepcopy(self.init_l2p_map)
         self.curr_p2l_map = deepcopy(self.init_p2l_map)
         self.local_gate_freq = {i: 0 for i in range(self.program.data_qubit_num)}
-        self.action_depend_graph.add_node(-1, action=None)
         self.recent_logic_qubit_action_dict = {i: -1 for i in range(self.program.data_qubit_num)}
 
         for gate_id in self.gate_depend_graph.nodes:
@@ -200,6 +190,7 @@ class Router:
         for gate_id in self.gate_depend_graph.nodes:
             if len(self.gate_depend_graph.nodes[gate_id]["pred"]) == 0:
                 no_depend_gate_ids.add(gate_id)
+        
         while len(no_depend_gate_ids) > 0:
             gate_id = no_depend_gate_ids.pop()
             no_depend_gate_ids = self.update_no_depend_gate_ids(no_depend_gate_ids, gate_id)
@@ -527,6 +518,10 @@ class Router:
             self.action_depend_graph.add_node(teleport_act.id, action=teleport_act)
             self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[logic_qubit], teleport_act.id)
             self.action_depend_graph.add_edge(alight_act.id, teleport_act.id)
+            if i == 0:
+                tele_ctrl_act_id = teleport_act.id
+            else:
+                self.action_depend_graph.add_edge(tele_ctrl_act_id, teleport_act.id)
             self.recent_logic_qubit_action_dict[logic_qubit] = teleport_act.id
         
     def check_move_gate(self, gate: Control, move_gates: list[Control]) -> bool:
@@ -674,7 +669,7 @@ class Router:
             # Transfer the immigate_qubit from depart_platform to arrive_platform
             immigate_board_act = Board(immigate_qubit, depart_station, depart_platform)
             self.action_depend_graph.add_node(immigate_board_act.id, action=immigate_board_act)
-            self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[immigate_board_act], immigate_board_act.id)
+            self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[immigate_qubit], immigate_board_act.id)
             self.recent_logic_qubit_action_dict[immigate_qubit] = immigate_board_act.id
             immigate_transfer_acts = self.route_on_transfer_chiplets(immigate_qubit, depart_station, arrive_station)
             for i in range(len(immigate_transfer_acts)):
@@ -767,7 +762,7 @@ class Router:
                     self.curr_p2l_map[depart_swap_path[len(depart_swap_path)-1-j]] = swapped_qubit
 
         # Route the local gates in the move block
-        compute_module = self.package.get_node_area(move_block.chiplet.get_nodes[0])
+        compute_module = self.package.get_node_area(move_block.chiplet.get_nodes()[0])
         assert isinstance(compute_module, ComputeModule)
         for local_gate in move_block.ctrl_gates:
             swap_path = compute_module.get_swap_path(self.curr_l2p_map[local_gate.control_qubit], self.curr_l2p_map[local_gate.target_qubit])
@@ -823,78 +818,21 @@ class Router:
         target_qubits = target_qubits[:len(immigate_qubits)]
         self.local_gate_freq = {i: 0 for i in range(self.program.data_qubit_num)}
         return target_qubits
-
-    # # Functions for transforming compute blocks into circuit actions
-    # def update_no_depend_block_ids(self, no_depend_block_ids: set[int], removed_block_id: int) -> set[int]:
-    #     """
-    #     Update the no_depend_block_ids set by checking removed block's successors.
-
-    #     Args:
-    #         no_depend_block_ids (set[int]): The original set of block ids with no dependencies.
-    #         removed_block_id (int): The id of the removed block.
-
-    #     Returns:
-    #         set[int]: The updated set of block ids with no dependencies.
-    #     """
-    #     for succ_block in self.block_depend_graph.successors(removed_block_id):
-    #         self.block_depend_graph.nodes[succ_block]["pred"].discard(removed_block_id)
-    #         if len(self.block_depend_graph.nodes[succ_block]["pred"]) == 0:
-    #             no_depend_block_ids.add(succ_block)
-    #     return no_depend_block_ids
-
-    # def transform_compute_blocks(self):
-    #     """
-    #     Transform compute blocks into circuit actions.
-    #     """
-    #     self.recent_logic_qubit_action_dict = {i: None for i in range(self.program.data_qubit_num)}
-    #     for block_id in self.block_depend_graph:
-    #         self.block_depend_graph.nodes[block_id]["pred"] = set(self.block_depend_graph.predecessors(block_id))
-    #     no_depend_block_ids: set[int] = set()
-    #     for block_id in self.block_depend_graph.nodes:
-    #         if len(self.block_depend_graph.nodes[block_id]["pred"]) == 0:
-    #             no_depend_block_ids.add(block_id)
-    #     while len(no_depend_block_ids) > 0:
-    #         block_id = no_depend_block_ids.pop()
-    #         no_depend_block_ids = self.update_no_depend_block_ids(no_depend_block_ids, block_id)
-    #         block = self.block_depend_graph.nodes[block_id]["block"]
-    #         assert isinstance(block, ComputeBlock)
-    #         if isinstance(block, LocalBlock):
-    #             self.transform_local_block(block)
-    #         elif isinstance(block, TeleBlock):
-    #             self.transform_tele_block(block)
-    #         elif isinstance(block, MoveBlock):
-    #             self.transform_move_block(block)
-    #         else:
-    #             raise ValueError("Unknown block type.")
     
     # Functions for scheduling actions to circuit
-    def update_no_depend_action_ids(self, no_depend_action_ids: set[int], removed_action_id: int) -> set[int]:
-        """
-        Update the no_depend_action_ids set by checking removed action's successors.
-
-        Args:
-            no_depend_action_ids (set[int]): The original set of action ids with no dependencies.
-            removed_action_id (int): The id of the removed action.
-
-        Returns:
-            set[int]: The updated set of action ids with no dependencies.
-        """
-        for succ_action in self.action_depend_graph.successors(removed_action_id):
-            self.action_depend_graph.nodes[succ_action]["pred"].discard(removed_action_id)
-            if len(self.action_depend_graph.nodes[succ_action]["pred"]) == 0:
-                no_depend_action_ids.add(succ_action)
-        return no_depend_action_ids
-
     def schedule_actions_to_circuit(self):
         """
         Schedule the actions to the circuit.
-        """  
+        """
+        self.circuit = Circuit(self.package, self.program.data_qubit_num, self.init_l2p_map, self.init_p2l_map, self.action_depend_graph)
+
         for action_id in self.action_depend_graph.nodes:
             self.action_depend_graph.nodes[action_id]["pred"] = set(self.action_depend_graph.predecessors(action_id))
         no_depend_action_ids: set[int] = set()
         for action_id in self.action_depend_graph.nodes:
             if len(self.action_depend_graph.nodes[action_id]["pred"]) == 0:
                 no_depend_action_ids.add(action_id)
+        
         board_flag = True
         while len(no_depend_action_ids) > 0:
             new_stage = self.circuit.extend_stage(board_flag)
@@ -977,6 +915,23 @@ class Router:
                         break
             board_flag = not board_flag
     
+    def update_no_depend_action_ids(self, no_depend_action_ids: set[int], removed_action_id: int) -> set[int]:
+        """
+        Update the no_depend_action_ids set by checking removed action's successors.
+
+        Args:
+            no_depend_action_ids (set[int]): The original set of action ids with no dependencies.
+            removed_action_id (int): The id of the removed action.
+
+        Returns:
+            set[int]: The updated set of action ids with no dependencies.
+        """
+        for succ_action in self.action_depend_graph.successors(removed_action_id):
+            self.action_depend_graph.nodes[succ_action]["pred"].discard(removed_action_id)
+            if len(self.action_depend_graph.nodes[succ_action]["pred"]) == 0:
+                no_depend_action_ids.add(succ_action)
+        return no_depend_action_ids
+
     def estimate_fidelity(self) -> float:
         """
         Estimate the fidelity of the circuit.

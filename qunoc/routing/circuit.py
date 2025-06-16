@@ -727,6 +727,7 @@ class Circuit:
 
     Attributes:
         package (Package): The package to perform the quantum circuit.
+        opt_config (OptConfig): The optimization configuration for the circuit.
         logic_qubit_num (int): The number of logic qubits in the circuit.
         init_l2p_map (dict): The initial mapping from logical qubits to physical qubits.
         init_p2l_map (dict): The initial mapping from physical qubits to logical qubits.
@@ -734,6 +735,10 @@ class Circuit:
 
         stages (list[CircuitStage]): The list of stages in the circuit.
         
+        curr_l2p_map (dict): The current mapping from logical qubits to physical qubits.
+        curr_p2l_map (dict): The current mapping from physical qubits to logical qubits.
+        occupied_balises (set): The set of balises occupied by logic qubits.
+        occupied_platforms (set): The set of platforms occupied by logic qubits.
         hold_ancilla_plats (set): The set of platforms holding ancilla qubits.
     """
     
@@ -749,18 +754,12 @@ class Circuit:
             action_depend_graph (nx.DiGraph): The directed acyclic graph representing dependencies between actions.
         """
         self.package = package
+        self.opt_config = package.opt_config
         self.logic_qubit_num = logic_qubit_num
         self.init_l2p_map = init_l2p_map
         self.init_p2l_map = init_p2l_map
         self.action_depend_graph = action_depend_graph
-
-        # self.single_time: float = package.fab_model.single_time
-        # self.intra_time: float = package.fab_model.intra_time
-        # self.inter_time: float = package.fab_model.inter_time
-        # self.qst_time_constant: float = package.fab_model.qst_time_constant
-        # self.measure_time: float = package.fab_model.measure_time
-        # self.reset_time: float = package.fab_model.reset_time
-
+        
         self.stages: list[CircuitStage] = [] # only use extend_stage to add new stage
         
         self.curr_l2p_map = deepcopy(init_l2p_map)
@@ -843,32 +842,22 @@ class Circuit:
                         inter_chiplet_flag = True
                     elif isinstance(action, GhzPreparation):
                         ghz_flag = True
-                inter_chiplet_depth = 2 * self.inter_time + 3 * self.single_time if inter_chiplet_flag else 0
-                ghz_depth = 2 * self.qst_time_constant + 2 * self.single_time if ghz_flag else 0
+                inter_chiplet_depth = 2 * self.opt_config.inter_time + 3 * self.opt_config.single_time if inter_chiplet_flag else 0
+                ghz_depth = 2 * self.opt_config.qst_time_constant + 2 * self.opt_config.single_time if ghz_flag else 0
                 stage_depth = max(inter_chiplet_depth, ghz_depth)
             elif isinstance(stage, RidingStage):
-                transport_actions = []
-                swap_actions = []
-                teleport_control_flag = False
-                teleport_target_flag = False
-                direct_actions = []
+                transfer_actions = []
+                compute_actions = []
                 for action in stage.riding_actions:
                     if isinstance(action, Transport):
-                        transport_actions.append(action)
-                    elif isinstance(action, SwapGate):
-                        swap_actions.append(action)
-                    elif isinstance(action, Teleport):
-                        if action.control_flag:
-                            teleport_control_flag = True
-                        else:
-                            teleport_target_flag = True
-                    elif isinstance(action, DirectGate):
-                        direct_actions.append(action)
-                transport_depth = len(transport_actions) * self.intra_time
-                route_depth = len(swap_actions) * self.intra_time
-                teleport_depth = self.intra_time * (int(teleport_control_flag) + int(teleport_target_flag))
-                local_depth = len(direct_actions) * self.intra_time
-                stage_depth = max(transport_depth, route_depth, teleport_depth, local_depth)
+                        transfer_actions.append(action)
+                    else:
+                        assert isinstance(action, (Teleport, SwapGate, DirectGate, Enter, Exit)), "Action should be Teleport, SwapGate, DirectGate, Enter or Exit"
+                        compute_actions.append(action)
+                transfer_depth = len(transfer_actions) * self.opt_config.qst_time_constant
+                compute_action_graph = self.action_depend_graph.subgraph(compute_actions)
+                computer_depth = nx.dag_longest_path_length(compute_action_graph) * self.opt_config.intra_time if compute_action_graph else 0
+                stage_depth = max(transfer_depth, computer_depth)
             depth += stage_depth
         return depth
 

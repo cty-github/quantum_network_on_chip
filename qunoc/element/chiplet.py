@@ -152,6 +152,45 @@ class FabricateModel:
         """
         return qubit_num / self.get_yield(qubit_num)
 
+class OperationConfig:
+    """
+    Represents the configuration of the operation in the package.
+
+    Attributes:
+        single_time (float): The time of single gate.
+        intra_time (float): The time of intra-chiplet CZ.
+        inter_time (float): The time of inter-chiplet CZ.
+        qst_time_constant (float): The time constant of the enhanced QST.
+        measure_time (float): The time of measurement.
+        reset_time (float): The time of reset.
+    """
+    
+    def __init__(self, 
+            single_time: float = 0.0001, 
+            intra_time: float = 0.0002, 
+            inter_time: float = 0.0003, 
+            qst_time_constant: float = 0.0004, 
+            measure_time: float = 0.0005, 
+            reset_time: float = 0.0006
+        ):
+        """
+        Initialize the operation configuration.
+
+        Args:
+            single_time (float): The time of single gate.
+            intra_time (float): The time of intra-chiplet CZ.
+            inter_time (float): The time of inter-chiplet CZ.
+            qst_time_constant (float): The time constant of the enhanced QST.
+            measure_time (float): The time of measurement.
+            reset_time (float): The time of reset.
+        """
+        self.single_time: float = single_time
+        self.intra_time: float = intra_time
+        self.inter_time: float = inter_time
+        self.qst_time_constant: float = qst_time_constant
+        self.measure_time: float = measure_time
+        self.reset_time: float = reset_time
+
 
 class Qubit:
     """
