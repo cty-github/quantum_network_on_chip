@@ -64,6 +64,7 @@ class Road:
         Returns:
             float: The fidelity of the road.
         """
+        raise NotImplementedError("This method should be implemented in subclasses.")
 
 class IntraComputeRoad(Road):
     """
@@ -285,7 +286,7 @@ class Package:
                 self.complete_area(area)
             self.complete_package()
             try:
-                self.design_history.append(self.draw_qubits())
+                self.design_history.append(self.draw_qubits()[0])
             except Exception as e:
                 print("Error in drawing qubits: ", e)
             if self.design_strategy == "heuristic":
@@ -822,7 +823,7 @@ class Package:
         self.complete_package()
         if record:
             try:
-                self.design_history.append(self.draw_qubits())
+                self.design_history.append(self.draw_qubits()[0])
             except Exception as e:
                 print("Error in drawing qubits: ", e)
 
@@ -1194,118 +1195,114 @@ class Package:
         markersize: float = 4, 
         linewidth_t: float = 1, 
         linewidth_b: float = 2
-    ) -> plt.Figure:
+    ) -> tuple[plt.Figure, plt.Axes]:
         """
         Draw the package graph in qubit level.
 
         Returns:
-            plt.Figure: The figure of the package graph.
+            tuple[plt.Figure, plt.Axes]: The figure of the package graph.
         """
         fig = plt.figure(figsize=self.package_size)
+        ax = fig.add_subplot(1, 1, 1)
         for node in self.package_graph.nodes:
-            plt.fill(
+            ax.fill(
                 node[0] + np.array([-0.5, 0.5, 0.5, -0.5]),
                 node[1] + np.array([-0.5, -0.5, 0.5, 0.5]),
                 color=color_pool[self.package_graph.nodes[node]["qubit"].type.value],
-            )
-        plt.fill(
+            ) # draw the area background
+        ax.fill(
             -0.5 + np.array([-0.5, 0.5, 0.5, -0.5]) * marginrate,
             np.array(
                 [-0.5, -0.5, self.package_size[1] - 0.5, self.package_size[1] - 0.5]
             ),
             color="white",
-        )
-        plt.fill(
+        ) # draw the left margin
+        ax.fill(
             self.package_size[0] - 0.5 + np.array([-0.5, 0.5, 0.5, -0.5]) * marginrate,
             np.array(
                 [-0.5, -0.5, self.package_size[1] - 0.5, self.package_size[1] - 0.5]
             ),
             color="white",
-        )
-        plt.fill(
+        ) # draw the right margin
+        ax.fill(
             np.array(
                 [-0.5, self.package_size[0] - 0.5, self.package_size[0] - 0.5, -0.5]
             ),
             -0.5 + np.array([-0.5, -0.5, 0.5, 0.5]) * marginrate,
             color="white",
-        )
-        plt.fill(
+        ) # draw the bottom margin
+        ax.fill(
             np.array(
                 [-0.5, self.package_size[0] - 0.5, self.package_size[0] - 0.5, -0.5]
             ),
             self.package_size[1] - 0.5 + np.array([-0.5, -0.5, 0.5, 0.5]) * marginrate,
             color="white",
-        )
+        ) # draw the top margin
         for edge in self.package_graph.edges:
             if (
                 self.package_graph.edges[edge]["type"] == EdgeType.Inter
                 or self.package_graph.edges[edge]["type"] == EdgeType.Empty
             ):
                 if edge[0][0] == edge[1][0]:
-                    plt.fill(
+                    ax.fill(
                         edge[0][0] + np.array([-0.5, 0.5, 0.5, -0.5]),
                         (edge[0][1] + edge[1][1]) / 2
                         + np.array([-0.5, -0.5, 0.5, 0.5]) * marginrate,
                         color="white",
-                    )
+                    ) # draw the chiplet gap
                 else:
-                    plt.fill(
+                    ax.fill(
                         (edge[0][0] + edge[1][0]) / 2
                         + np.array([-0.5, 0.5, 0.5, -0.5]) * marginrate,
                         edge[0][1] + np.array([-0.5, -0.5, 0.5, 0.5]),
                         color="white",
-                    )
+                    ) # draw the chiplet gap
             if self.package_graph.edges[edge]["type"] == EdgeType.Intra:
-                plt.plot(
+                ax.plot(
                     [edge[0][0], edge[1][0]],
                     [edge[0][1], edge[1][1]],
                     "k-",
                     linewidth=linewidth_t,
-                )
+                ) # draw the intra-chiplet coupler
             elif self.package_graph.edges[edge]["type"] == EdgeType.Inter:
-                plt.plot(
+                ax.plot(
                     [edge[0][0], edge[1][0]],
                     [edge[0][1], edge[1][1]],
                     "r-",
                     linewidth=linewidth_b,
-                )
+                ) # draw the inter-chiplet coupler
         for node in self.package_graph.nodes:
             if self.package_graph.nodes[node]["type"] != NodeType.Empty:
-                plt.plot(node[0], node[1], "ko", markersize=markersize)
-        plt.axis("off")
-        plt.gca().spines["top"].set_visible(False)
-        plt.gca().spines["right"].set_visible(False)
-        plt.gca().spines["bottom"].set_visible(False)
-        plt.gca().spines["left"].set_visible(False)
-        plt.close()
-        return fig
+                ax.plot(node[0], node[1], "ko", markersize=markersize) # draw the physical qubit
+        ax.axis("off")
+        ax.invert_yaxis()
+        plt.close(fig)
+        return fig, ax
 
     def draw_metro(self, 
         marginrate: float = 0.2, 
         markersize: float = 4, 
         linewidth_t: float = 1, 
         linewidth_b: float = 2
-    ) -> plt.Figure:
+    ) -> tuple[plt.Figure, plt.Axes]:
         """
         Draw the metro topology graph.
 
         Returns:
-            plt.Figure: The figure of the metro topology graph.
+            tuple[plt.Figure, plt.Axes]: The figure of the metro topology graph.
         """
         fig = plt.figure(figsize=self.package_size)
+        ax = fig.add_subplot(1, 1, 1)
         for node in self.metro_topology.nodes:
-            plt.plot(*node.get_coordinate(), "ko", markersize=markersize)
+            ax.plot(*node.get_coordinate(), "ko", markersize=markersize)
         for node_u, node_v in self.metro_topology.edges:
             pos_u = node_u.get_coordinate()
             pos_v = node_v.get_coordinate()
-            plt.plot([pos_u[0], pos_v[0]], [pos_u[1], pos_v[1]], "k-", linewidth=linewidth_t)
-        plt.axis("off")
-        plt.gca().spines["top"].set_visible(False)
-        plt.gca().spines["right"].set_visible(False)
-        plt.gca().spines["bottom"].set_visible(False)
-        plt.gca().spines["left"].set_visible(False)
-        plt.close()
-        return fig
+            ax.plot([pos_u[0], pos_v[0]], [pos_u[1], pos_v[1]], "k-", linewidth=linewidth_t)
+        ax.axis("off")
+        ax.invert_yaxis()
+        plt.close(fig)
+        return fig, ax
 
     def save_design_history(self, save_jpg: bool = True, save_gif: bool = True, duration: int = 1000):
         """

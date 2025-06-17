@@ -117,7 +117,7 @@ class QuNoCEnv(gym.Env):
         )
 
     def render(self, mode = "human", filepath: str = None):
-        fig = self.package.draw_qubits()
+        fig = self.package.draw_qubits()[0]
         if mode == "human":
             fig.show()
         if filepath:

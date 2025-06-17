@@ -1,3 +1,4 @@
+import logging
 from copy import deepcopy
 
 from ..element.package import *
@@ -41,6 +42,11 @@ class LocalBlock(ComputeBlock):
         super().__init__()
         self.ctrl_gate = ctrl_gate
         self.module = module
+        logging.info("")
+        logging.info(f"Constructed {self}")
+
+    def __repr__(self):
+        return f"{self.__class__.__name__} {self.id}: Local {self.ctrl_gate} on {self.module}."
 
 class TeleBlock(ComputeBlock):
     """
@@ -62,6 +68,11 @@ class TeleBlock(ComputeBlock):
         super().__init__()
         self.control_qubit = control_qubit
         self.target_qubits = target_qubits
+        logging.info("")
+        logging.info(f"Constructed {self}")
+
+    def __repr__(self):
+        return f"{self.__class__.__name__} {self.id}: Teleport qubit {self.control_qubit} to {self.target_qubits}."
 
 class MoveBlock(ComputeBlock):
     """
@@ -83,6 +94,11 @@ class MoveBlock(ComputeBlock):
         super().__init__()
         self.ctrl_gates = ctrl_gates
         self.chiplet = chiplet
+        logging.info("")
+        logging.info(f"Constructed {self}")
+
+    def __repr__(self):
+        return f"{self.__class__.__name__} {self.id}: Move {self.ctrl_gates} to {self.chiplet}."
 
     def get_involved_qubits(self) -> set[int]:
         """
@@ -109,11 +125,11 @@ class Router:
 
         init_l2p_map (dict[int, tuple[int, int]]): The initial mapping of logic qubits to physical qubits.
         init_p2l_map (dict[tuple[int, int], int]): The initial mapping of physical qubits to logic qubits.
+        curr_l2p_map (dict[int, tuple[int, int]]): The current mapping of logic qubits to physical qubits.
+        curr_p2l_map (dict[tuple[int, int], int]): The current mapping of physical qubits to logic qubits.
 
         block_depend_graph (nx.DiGraph): The dependency graph of compute blocks.
         action_depend_graph (nx.DiGraph): The dependency graph of actions.
-        curr_l2p_map (dict[int, tuple[int, int]]): The current mapping of logic qubits to physical qubits.
-        curr_p2l_map (dict[tuple[int, int], int]): The current mapping of physical qubits to logic qubits.
         local_gate_freq (dict[int, int]): The dictionary recording frequency of local gates for each logic qubit.
         recent_logic_qubit_action_dict (dict[int, int]): The dictionary recording the most recent action for each logic qubit.
 
@@ -164,6 +180,9 @@ class Router:
         for i in range(logic_data_qubit_num):
             self.init_l2p_map[i] = physical_data_qubit_set.pop()
             self.init_p2l_map[self.init_l2p_map[i]] = i
+        self.curr_l2p_map = deepcopy(self.init_l2p_map)
+        self.curr_p2l_map = deepcopy(self.init_p2l_map)
+        logging.info(f"Initial qubit mapping: {self.init_l2p_map}")
 
     # Functions for compiling compute blocks and actions
     def compile_blocks_and_actions(self):
@@ -179,8 +198,6 @@ class Router:
         self.block_depend_graph = nx.DiGraph()
         self.action_depend_graph = nx.DiGraph()
         self.action_depend_graph.add_node(-1, action=None)
-        self.curr_l2p_map = deepcopy(self.init_l2p_map)
-        self.curr_p2l_map = deepcopy(self.init_p2l_map)
         self.local_gate_freq = {i: 0 for i in range(self.program.data_qubit_num)}
         self.recent_logic_qubit_action_dict = {i: -1 for i in range(self.program.data_qubit_num)}
 
@@ -301,8 +318,8 @@ class Router:
             LocalBlock: The constructed local block.
         """
         local_block = LocalBlock(local_gate, module)
-        self.gate_depend_graph.nodes[local_gate.id]["block"] = local_block.id
         self.block_depend_graph.add_node(local_block.id, block=local_block)
+        self.gate_depend_graph.nodes[local_gate.id]["block"] = local_block.id
         for pred_gate in self.gate_depend_graph.predecessors(local_gate.id):
             self.block_depend_graph.add_edge(self.gate_depend_graph.nodes[pred_gate]["block"], local_block.id)
         return local_block
@@ -832,6 +849,8 @@ class Router:
         for action_id in self.action_depend_graph.nodes:
             if len(self.action_depend_graph.nodes[action_id]["pred"]) == 0:
                 no_depend_action_ids.add(action_id)
+        no_depend_action_ids.remove(-1)
+        no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, -1)
         
         board_flag = True
         while len(no_depend_action_ids) > 0:
@@ -959,40 +978,39 @@ class Router:
         """
         return self.circuit.estimate_depth()
 
-    def draw_program(self, 
+    def draw_qubit_mapping(self, 
         marginrate: float = 0.2, 
         markersize: float = 4, 
         linewidth_t: float = 1, 
-        linewidth_b: float = 2, 
-        show: bool = True, 
-        save_path: str = None, 
-    ):
+        linewidth_b: float = 2,
+    ) -> plt.Figure:
         """
-        Draw the gate dependency graph of the program.
+        Draw the logic qubit mapped to the package graph.
         """
-        self.program.draw_depend(
-            marginrate=marginrate, 
-            markersize=markersize, 
-            linewidth_t=linewidth_t, 
-            linewidth_b=linewidth_b, 
-            show=show, 
-            filepath=save_path
-        )
+        fig, ax = self.package.draw_qubits()
+        for logic_qubit in range(self.program.data_qubit_num):
+            phy_qubit = self.curr_l2p_map[logic_qubit]
+            assert phy_qubit in self.package_graph.nodes, f"Logic qubit {logic_qubit} is not mapped to a physical qubit."
+            ax.plot(phy_qubit[0], phy_qubit[1], "ko", markersize=4*markersize)
+            ax.text(phy_qubit[0], phy_qubit[1], str(logic_qubit), fontsize=10, color="white", ha="center", va="center")
+        ax.axis("on")
+        return fig
 
     def draw_block(self, 
         marginrate: float = 0.2, 
         markersize: float = 4, 
         linewidth_t: float = 1, 
-        linewidth_b: float = 2, 
-        show: bool = True, 
-        save_path: str = None, 
-    ):
+        linewidth_b: float = 2,
+    ) -> plt.Figure:
         """
         Draw the block dependency graph of the program.
+
+        Return:
+            plt.Figure: The figure containing the block dependency graph.
         """
         pos = nx.spring_layout(self.block_depend_graph)
         figsize = (find_longest_topo_distance(self.block_depend_graph), find_longest_topo_distance(self.block_depend_graph))
-        plt.figure(figsize=figsize)
+        fig = plt.figure(figsize=figsize)
         nx.draw(
             self.block_depend_graph, 
             pos, 
@@ -1013,8 +1031,5 @@ class Router:
             font_size=10,
             font_color='black'
         )
-        if show:
-            plt.show()
-        if save_path:
-            plt.savefig(save_path)
         plt.close()
+        return fig

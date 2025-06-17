@@ -293,6 +293,7 @@ class Chiplet:
         Returns:
             coordinate (tuple[float, float]): the center coordinate of the chiplet
         """
+        raise NotImplementedError("This method should be implemented in subclasses.")
     
     def get_nodes(self) -> list[tuple[int, int]]:
         """
@@ -301,6 +302,7 @@ class Chiplet:
         Returns:
             nodes (list[tuple[int, int]]): the list of nodes in the chiplet
         """
+        raise NotImplementedError("This method should be implemented in subclasses.")
 
     def has_node(self, node: tuple[int, int]) -> bool:
         """
@@ -312,6 +314,7 @@ class Chiplet:
         Returns:
             bool: True if the node is in the function area, False otherwise.
         """
+        raise NotImplementedError("This method should be implemented in subclasses.")
     
     def get_edges(self) -> list[tuple[tuple[int, int], tuple[int, int]]]:
         """
@@ -320,6 +323,7 @@ class Chiplet:
         Returns:
             edges (list[tuple[tuple[int, int], tuple[int, int]]]): The list of edges in the chiplet.
         """
+        raise NotImplementedError("This method should be implemented in subclasses.")
     
     def has_edge(self, edge: tuple[tuple[int, int], tuple[int, int]]) -> bool:
         """
@@ -331,6 +335,7 @@ class Chiplet:
         Returns:
             bool: True if the edge is in the chiplet, False otherwise.
         """
+        raise NotImplementedError("This method should be implemented in subclasses.")
     
     def get_distance(self, source: tuple[int, int], target: tuple[int, int]) -> int:
         """
@@ -343,6 +348,7 @@ class Chiplet:
         Returns:
             distance (int): The distance between the two nodes, which is the number of edges in the shortest path.
         """
+        raise NotImplementedError("This method should be implemented in subclasses.")
 
     def get_capacity(self) -> int:
         """
@@ -351,6 +357,7 @@ class Chiplet:
         Returns:
             capacity (int): the capacity of the chiplet
         """
+        raise NotImplementedError("This method should be implemented in subclasses.")
 
 class ComputeChiplet(Chiplet):
     """
@@ -599,6 +606,7 @@ class FuncArea:
         Returns:
             nodes (list[tuple[int, int]]): The list of nodes in the function area.
         """
+        raise NotImplementedError("This method should be implemented in subclasses.")
 
     def has_node(self, node: tuple[int, int]) -> bool:
         """
@@ -610,6 +618,7 @@ class FuncArea:
         Returns:
             bool: True if the node is in the function area, False otherwise.
         """
+        raise NotImplementedError("This method should be implemented in subclasses.")
     
     def determine_chiplets(self):
         """

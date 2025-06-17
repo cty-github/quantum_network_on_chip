@@ -115,13 +115,13 @@ class LayoutAgent:
         """
         print("Designing layout...")
         state, _ = self.env.reset()
-        print("Initial score: ", self.env.estimate())
+        print("Initial score:", self.env.estimate())
         done = False
         while not done:
             action, _ = self.model.predict(state, deterministic=True)
             state, _, done, _, _ = self.env.step(action, record=True)
-            print("New action: ", action)
-            print("New score: ", self.env.estimate())
+            print("New action:", action)
+            print("New score:", self.env.estimate())
         return self.env.best_package
 
     def load(self, filepath: str = None):

@@ -1,3 +1,4 @@
+import logging
 import pickle
 import networkx as nx
 from copy import deepcopy
@@ -76,9 +77,10 @@ class GhzPreparation(BoardingAction):
         self.logic_qubits = logic_qubits
         self.source_physical_qubits = source_physical_qubits
         self.target_physical_qubits = target_physical_qubits
+        logging.info(f"Transformed {self}")
     
     def __repr__(self):
-        return f"{str(self.__class__.__name__)} for logic qubits {self.logic_qubits} on physical qubits {self.source_physical_qubits}, which will be transport to physical qubits {self.target_physical_qubits}."
+        return f"{self.__class__.__name__} {self.id}: Prepare {self.qubit_num}-GHZ state for logic qubits {self.logic_qubits} on physical qubits {self.source_physical_qubits}."
 
 class Board(BoardingAction):
     """
@@ -103,9 +105,10 @@ class Board(BoardingAction):
         self.logic_qubit = logic_qubit
         self.station = station
         self.platform = platform
+        logging.info(f"Transformed {self}")
     
     def __repr__(self):
-        return f"{str(self.__class__.__name__)} of logic qubit {self.logic_qubit} from physical qubit {self.platform} to physical qubit {self.station}."
+        return f"{self.__class__.__name__} {self.id}: Board logic qubit {self.logic_qubit} from physical qubit {self.platform} to physical qubit {self.station}."
 
 class Alight(BoardingAction):
     """
@@ -130,9 +133,10 @@ class Alight(BoardingAction):
         self.logic_qubit = logic_qubit
         self.station = station
         self.platform = platform
+        logging.info(f"Transformed {self}")
     
     def __repr__(self):
-        return f"{str(self.__class__.__name__)} of logic qubit {self.logic_qubit} from physical qubit {self.station} to physical qubit {self.platform}."
+        return f"{self.__class__.__name__} {self.id}: Alight logic qubit {self.logic_qubit} from physical qubit {self.station} to physical qubit {self.platform}."
 
 class Interchange(BoardingAction):
     """
@@ -154,9 +158,10 @@ class Interchange(BoardingAction):
         super().__init__()
         self.logic_qubit = logic_qubit
         self.interchange = interchange
+        logging.info(f"Transformed {self}")
     
     def __repr__(self):
-        return f"{str(self.__class__.__name__)} of logic qubit {self.logic_qubit} between physical qubits {self.interchange}."
+        return f"{self.__class__.__name__} {self.id}: Interchange logic qubit {self.logic_qubit} between physical qubits {self.interchange}."
 
 class Transport(RidingAction):
     """
@@ -181,9 +186,10 @@ class Transport(RidingAction):
         self.logic_qubit = logic_qubit
         self.source_physical_qubit = source_physical_qubit
         self.target_physical_qubit = target_physical_qubit
+        logging.info(f"Transformed {self}")
     
     def __repr__(self):
-        return f"{str(self.__class__.__name__)} of logic qubit {self.logic_qubit} from physical qubit {self.source_physical_qubit} to physical qubit {self.target_physical_qubit}."
+        return f"{self.__class__.__name__} {self.id}: Transport logic qubit {self.logic_qubit} from physical qubit {self.source_physical_qubit} to physical qubit {self.target_physical_qubit}."
 
 class Teleport(RidingAction):
     """
@@ -208,9 +214,10 @@ class Teleport(RidingAction):
         self.logic_qubit = logic_qubit
         self.platform = platform
         self.control_flag = control_flag
+        logging.info(f"Transformed {self}")
     
     def __repr__(self):
-        return f"{str(self.__class__.__name__)} for logic qubit {self.logic_qubit} on physical qubit {self.platform}."
+        return f"{self.__class__.__name__} {self.id}: Teleport logic qubit {self.logic_qubit} on physical qubit {self.platform}."
 
 class Enter(RidingAction):
     """
@@ -235,9 +242,10 @@ class Enter(RidingAction):
         self.logic_qubit = logic_qubit
         self.platform = platform
         self.register = register
+        logging.info(f"Transformed {self}")
     
     def __repr__(self):
-        return f"{str(self.__class__.__name__)} of logic qubit {self.logic_qubit} to physical qubit {self.platform} from physical qubit {self.register}."
+        return f"{self.__class__.__name__} {self.id}: Enter logic qubit {self.logic_qubit} to physical qubit {self.platform} from physical qubit {self.register}."
     
 class Exit(RidingAction):
     """
@@ -262,9 +270,10 @@ class Exit(RidingAction):
         self.logic_qubit = logic_qubit
         self.platform = platform
         self.register = register
+        logging.info(f"Transformed {self}")
     
     def __repr__(self):
-        return f"{str(self.__class__.__name__)} of logic qubit {self.logic_qubit} from physical qubit {self.platform} to physical qubit {self.register}."
+        return f"{self.__class__.__name__} {self.id}: Exit logic qubit {self.logic_qubit} from physical qubit {self.platform} to physical qubit {self.register}."
 
 class SwapGate(RidingAction):
     """
@@ -286,9 +295,10 @@ class SwapGate(RidingAction):
         super().__init__()
         self.qubit_u = qubit_u
         self.qubit_v = qubit_v
+        logging.info(f"Transformed {self}")
         
     def __repr__(self):
-        return f"{str(self.__class__.__name__)} between physical qubits {self.qubit_u} and {self.qubit_v}."
+        return f"{self.__class__.__name__} {self.id}: Swap gate between physical qubits {self.qubit_u} and {self.qubit_v}."
 
 class DirectGate(RidingAction):
     """
@@ -310,9 +320,10 @@ class DirectGate(RidingAction):
         super().__init__()
         self.logic_gate = logic_gate
         self.module = module
+        logging.info(f"Transformed {self}")
     
     def __repr__(self):
-        return f"{str(self.__class__.__name__)} {self.logic_gate} on module {self.module}."
+        return f"{self.__class__.__name__} {self.id}: {self.logic_gate} on module {self.module}."
 
 
 class CircuitStage:
@@ -355,6 +366,15 @@ class CircuitStage:
         self.occupied_platforms = occupied_platforms
         self.holding_ancilla_plats = holding_ancilla_plats
 
+    def get_action_num(self) -> int:
+        """
+        Get the number of actions in the stage.
+
+        Returns:
+            int: The number of actions in the stage.
+        """
+        raise NotImplementedError("This method should be implemented in subclasses.")
+
 class BoardingStage(CircuitStage):
     """
     Represents the boarding stage in the quantum circuit.
@@ -393,6 +413,9 @@ class BoardingStage(CircuitStage):
         self.potential_free_platforms = dict()
         self.paired_platforms_to_free = set()
 
+    def get_action_num(self) -> int:
+        return len(self.boarding_actions)
+
     def add_ghz_action(self, action: GhzPreparation) -> bool:
         """
         Add a GhzPreparation to the boarding stage.
@@ -413,6 +436,7 @@ class BoardingStage(CircuitStage):
         self.occupied_balises.update(action.source_physical_qubits)
 
         self.boarding_actions.append(action)
+        logging.info(f"Added {action.__class__.__name__} {action.id}.")
         return True
 
     def add_board_action(self, action: Board) -> bool:
@@ -444,6 +468,7 @@ class BoardingStage(CircuitStage):
             self.occupied_balises.add(action.station)
 
         self.boarding_actions.append(action)
+        logging.info(f"Added {action.__class__.__name__} {action.id}.")
         return True
     
     def add_alight_action(self, action: Alight) -> bool:
@@ -475,6 +500,7 @@ class BoardingStage(CircuitStage):
             self.occupied_platforms.add(action.platform)
 
         self.boarding_actions.append(action)
+        logging.info(f"Added {action.__class__.__name__} {action.id}.")
         return True
     
     def add_interchange_action(self, action: Interchange) -> bool:
@@ -506,6 +532,7 @@ class BoardingStage(CircuitStage):
             self.occupied_balises.add(action.interchange[1])
 
         self.boarding_actions.append(action)
+        logging.info(f"Added {action.__class__.__name__} {action.id}.")
         return True
     
 class RidingStage(CircuitStage):
@@ -549,7 +576,10 @@ class RidingStage(CircuitStage):
         self.paired_platforms_to_free = set()
         self.potential_free_registers = dict()
         self.paired_registers_to_free = set()
-    
+
+    def get_action_num(self) -> int:
+        return len(self.riding_actions)
+
     def add_transport_action(self, action: Transport) -> bool:
         """
         Add a Transport to the operating stage.
@@ -581,6 +611,7 @@ class RidingStage(CircuitStage):
             self.occupied_balises.add(action.target_physical_qubit)
         
         self.riding_actions.append(action)
+        logging.info(f"Added {action.__class__.__name__} {action.id}.")
         return True
     
     def add_teleport_action(self, action: Teleport) -> bool:
@@ -602,6 +633,7 @@ class RidingStage(CircuitStage):
         self.holding_ancilla_plats.remove(action.platform)
 
         self.riding_actions.append(action)
+        logging.info(f"Added {action.__class__.__name__} {action.id}.")
         return True
 
     def add_enter_action(self, action: Enter) -> bool:
@@ -634,6 +666,7 @@ class RidingStage(CircuitStage):
         self.curr_l2p_map[action.logic_qubit] = None
         
         self.riding_actions.append(action)
+        logging.info(f"Added {action.__class__.__name__} {action.id}.")
         return True
     
     def add_exit_action(self, action: Exit) -> bool:
@@ -666,6 +699,7 @@ class RidingStage(CircuitStage):
         self.curr_p2l_map[action.register] = action.logic_qubit
 
         self.riding_actions.append(action)
+        logging.info(f"Added {action.__class__.__name__} {action.id}.")
         return True
     
     def add_swap_action(self, action: SwapGate) -> bool:
@@ -692,6 +726,7 @@ class RidingStage(CircuitStage):
             self.curr_l2p_map[logic_qubit_v] = action.qubit_u
 
         self.riding_actions.append(action)
+        logging.info(f"Added {action.__class__.__name__} {action.id}.")
         return True
 
     def add_direct_action(self, action: DirectGate) -> bool:
@@ -715,6 +750,7 @@ class RidingStage(CircuitStage):
                "Control and target qubits should be adjacent on the compute module."
 
         self.riding_actions.append(action)
+        logging.info(f"Added {action.__class__.__name__} {action.id}.")
         return True
 
 
@@ -797,12 +833,17 @@ class Circuit:
             assert len(self.stages) % 2 == 0, "Boarding stage should have even id"
         else:
             assert len(self.stages) % 2 == 1, "Operating stage should have odd id"
+        if len(self.stages) > 1:
+            assert self.stages[-1].get_action_num() + self.stages[-2].get_action_num() > 0, "The last two stages should have at least one action."
         if board_flag:
             new_stage = BoardingStage(self.curr_l2p_map, self.curr_p2l_map, self.occupied_balises, self.occupied_platforms, self.holding_ancilla_plats)
         else:
             new_stage = RidingStage(self.curr_l2p_map, self.curr_p2l_map, self.occupied_balises, self.occupied_platforms, self.holding_ancilla_plats)
         assert new_stage.id == len(self.stages), "Stage id should be equal to the length of existing stages"
         self.stages.append(new_stage)
+        logging.info("")
+        logging.info(f"Extended circuit with {new_stage.__class__.__name__} {new_stage.id}.")
+        logging.info(f"Current qubit mapping: {new_stage.curr_l2p_map}")
         return new_stage
     
     def estimate_fidelity(self) -> float:
@@ -861,23 +902,23 @@ class Circuit:
             depth += stage_depth
         return depth
 
-    def load(self, path: str):
+    def load(self, filepath: str):
         """
         Load the package from a file.
 
         Args:
-            path (str): The path to load the package.
+            filepath (str): The path to load the package.
         """
-        with open(path, "rb") as f:
+        with open(filepath, "rb") as f:
             package = pickle.load(f)
             self.__dict__.update(package.__dict__)
 
-    def save(self, path: str):
+    def save(self, filepath: str):
         """
         Save the package to a file.
 
         Args:
-            path (str): The path to save the package.
+            filepath (str): The path to save the package.
         """
-        with open(path, "wb") as f:
+        with open(filepath, "wb") as f:
             pickle.dump(self, f)
