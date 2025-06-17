@@ -1,8 +1,10 @@
 import os
+import io
 import numpy as np
 from PIL import Image
 from datetime import datetime
 import networkx as nx
+import matplotlib.pyplot as plt
 
 color_pool = ['#D9D9D9', '#C9E0E5', '#BED2C6', '#FFD19D', '#FEB29B', '#ED8687']
 
@@ -46,27 +48,52 @@ def get_unique_file_save_path(dir: str, prefix: str, ext: str) -> str:
     index = len([f for f in os.listdir(dir) if f.startswith(prefix) and f.endswith(ext)])
     return f"{dir}{prefix}{index}{ext}"
 
-def make_gif(dir: str, prefix, ext: str, filename: str, duration: int = 1000):
+def make_save_gif_file(filedir: str, prefix: str, ext: str, filename: str, duration: int = 1000):
     """
     Make gif with figures in the director with given prefix.
 
     Args:
-        dir (str): The director saving the figures.
+        filedir (str): The director saving the figures.
         prefix (str): The prefix of the figures.
         ext (str): The ext of the figures.
         filename (str): The filename of gif.
         duration (int): The duration of each frame in the gif.
     """
-
-    files = sorted([f for f in os.listdir(dir) if f.startswith(prefix) and f.endswith(ext)])
-    figures = [Image.open(os.path.join(dir, f)) for f in files]
-    figures[0].save(
-        f"{dir}{filename}",
+    files = sorted([f for f in os.listdir(filedir) if f.startswith(prefix) and f.endswith(ext)])
+    images = [Image.open(os.path.join(filedir, f)) for f in files]
+    images[0].save(
+        os.path.join(filedir, filename),
         save_all=True,
-        append_images=figures[1:],
+        append_images=images[1:],
         duration=duration,
         loop=0
     )
+
+def make_save_gif_figure(figures: list[plt.Figure], filepath: str, duration: int = 1000):
+    """
+    Make gif with given figures.
+
+    Args:
+        figures (list[plt.Figure]): List of matplotlib figures to be included in the gif.
+        filepath (str): The file path to save the gif.
+        duration (int): The duration of each frame in the gif.
+    """
+    images = []
+    for fig in figures:
+        buf = io.BytesIO()
+        fig.savefig(buf, format="jpg", bbox_inches="tight")  # Save to buffer
+        buf.seek(0)
+        img = Image.open(buf).convert("RGB")  # Convert to RGB to avoid mode issues
+        images.append(img)
+        buf.close()
+    if images:
+        images[0].save(
+            filepath,
+            save_all=True,
+            append_images=images[1:],
+            duration=duration,
+            loop=0
+        )
 
 def find_longest_topo_distance(G: nx.DiGraph) -> int:
     """

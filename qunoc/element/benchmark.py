@@ -1,6 +1,8 @@
 import networkx as nx
 from random import sample
 import matplotlib.pyplot as plt
+import qiskit
+
 from ..utils.utils import find_longest_topo_distance
 
 
@@ -90,74 +92,105 @@ class Program:
         self.data_qubit_num = data_qubit_num
         self.logic_gates = logic_gates
 
-        recent_qubit_info = {i: {"recent_role": None, "recent_ctrls": [], "recent_other": None} for i in range(data_qubit_num)}
-        self.gate_depend_graph: nx.DiGraph = nx.DiGraph()
-        for gate in logic_gates:
-            if isinstance(gate, Barrier):
-                self.gate_depend_graph.add_node(gate.id, gate=gate)
-                qubit = gate.qubit
-                if recent_qubit_info[qubit]["recent_role"]:
-                    if recent_qubit_info[qubit]["recent_role"] == "control":
-                        for ctrl_gate_id in recent_qubit_info[qubit]["recent_ctrls"]:
-                            self.gate_depend_graph.add_edge(ctrl_gate_id, gate.id)
-                    else:
-                        self.gate_depend_graph.add_edge(recent_qubit_info[qubit]["recent_other"], gate.id)
-                recent_qubit_info[qubit]["recent_role"] = "barrier"
-                recent_qubit_info[qubit]["recent_ctrls"] = []
-                recent_qubit_info[qubit]["recent_other"] = gate.id
-            elif isinstance(gate, Control):
-                self.gate_depend_graph.add_node(gate.id, gate=gate)
-                control = gate.control_qubit
-                if recent_qubit_info[control]["recent_role"]:
-                    if recent_qubit_info[control]["recent_role"] == "control":
-                        if recent_qubit_info[control]["recent_other"]:
-                            self.gate_depend_graph.add_edge(recent_qubit_info[control]["recent_other"], gate.id)
-                    else:
-                        self.gate_depend_graph.add_edge(recent_qubit_info[control]["recent_other"], gate.id)
-                recent_qubit_info[control]["recent_role"] = "control"
-                recent_qubit_info[control]["recent_ctrls"].append(gate.id)
-                target = gate.target_qubit
-                if recent_qubit_info[target]["recent_role"]:
-                    if recent_qubit_info[target]["recent_role"] == "control":
-                            for ctrl_gate_id in recent_qubit_info[target]["recent_ctrls"]:
-                                self.gate_depend_graph.add_edge(ctrl_gate_id, gate.id)
-                    else:
-                        self.gate_depend_graph.add_edge(recent_qubit_info[target]["recent_other"], gate.id)
-                recent_qubit_info[target]["recent_role"] = "target"
-                recent_qubit_info[target]["recent_ctrls"] = []
-                recent_qubit_info[target]["recent_other"] = gate.id
-            else:
-                raise ValueError("Unknown gate type")
-        
-        for gate in self.logic_gates:
-            if isinstance(gate, Barrier):
-                pred = list(self.gate_depend_graph.predecessors(gate.id))
-                succ = list(self.gate_depend_graph.successors(gate.id))
-                for p in pred:
-                    for s in succ:
-                        if p != s:
-                            self.gate_depend_graph.add_edge(p, s)
-                self.gate_depend_graph.remove_node(gate.id)
-
-        assert nx.is_directed_acyclic_graph(self.gate_depend_graph)
+        self.get_gate_depend_graph()
+        self.get_qiskit_circuit()
     
     def __repr__(self):
-        return f"{self.algo_name} program: " + ", ".join([str(self.gate_depend_graph.nodes[id]["gate"]) for id in nx.topological_sort(self.gate_depend_graph)])
+        return f"{self.algo_name.capitalize()}_{self.data_qubit_num}_{self.__class__.__name__}"
 
-    def draw(self, 
+    def get_gate_depend_graph(self) -> nx.DiGraph:
+        """
+        Get the directed acyclic graph representing dependencies between gates.
+
+        Returns:
+            nx.DiGraph: The gate dependency graph.
+        """
+        if not hasattr(self, "gate_depend_graph"):
+            recent_qubit_info = {i: {"recent_role": None, "recent_ctrls": [], "recent_other": None} for i in range(self.data_qubit_num)}
+            self.gate_depend_graph: nx.DiGraph = nx.DiGraph()
+            for gate in self.logic_gates:
+                if isinstance(gate, Barrier):
+                    self.gate_depend_graph.add_node(gate.id, gate=gate)
+                    qubit = gate.qubit
+                    if recent_qubit_info[qubit]["recent_role"]:
+                        if recent_qubit_info[qubit]["recent_role"] == "control":
+                            for ctrl_gate_id in recent_qubit_info[qubit]["recent_ctrls"]:
+                                self.gate_depend_graph.add_edge(ctrl_gate_id, gate.id)
+                        else:
+                            self.gate_depend_graph.add_edge(recent_qubit_info[qubit]["recent_other"], gate.id)
+                    recent_qubit_info[qubit]["recent_role"] = "barrier"
+                    recent_qubit_info[qubit]["recent_ctrls"] = []
+                    recent_qubit_info[qubit]["recent_other"] = gate.id
+                elif isinstance(gate, Control):
+                    self.gate_depend_graph.add_node(gate.id, gate=gate)
+                    control = gate.control_qubit
+                    if recent_qubit_info[control]["recent_role"]:
+                        if recent_qubit_info[control]["recent_role"] == "control":
+                            if recent_qubit_info[control]["recent_other"]:
+                                self.gate_depend_graph.add_edge(recent_qubit_info[control]["recent_other"], gate.id)
+                        else:
+                            self.gate_depend_graph.add_edge(recent_qubit_info[control]["recent_other"], gate.id)
+                    recent_qubit_info[control]["recent_role"] = "control"
+                    recent_qubit_info[control]["recent_ctrls"].append(gate.id)
+                    target = gate.target_qubit
+                    if recent_qubit_info[target]["recent_role"]:
+                        if recent_qubit_info[target]["recent_role"] == "control":
+                                for ctrl_gate_id in recent_qubit_info[target]["recent_ctrls"]:
+                                    self.gate_depend_graph.add_edge(ctrl_gate_id, gate.id)
+                        else:
+                            self.gate_depend_graph.add_edge(recent_qubit_info[target]["recent_other"], gate.id)
+                    recent_qubit_info[target]["recent_role"] = "target"
+                    recent_qubit_info[target]["recent_ctrls"] = []
+                    recent_qubit_info[target]["recent_other"] = gate.id
+                else:
+                    raise ValueError("Unknown gate type")
+            
+            for gate in self.logic_gates:
+                if isinstance(gate, Barrier):
+                    pred = list(self.gate_depend_graph.predecessors(gate.id))
+                    succ = list(self.gate_depend_graph.successors(gate.id))
+                    for p in pred:
+                        for s in succ:
+                            if p != s:
+                                self.gate_depend_graph.add_edge(p, s)
+                    self.gate_depend_graph.remove_node(gate.id)
+
+        assert nx.is_directed_acyclic_graph(self.gate_depend_graph)
+        return self.gate_depend_graph
+    
+    def get_qiskit_circuit(self) -> qiskit.QuantumCircuit:
+        """
+        Convert the program to a Qiskit quantum circuit.
+
+        Returns:
+            qiskit.QuantumCircuit: The Qiskit quantum circuit representation of the program.
+        """
+        if not hasattr(self, "qiskit_circuit"):
+            self.qiskit_circuit = qiskit.QuantumCircuit(self.data_qubit_num)
+            for gate in self.logic_gates:
+                if isinstance(gate, Barrier):
+                    self.qiskit_circuit.barrier(gate.qubit)
+                elif isinstance(gate, Control):
+                    self.qiskit_circuit.cx(gate.control_qubit, gate.target_qubit)
+                else:
+                    raise ValueError("Unknown gate type")
+        return self.qiskit_circuit
+
+    def draw_depend(self, 
         marginrate: float = 0.2, 
         markersize: float = 5, 
         linewidth_t: float = 1, 
         linewidth_b: float = 2, 
-        show: bool = True, 
-        save_path: str = None, 
-    ):
+    ) -> plt.Figure:
         """
         Draw the gate dependency graph to present the program.
+
+        Returns:
+            plt.Figure: A matplotlib figure representing the gate dependency graph.
         """
         pos = nx.spring_layout(self.gate_depend_graph)
         figsize = (find_longest_topo_distance(self.gate_depend_graph), find_longest_topo_distance(self.gate_depend_graph))
-        plt.figure(figsize=figsize)
+        fig = plt.figure(figsize=figsize)
         nx.draw(
             self.gate_depend_graph, 
             pos, 
@@ -178,14 +211,24 @@ class Program:
             font_size=10,
             font_color='black'
         )
-        plt.title(f"Program {self.algo_name}-{self.data_qubit_num}")
-        if show:
-            plt.show()
-        if save_path:
-            plt.savefig(save_path)
         plt.close()
+        return fig
+    
+    def draw_circuit(self,
+        marginrate: float = 0.2,
+        markersize: float = 5,
+        linewidth_t: float = 1,
+        linewidth_b: float = 2,
+    ) -> plt.Figure:
+        """
+        Draw the circuit representation of the program.
 
-def VQE(data_qubit_num: int) -> Program:
+        Returns:
+            plt.Figure: A matplotlib figure representing the circuit.
+        """
+        return self.qiskit_circuit.draw(output='mpl')
+
+def vqe(data_qubit_num: int) -> Program:
     """
     Generate a VQE program.
 
@@ -201,9 +244,9 @@ def VQE(data_qubit_num: int) -> Program:
         logic_gates.extend([Barrier(j) for j in range(data_qubit_num-1)])
         control_gates = [Control(i, j) for j in range(i+1, data_qubit_num)]
         logic_gates.extend(control_gates)
-    return Program("VQE", data_qubit_num, logic_gates)
+    return Program("vqe", data_qubit_num, logic_gates)
 
-def QFT(data_qubit_num: int) -> Program:
+def qft(data_qubit_num: int) -> Program:
     """
     Generate a QFT program.
 
@@ -219,9 +262,9 @@ def QFT(data_qubit_num: int) -> Program:
         logic_gates.extend([Barrier(j) for j in range(data_qubit_num-1)])
         control_gates = [Control(j, i) for j in range(i+1, data_qubit_num)]
         logic_gates.extend(control_gates)
-    return Program("QFT", data_qubit_num, logic_gates)
+    return Program("qft", data_qubit_num, logic_gates)
 
-def QAOA(data_qubit_num: int, percentage: float = 0.5, blocklayer: int = 1) -> Program:
+def qaoa(data_qubit_num: int, percentage: float = 0.5, blocklayer: int = 1) -> Program:
     """
     Generate a QAOA program.
 
@@ -241,9 +284,9 @@ def QAOA(data_qubit_num: int, percentage: float = 0.5, blocklayer: int = 1) -> P
         logic_gates.append(Control(*gate))
         if (i+1) % (data_qubit_num*blocklayer) == 0 and (i+1) != len(control_gates):
             logic_gates.extend([Barrier(j) for j in range(data_qubit_num-1)])
-    return Program("QAOA", data_qubit_num, logic_gates)
+    return Program("qaoa", data_qubit_num, logic_gates)
 
-def BV(data_qubit_num: int, percentage: float = 0.5) -> Program:
+def bv(data_qubit_num: int, percentage: float = 0.5) -> Program:
     """
     Generate a BV program.
 
@@ -261,4 +304,4 @@ def BV(data_qubit_num: int, percentage: float = 0.5) -> Program:
     logic_gates = []
     for gate in control_gates:
         logic_gates.append(Control(*gate))
-    return Program("BV", data_qubit_num, logic_gates)
+    return Program("bv", data_qubit_num, logic_gates)

@@ -970,13 +970,13 @@ class Router:
         """
         Draw the gate dependency graph of the program.
         """
-        self.program.draw(
+        self.program.draw_depend(
             marginrate=marginrate, 
             markersize=markersize, 
             linewidth_t=linewidth_t, 
             linewidth_b=linewidth_b, 
             show=show, 
-            save_path=save_path
+            filepath=save_path
         )
 
     def draw_block(self, 

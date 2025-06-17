@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn as nn
 import gymnasium as gym
@@ -5,7 +6,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from stable_baselines3.common.policies import ActorCriticPolicy
 
-from ..utils.utils import get_unique_file_save_path, make_gif
+from ..utils.utils import get_unique_file_save_path, make_save_gif_file
 from .env import QuNoCEnv
 from ..element.package import Package
 
@@ -103,14 +104,11 @@ class LayoutAgent:
         """
         print("Training agent...")
         self.model.learn(total_timesteps = total_timesteps)
-        self.save(f"{self.result_dir}layout_agent.pth")
+        self.save()
     
-    def design(self, save_process: bool = False) -> Package:
+    def design(self) -> Package:
         """
         Design the layout using the trained agent.
-
-        Args:
-            save_process (bool): Whether to save the design process.
 
         Returns:
             Package: The designed package.
@@ -118,34 +116,28 @@ class LayoutAgent:
         print("Designing layout...")
         state, _ = self.env.reset()
         print("Initial score: ", self.env.estimate())
-        if save_process:
-            try:
-                self.env.render("machine", get_unique_file_save_path(self.result_dir, "rl_process_", ".jpg"))
-            except Exception as e:
-                print("Error in drawing qubits: ", e)
         done = False
         while not done:
             action, _ = self.model.predict(state, deterministic=True)
-            state, _, done, _, _ = self.env.step(action)
+            state, _, done, _, _ = self.env.step(action, record=True)
             print("New action: ", action)
             print("New score: ", self.env.estimate())
-            if save_process:
-                try:
-                    self.env.render("machine", get_unique_file_save_path(self.result_dir, "rl_process_", ".jpg"))
-                except Exception as e:
-                    print("Error in drawing qubits: ", e)
-        if save_process:
-            make_gif(self.result_dir, "rl_process_", ".jpg", "rl_process.gif")
         return self.env.best_package
 
-    def load(self, path: str):
+    def load(self, filepath: str = None):
         """
         Load a pre-trained PPO model from a file.
-        """
-        self.model.load(path)
 
-    def save(self, path: str):
+        Args:
+            filepath (str): Path to the pre-trained model file. If None, uses the default path.
+        """
+        self.model.load(filepath if filepath else os.path.join(self.result_dir, "layout_agent.pth"))
+
+    def save(self, filepath: str = None):
         """
         Save the PPO model to a file.
+
+        Args:
+            filepath (str): Path to save the model file. If None, uses the default path.
         """
-        self.model.save(path)
+        self.model.save(filepath if filepath else os.path.join(self.result_dir, "layout_agent.pth"))

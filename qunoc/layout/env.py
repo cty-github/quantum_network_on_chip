@@ -14,6 +14,7 @@ class QuNoCEnv(gym.Env):
     Attributes:
         package_size (tuple[int, int]): Size of the package to design.
         fab_model (FabricateModel): Fabrication model for the quantum chiplet.
+        result_dir (str): Directory to save the results.
         patience (int): Number of steps to wait before stopping if no improvement.
 
         package (Package): The package to perform training.
@@ -35,6 +36,7 @@ class QuNoCEnv(gym.Env):
     def __init__(self, 
         package_size: tuple[int, int] = (100, 100), 
         fab_model: FabricateModel = FabricateModel(), 
+        result_dir: str = None,
         patience: int = 10, 
     ):
         """
@@ -43,11 +45,13 @@ class QuNoCEnv(gym.Env):
         Args:
             package_size (tuple[int, int]): Size of the package to design.
             fab_model (FabricateModel): Fabrication model for the quantum chiplet.
+            result_dir (str): Directory to save the results.
             patience (int): Number of steps to wait before stopping if no improvement.
         """
         super(QuNoCEnv, self).__init__()
         self.package_size = package_size
         self.fab_model = fab_model
+        self.result_dir = result_dir
         self.patience = patience
         
         low_per_channel = np.array([0, 0, 0, 0, 0], dtype=np.int32)
@@ -79,19 +83,19 @@ class QuNoCEnv(gym.Env):
 
     def reset(self, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[np.ndarray, dict[str, Any]]:
         super().reset(seed=seed, options=options)
-        self.package = Package(self.package_size, self.fab_model, design_strategy="rl")
+        self.package = Package(self.package_size, self.fab_model, design_strategy="rl", result_dir=self.result_dir)
         self.last_score = self.estimate()
         self.no_improve_steps = 0
         self.best_score = self.last_score
         self.best_package = self.package
         return self.get_current_state(), {}
 
-    def step(self, action: np.ndarray) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
+    def step(self, action: np.ndarray, record: bool = False) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
         action = self.deserialize_action(action)
         if action is None:
             reward = -1e8
         else:
-            self.package.design_module_top_down(**action)
+            self.package.design_module_top_down(**action, record=record)
             score = self.estimate()
             reward = score - self.last_score
             self.last_score = score
@@ -112,8 +116,12 @@ class QuNoCEnv(gym.Env):
             {},
         )
 
-    def render(self, mode = "human", save_path: str = None):
-        self.package.draw_qubits(show = True if mode == "human" else False, save_path = save_path)
+    def render(self, mode = "human", filepath: str = None):
+        fig = self.package.draw_qubits()
+        if mode == "human":
+            fig.show()
+        if filepath:
+            fig.savefig(filepath, bbox_inches="tight")
 
     def estimate(self) -> float:
         """
@@ -122,7 +130,6 @@ class QuNoCEnv(gym.Env):
         Returns:
             float: The evaluation score of the package.
         """
-        self.package.complete_package()
         return self.package.estimate_score()
 
     def deserialize_action(self, action_vector: list) -> dict | None:
