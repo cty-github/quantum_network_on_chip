@@ -1096,7 +1096,82 @@ class ComputeModule(FuncArea):
         """
         assert self.has_node(source), f"source {source} is not in the compute module {self}"
         assert self.has_node(target), f"target {target} is not in the compute module {self}"
-        path = []
+        path = [source]
+        if source[0] == self.left[0]:
+            inner_source = (source[0] + 1, source[1])
+        elif source[0] == self.right[0]:
+            inner_source = (source[0] - 1, source[1])
+        if source[1] == self.top[0]:
+            inner_source = (inner_source[0], source[1] + 1)
+        elif source[1] == self.bottom[0]:
+            inner_source = (inner_source[0], source[1] - 1)
+        
+        if target[0] == self.left[0]:
+            inner_target = (target[0] + 1, target[1])
+        elif target[0] == self.right[0]:
+            inner_target = (target[0] - 1, target[1])
+        if target[1] == self.top[0]:
+            inner_target = (inner_target[0], target[1] + 1)
+        elif target[1] == self.bottom[0]:
+            inner_target = (inner_target[0], target[1] - 1)
+
+        source_chiplet = self.get_node_chiplet(source)
+        target_chiplet = self.get_node_chiplet(target)
+        if source_chiplet == target_chiplet:
+            if source[0] < target[0]:
+                for i in range(source[0] + 1, target[0] + 1):
+                    path.append((i, source[1]))
+            elif source[0] > target[0]:
+                for i in range(source[0] - 1, target[0] - 1, -1):
+                    path.append((i, source[1]))
+            if source[1] < target[1]:
+                for i in range(source[1] + 1, target[1] + 1):
+                    path.append((target[0], i))
+            elif source[1] > target[1]:
+                for i in range(source[1] - 1, target[1] - 1, -1):
+                    path.append((target[0], i))
+        else:
+            source_crossroad = self.get_nearest_inter_coupler_crossroad(source)
+            target_crossroad = self.get_nearest_inter_coupler_crossroad(target)
+            # swap from source to source crossroad
+            if source[0] < source_crossroad[0]:
+                for i in range(source[0] + 1, source_crossroad[0] + 1):
+                    path.append((i, source[1]))
+            elif source[0] > source_crossroad[0]:
+                for i in range(source[0] - 1, source_crossroad[0] - 1, -1):
+                    path.append((i, source[1]))
+            if source[1] < source_crossroad[1]:
+                for i in range(source[1] + 1, source_crossroad[1] + 1):
+                    path.append((source_crossroad[0], i))
+            elif source[1] > source_crossroad[1]:
+                for i in range(source[1] - 1, source_crossroad[1] - 1, -1):
+                    path.append((source_crossroad[0], i))
+            # swap from source crossroad to target crossroad
+            if source_crossroad[0] < target_crossroad[0]:
+                for i in range(source_crossroad[0] + 1, target_crossroad[0] + 1):
+                    path.append((i, source_crossroad[1]))
+            elif source_crossroad[0] > target_crossroad[0]:
+                for i in range(source_crossroad[0] - 1, target_crossroad[0] - 1, -1):
+                    path.append((i, source_crossroad[1]))
+            if source_crossroad[1] < target_crossroad[1]:
+                for i in range(source_crossroad[1] + 1, target_crossroad[1] + 1):
+                    path.append((target_crossroad[0], i))
+            elif source_crossroad[1] > target_crossroad[1]:
+                for i in range(source_crossroad[1] - 1, target_crossroad[1] - 1, -1):
+                    path.append((target_crossroad[0], i))
+            # swap from target crossroad to target
+            if target_crossroad[0] < target[0]:
+                for i in range(target_crossroad[0] + 1, target[0] + 1):
+                    path.append((i, target_crossroad[1]))
+            elif target_crossroad[0] > target[0]:
+                for i in range(target_crossroad[0] - 1, target[0] - 1, -1):
+                    path.append((i, target_crossroad[1]))
+            if target_crossroad[1] < target[1]:
+                for i in range(target_crossroad[1] + 1, target[1] + 1):
+                    path.append((target_crossroad[0], i))
+            elif target_crossroad[1] > target[1]:
+                for i in range(target_crossroad[1] - 1, target[1] - 1, -1):
+                    path.append((target_crossroad[0], i))
         return path
 
     def get_fidelity(self, source: tuple[int, int], target: tuple[int, int]) -> float:

@@ -59,7 +59,7 @@ def make_save_gif_file(filedir: str, prefix: str, ext: str, filename: str, durat
         filename (str): The filename of gif.
         duration (int): The duration of each frame in the gif.
     """
-    files = sorted([f for f in os.listdir(filedir) if f.startswith(prefix) and f.endswith(ext)])
+    files = sorted([f for f in os.listdir(filedir) if f.startswith(prefix) and f.endswith(ext)], key=lambda x: int(x[len(prefix):-len(ext)]))
     images = [Image.open(os.path.join(filedir, f)) for f in files]
     images[0].save(
         os.path.join(filedir, filename),

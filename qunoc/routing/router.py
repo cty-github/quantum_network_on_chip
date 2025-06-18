@@ -122,6 +122,7 @@ class Router:
     Attributes:
         package (Package): The package to be routed on.
         program (Program): The quantum program to be routed.
+        result_dir (str): The directory to save the routing results.
 
         init_l2p_map (dict[int, tuple[int, int]]): The initial mapping of logic qubits to physical qubits.
         init_p2l_map (dict[tuple[int, int], int]): The initial mapping of physical qubits to logic qubits.
@@ -136,20 +137,25 @@ class Router:
         circuit (Circuit): The physical quantum circuit after routing.
     """
 
-    def __init__(self, package: Package, program: Program):
+    def __init__(self, package: Package, program: Program, result_dir: str = None):
         """
         Initialize a Router.
 
         Args:
             package (Package): The package to be routed on.
             program (Program): The quantum program to be routed.
+            result_dir (str): The directory to save the routing results, default is None.
         """
         self.package = package
         self.program = program
+        self.result_dir = result_dir
 
         self.package_graph = package.package_graph
         self.metro_graph: nx.Graph = package.package_graph.subgraph(self.package.transfer_nodes)
         self.gate_depend_graph = program.gate_depend_graph
+
+        self.block_history: list[plt.Figure] = []
+        self.action_history: list[plt.Figure] = []
 
     def route_program_on_package(self) -> Circuit:
         """
@@ -182,7 +188,13 @@ class Router:
             self.init_p2l_map[self.init_l2p_map[i]] = i
         self.curr_l2p_map = deepcopy(self.init_l2p_map)
         self.curr_p2l_map = deepcopy(self.init_p2l_map)
+
         logging.info(f"Initial qubit mapping: {self.init_l2p_map}")
+        fig = self.draw_qubit_mapping("Initial Qubit Mapping")
+        fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
+        make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
+        self.block_history.append(fig)
+        self.action_history.append(fig)
 
     # Functions for compiling compute blocks and actions
     def compile_blocks_and_actions(self):
@@ -322,6 +334,11 @@ class Router:
         self.gate_depend_graph.nodes[local_gate.id]["block"] = local_block.id
         for pred_gate in self.gate_depend_graph.predecessors(local_gate.id):
             self.block_depend_graph.add_edge(self.gate_depend_graph.nodes[pred_gate]["block"], local_block.id)
+        
+        fig = self.draw_qubit_mapping_highlight([local_gate.control_qubit, local_gate.target_qubit], f"Construct LocalBlock {local_block.id}")
+        fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
+        make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
+        self.block_history.append(fig)
         return local_block
 
     def transform_local_block(self, local_block: LocalBlock):
@@ -335,6 +352,7 @@ class Router:
         local_gate = local_block.ctrl_gate
         compute_module = local_block.module
         swap_path = compute_module.get_swap_path(self.curr_l2p_map[local_gate.control_qubit], self.curr_l2p_map[local_gate.target_qubit])
+        logging.info(f"Swap path for {local_gate}: {swap_path}")
         for i in range(len(swap_path)-1):
             if i < len(swap_path)-2:
                 phy_qubit_u, phy_qubit_v = swap_path[i], swap_path[i+1]
@@ -360,6 +378,11 @@ class Router:
                 self.recent_logic_qubit_action_dict[local_gate.control_qubit] = direct_gate_act.id
                 self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[local_gate.target_qubit], direct_gate_act.id)
                 self.recent_logic_qubit_action_dict[local_gate.target_qubit] = direct_gate_act.id
+        
+        fig = self.draw_qubit_mapping_highlight([local_gate.control_qubit, local_gate.target_qubit], f"Transform LocalBlock {local_block.id}")
+        fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
+        make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
+        self.block_history.append(fig)
     
     def construct_tele_block(self, tele_gates: list[Control]) -> TeleBlock:
         """
@@ -385,6 +408,11 @@ class Router:
         for depend_block_id in depend_block_ids:
             assert depend_block_id != tele_block.id
             self.block_depend_graph.add_edge(depend_block_id, tele_block.id)
+
+        fig = self.draw_qubit_mapping_highlight([ctrl_qubit] + target_qubits, f"Construct TeleBlock {tele_block.id}")
+        fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
+        make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
+        self.block_history.append(fig)
         return tele_block
 
     def find_nearest_platform(self, physical_qubit: tuple[int, int]) -> tuple[int, int]:
@@ -407,6 +435,39 @@ class Router:
                 nearest_platform = platform
                 highest_fide = fide
         return nearest_platform
+    
+    def find_nearest_platforms(self, physical_qubits: list[tuple[int, int]]) -> list[tuple[int, int]]:
+        """
+        Find the nearest unoccupied platforms for a list of physical qubits.
+
+        Args:
+            physical_qubits (list[tuple[int, int]]): The list of coordinates of the physical qubits.
+
+        Return:
+            list[tuple[int, int]]: The list of coordinates of the nearest platforms (no repeat if possible).
+        """
+        nearest_platforms = []
+        for physical_qubit in physical_qubits:
+            compute_module = self.package.get_node_area(physical_qubit)
+            assert isinstance(compute_module, ComputeModule)
+            nearest_platform = None
+            highest_fide = 0
+            nearest_platform_vacant = None
+            highest_fide_vacant = 0
+            for platform in compute_module.get_platforms():
+                _, fide = self.package.get_shortest_no_transfer_path(physical_qubit, platform)
+                if nearest_platform is None or fide > highest_fide:
+                    nearest_platform = platform
+                    highest_fide = fide
+                if platform not in nearest_platforms:
+                    if nearest_platform_vacant is None or fide > highest_fide_vacant:
+                        nearest_platform_vacant = platform
+                        highest_fide_vacant = fide
+            if nearest_platform_vacant:
+                nearest_platforms.append(nearest_platform_vacant)
+            else:
+                nearest_platforms.append(nearest_platform)
+        return nearest_platforms
 
     def get_balise_nearest_metro_subgraph(self, balise_id: tuple[int, int], node_num: int) -> nx.Graph:
         """
@@ -492,7 +553,7 @@ class Router:
         Action dependency: GhzPreparation -> TransferChipletRoute & SwapGate -> Alight -> Teleport.
         """
         involved_qubits = [tele_block.control_qubit] + tele_block.target_qubits
-        platforms = [self.find_nearest_platform(self.curr_l2p_map[qubit]) for qubit in involved_qubits]
+        platforms = self.find_nearest_platforms([self.curr_l2p_map[qubit] for qubit in involved_qubits])
         ghz_action = self.locate_ghz_state(involved_qubits, platforms)
         self.action_depend_graph.add_node(ghz_action.id, action=ghz_action)
         for i in range(len(involved_qubits)):
@@ -504,6 +565,7 @@ class Router:
             module = self.package.get_node_area(route_source_phy_qubit)
             assert isinstance(module, ComputeModule)
             swap_path = module.get_swap_path(route_source_phy_qubit, route_target_phy_qubit)
+            logging.info(f"Swap path for {logic_qubit}: {swap_path}")
             for j in range(len(swap_path)-2):
                 phy_qubit_u, phy_qubit_v = swap_path[j], swap_path[j+1]
                 assert self.curr_p2l_map[phy_qubit_u] == logic_qubit, f"phy_qubit_u: {phy_qubit_u}, logic_qubit: {logic_qubit}"
@@ -540,6 +602,11 @@ class Router:
             else:
                 self.action_depend_graph.add_edge(tele_ctrl_act_id, teleport_act.id)
             self.recent_logic_qubit_action_dict[logic_qubit] = teleport_act.id
+        
+        fig = self.draw_qubit_mapping_highlight(involved_qubits, f"Transform TeleBlock {tele_block.id}")
+        fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
+        make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
+        self.block_history.append(fig)
         
     def check_move_gate(self, gate: Control, move_gates: list[Control]) -> bool:
         """
@@ -602,6 +669,11 @@ class Router:
         for depend_block_id in depend_block_ids:
             assert depend_block_id != move_block.id
             self.block_depend_graph.add_edge(depend_block_id, move_block.id)
+        
+        fig = self.draw_qubit_mapping_highlight(list(involved_qubits), f"Construct MoveBlock {move_block.id}")
+        fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
+        make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
+        self.block_history.append(fig)
         return move_block
 
     def find_chiplet_for_move_block(self, involved_qubits: list[int]) -> ComputeChiplet:
@@ -743,7 +815,7 @@ class Router:
 
             # Swap the immigate_qubit from arrive_platform to arrive_node
             for j in range(len(arrive_swap_path)-1):
-                swapped_qubit = arrive_swap_path[len(arrive_swap_path)-1-j]
+                swapped_qubit = self.curr_p2l_map[arrive_swap_path[len(arrive_swap_path)-1-j]]
                 if j == 0:
                     swap_gate_act = Exit(immigate_qubit, arrive_platform, arrive_swap_path[len(arrive_swap_path)-2-j])
                 else:
@@ -762,7 +834,7 @@ class Router:
             if expelled_qubit != -1:
                 # Swap the expelled_qubit from depart_platform to depart_node
                 for j in range(len(depart_swap_path)-1):
-                    swapped_qubit = depart_swap_path[len(depart_swap_path)-1-j]
+                    swapped_qubit = self.curr_p2l_map[depart_swap_path[len(depart_swap_path)-1-j]]
                     if j == 0:
                         swap_gate_act = Exit(expelled_qubit, depart_platform, depart_swap_path[len(depart_swap_path)-2-j])
                     else:
@@ -783,6 +855,7 @@ class Router:
         assert isinstance(compute_module, ComputeModule)
         for local_gate in move_block.ctrl_gates:
             swap_path = compute_module.get_swap_path(self.curr_l2p_map[local_gate.control_qubit], self.curr_l2p_map[local_gate.target_qubit])
+            logging.info(f"Swap path for {local_gate}: {swap_path}")
             for i in range(len(swap_path)-1):
                 if i < len(swap_path)-2:
                     phy_qubit_u, phy_qubit_v = swap_path[i], swap_path[i+1]
@@ -808,6 +881,11 @@ class Router:
                     self.recent_logic_qubit_action_dict[local_gate.control_qubit] = direct_gate_act.id
                     self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[local_gate.target_qubit], direct_gate_act.id)
                     self.recent_logic_qubit_action_dict[local_gate.target_qubit] = direct_gate_act.id
+        
+        fig = self.draw_qubit_mapping_highlight(involved_qubits, f"Transform MoveBlock {move_block.id}")
+        fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
+        make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
+        self.block_history.append(fig)
 
     def find_nodes_for_immigation(self, chiplet: ComputeChiplet, immigate_qubits: list[int], native_qubits: list[int]) -> list[tuple[int, int]]:
         """
@@ -979,6 +1057,7 @@ class Router:
         return self.circuit.estimate_depth()
 
     def draw_qubit_mapping(self, 
+        title: str = "",
         marginrate: float = 0.2, 
         markersize: float = 4, 
         linewidth_t: float = 1, 
@@ -993,6 +1072,35 @@ class Router:
             assert phy_qubit in self.package_graph.nodes, f"Logic qubit {logic_qubit} is not mapped to a physical qubit."
             ax.plot(phy_qubit[0], phy_qubit[1], "ko", markersize=4*markersize)
             ax.text(phy_qubit[0], phy_qubit[1], str(logic_qubit), fontsize=10, color="white", ha="center", va="center")
+        ax.set_title(title, fontsize=14)
+        ax.axis("on")
+        return fig
+
+    def draw_qubit_mapping_highlight(self,
+        involved_qubits: list[int],
+        title: str = "",
+        marginrate: float = 0.2, 
+        markersize: float = 4, 
+        linewidth_t: float = 1, 
+        linewidth_b: float = 2,
+    ):
+        """
+        Draw the logic qubit mapping to the package graph with highlighted involved qubits.
+
+        Args:
+            involved_qubits (list[int]): The list of involved qubits to be highlighted.
+        """
+        fig, ax = self.package.draw_qubits()
+        for logic_qubit in range(self.program.data_qubit_num):
+            phy_qubit = self.curr_l2p_map[logic_qubit]
+            assert phy_qubit in self.package_graph.nodes, f"Logic qubit {logic_qubit} is not mapped to a physical qubit."
+            if logic_qubit in involved_qubits:
+                ax.plot(phy_qubit[0], phy_qubit[1], "ro", markersize=4*markersize)
+                ax.text(phy_qubit[0], phy_qubit[1], str(logic_qubit), fontsize=10, color="white", ha="center", va="center")
+            else:
+                ax.plot(phy_qubit[0], phy_qubit[1], "ko", markersize=4*markersize)
+                ax.text(phy_qubit[0], phy_qubit[1], str(logic_qubit), fontsize=10, color="white", ha="center", va="center")
+        ax.set_title(title, fontsize=14)
         ax.axis("on")
         return fig
 
@@ -1033,3 +1141,21 @@ class Router:
         )
         plt.close()
         return fig
+
+    def save_block_history(self, save_jpg: bool = True, save_gif: bool = True, duration: int = 1000):
+        """
+        Save the block history.
+
+        Args:
+            save_jpg (bool): Whether to save the block history as JPG files.
+            save_gif (bool): Whether to save the block history as a GIF file.
+            duration (int): The duration of each frame in the GIF file in milliseconds.
+        """
+        if save_jpg:
+            for i, fig in enumerate(self.block_history):
+                fig.savefig(os.path.join(self.result_dir, f"block_history_{i}.jpg"), bbox_inches="tight")
+        if save_gif:
+            if save_jpg:
+                make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif", duration=duration)
+            else:
+                make_save_gif_figure(self.block_history, os.path.join(self.result_dir, "block_history.gif"), duration=duration)
