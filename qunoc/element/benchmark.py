@@ -155,7 +155,7 @@ class Program:
                                 self.gate_depend_graph.add_edge(p, s)
                     self.gate_depend_graph.remove_node(gate.id)
 
-        assert nx.is_directed_acyclic_graph(self.gate_depend_graph)
+        assert nx.is_directed_acyclic_graph(self.gate_depend_graph), "Gate dependency graph is not a DAG."
         return self.gate_depend_graph
     
     def get_qiskit_circuit(self) -> qiskit.QuantumCircuit:

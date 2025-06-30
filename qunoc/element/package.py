@@ -177,7 +177,7 @@ class Package:
         package_size (tuple[int, int]): The size of the package.
         node_num (int): The number of nodes in the package.
         fab_model (FabricateModel): The fabrication model of the package.
-        opt_config (OperationConfig): The operation configuration of the package.
+        op_config (OperationConfig): The operation configuration of the package.
         design_scheme (str): The design scheme of the package, i.e. "top_down", "bottom_up".
         design_strategy (str): The design strategy of the package, i.e. "heuristic", "greedy", "rl".
         top_down_max_step (int): The max number of steps for top down design.
@@ -207,7 +207,7 @@ class Package:
     def __init__(self, 
         package_size: tuple[int, int] = (100, 100), 
         fab_model: FabricateModel = FabricateModel(), 
-        opt_cofig: OperationConfig = OperationConfig(),
+        op_cofig: OperationConfig = OperationConfig(),
         design_scheme: str = "top_down", 
         design_strategy: str = "heuristic", 
         top_down_max_step: int = 10, 
@@ -221,7 +221,7 @@ class Package:
         Args:
             package_size (tuple[int, int]): The size of the package.
             fab_model (FabricateModel): The fabrication model of the package.
-            opt_cofig (OperationConfig): The operation configuration of the package.
+            op_cofig (OperationConfig): The operation configuration of the package.
             design_scheme (str): The design scheme of the package, i.e. "top_down", "bottom_up".
             design_strategy (str): The design strategy of the package, i.e. "heuristic", "greedy", "rl", "manual".
             top_down_max_step (int): The max number of steps for top down design.
@@ -237,7 +237,7 @@ class Package:
         self.fab_model = fab_model
         FuncArea.fab_model = fab_model
         Gap.fab_model = fab_model
-        self.opt_config = opt_cofig
+        self.op_config = op_cofig
         self.design_scheme = design_scheme
         self.design_strategy = design_strategy
         self.top_down_max_step = top_down_max_step
@@ -541,6 +541,8 @@ class Package:
                     self.package_graph.nodes[node]["type"] = NodeType.Compute
                     self.package_graph.nodes[node]["qubit"].type = NodeType.Compute
                     self.package_graph.nodes[node]["qubit"].role = QubitRole.Register
+                    if (node[0] == func_area.left[0] or node[0] == func_area.right[0]) and (node[1] == func_area.top[0] or node[1] == func_area.bottom[0]):
+                        self.package_graph.nodes[node]["qubit"].role = QubitRole.Empty
                     self.package_graph.nodes[node]["qubit"].chiplet = chiplet
                     self.package_graph.nodes[node]["qubit"].area = func_area
                     self.compute_nodes.add(node)

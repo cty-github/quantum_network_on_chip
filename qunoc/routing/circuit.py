@@ -4,8 +4,8 @@ import networkx as nx
 from copy import deepcopy
 
 from ..element.benchmark import *
-from ..element.chiplet import ComputeModule
-from ..element.package import Package
+from ..element.chiplet import ComputeModule, OperationConfig
+# from ..element.package import Package
 
 
 class CircuitAction:
@@ -466,6 +466,8 @@ class BoardingStage(CircuitStage):
         else:
             self.occupied_platforms.remove(action.platform)
             self.occupied_balises.add(action.station)
+            self.curr_p2l_map[action.platform] = -1
+        self.curr_l2p_map[action.logic_qubit] = None
 
         self.boarding_actions.append(action)
         logging.info(f"Added {action.__class__.__name__} {action.id}.")
@@ -498,6 +500,9 @@ class BoardingStage(CircuitStage):
         else:
             self.occupied_balises.remove(action.station)
             self.occupied_platforms.add(action.platform)
+        if self.curr_l2p_map[action.logic_qubit] is None:
+            self.curr_l2p_map[action.logic_qubit] = action.platform
+        self.curr_p2l_map[action.platform] = action.logic_qubit
 
         self.boarding_actions.append(action)
         logging.info(f"Added {action.__class__.__name__} {action.id}.")
@@ -630,7 +635,8 @@ class RidingStage(CircuitStage):
         assert action.platform in self.occupied_platforms, "Ancilla qubit for teleportation should be in platform."
 
         self.occupied_platforms.remove(action.platform)
-        self.holding_ancilla_plats.remove(action.platform)
+        # self.holding_ancilla_plats.remove(action.platform)
+        self.curr_p2l_map[action.platform] = -1
 
         self.riding_actions.append(action)
         logging.info(f"Added {action.__class__.__name__} {action.id}.")
@@ -663,7 +669,8 @@ class RidingStage(CircuitStage):
         else:
             self.occupied_platforms.add(action.platform)
             self.curr_p2l_map[action.register] = -1
-        self.curr_l2p_map[action.logic_qubit] = None
+        self.curr_l2p_map[action.logic_qubit] = action.platform
+        self.curr_p2l_map[action.platform] = action.logic_qubit
         
         self.riding_actions.append(action)
         logging.info(f"Added {action.__class__.__name__} {action.id}.")
@@ -686,6 +693,7 @@ class RidingStage(CircuitStage):
 
         if self.curr_p2l_map[action.register] == -1:
             self.occupied_platforms.remove(action.platform)
+            self.curr_p2l_map[action.platform] = -1
         else:
             if action.register in self.potential_free_registers and self.potential_free_registers[action.register] == action.platform:
                 self.potential_free_registers.pop(action.register)
@@ -762,12 +770,11 @@ class Circuit:
     Riding stage: 1) transport on transfer chiplet; 2) local compute on compute chiplet; 3) routing to platforms; 4) teleportation.
 
     Attributes:
-        package (Package): The package to perform the quantum circuit.
-        opt_config (OptConfig): The optimization configuration for the circuit.
         logic_qubit_num (int): The number of logic qubits in the circuit.
         init_l2p_map (dict): The initial mapping from logical qubits to physical qubits.
         init_p2l_map (dict): The initial mapping from physical qubits to logical qubits.
         action_depend_graph (nx.DiGraph): The directed acyclic graph representing dependencies between actions.
+        op_config (OperationConfig): The configuration for operations, including time constants for different operations.
 
         stages (list[CircuitStage]): The list of stages in the circuit.
         
@@ -778,23 +785,22 @@ class Circuit:
         hold_ancilla_plats (set): The set of platforms holding ancilla qubits.
     """
     
-    def __init__(self, package: Package, logic_qubit_num: int, init_l2p_map: dict, init_p2l_map: dict, action_depend_graph: nx.DiGraph):
+    def __init__(self, logic_qubit_num: int, init_l2p_map: dict, init_p2l_map: dict, action_depend_graph: nx.DiGraph, op_config: OperationConfig):
         """
         Initialize the circuit.
 
         Args:
-            package (Package): The package to perform the quantum circuit.
             logic_qubit_num (int): The number of logic qubits in the circuit.
             init_l2p_map (dict): The initial mapping from logical qubits to physical qubits.
             init_p2l_map (dict): The initial mapping from physical qubits to logical qubits.
             action_depend_graph (nx.DiGraph): The directed acyclic graph representing dependencies between actions.
+            op_config (OperationConfig): The configuration for operations, including time constants for different operations.
         """
-        self.package = package
-        self.opt_config = package.opt_config
         self.logic_qubit_num = logic_qubit_num
         self.init_l2p_map = init_l2p_map
         self.init_p2l_map = init_p2l_map
         self.action_depend_graph = action_depend_graph
+        self.op_config = op_config
         
         self.stages: list[CircuitStage] = [] # only use extend_stage to add new stage
         
@@ -883,8 +889,8 @@ class Circuit:
                         inter_chiplet_flag = True
                     elif isinstance(action, GhzPreparation):
                         ghz_flag = True
-                inter_chiplet_depth = 2 * self.opt_config.inter_time + 3 * self.opt_config.single_time if inter_chiplet_flag else 0
-                ghz_depth = 2 * self.opt_config.qst_time_constant + 2 * self.opt_config.single_time if ghz_flag else 0
+                inter_chiplet_depth = 2 * self.op_config.inter_time + 3 * self.op_config.single_time if inter_chiplet_flag else 0
+                ghz_depth = 2 * self.op_config.qst_time_constant + 2 * self.op_config.single_time if ghz_flag else 0
                 stage_depth = max(inter_chiplet_depth, ghz_depth)
             elif isinstance(stage, RidingStage):
                 transfer_actions = []
@@ -895,30 +901,24 @@ class Circuit:
                     else:
                         assert isinstance(action, (Teleport, SwapGate, DirectGate, Enter, Exit)), "Action should be Teleport, SwapGate, DirectGate, Enter or Exit"
                         compute_actions.append(action)
-                transfer_depth = len(transfer_actions) * self.opt_config.qst_time_constant
+                transfer_depth = len(transfer_actions) * self.op_config.qst_time_constant
                 compute_action_graph = self.action_depend_graph.subgraph(compute_actions)
-                computer_depth = nx.dag_longest_path_length(compute_action_graph) * self.opt_config.intra_time if compute_action_graph else 0
+                computer_depth = nx.dag_longest_path_length(compute_action_graph) * self.op_config.intra_time if compute_action_graph else 0
                 stage_depth = max(transfer_depth, computer_depth)
             depth += stage_depth
         return depth
 
     def load(self, filepath: str):
         """
-        Load the package from a file.
-
-        Args:
-            filepath (str): The path to load the package.
+        Load the circuit from a file.
         """
         with open(filepath, "rb") as f:
-            package = pickle.load(f)
-            self.__dict__.update(package.__dict__)
+            circuit = pickle.load(f)
+            self.__dict__.update(circuit.__dict__)
 
     def save(self, filepath: str):
         """
-        Save the package to a file.
-
-        Args:
-            filepath (str): The path to save the package.
+        Save the circuit to a file.
         """
         with open(filepath, "wb") as f:
             pickle.dump(self, f)

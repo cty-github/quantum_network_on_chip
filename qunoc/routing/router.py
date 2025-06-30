@@ -283,6 +283,9 @@ class Router:
                     move_block = self.construct_move_block(move_gates)
                     self.transform_move_block(move_block)
 
+        assert nx.is_directed_acyclic_graph(self.block_depend_graph), "Block dependency graph is not a DAG."
+        assert nx.is_directed_acyclic_graph(self.action_depend_graph), "Action dependency graph is not a DAG."
+
     def update_no_depend_gate_ids(self, no_depend_gate_ids: set[int], removed_gate_id: int) -> set[int]:
         """
         Update the no_depend_gate_ids set by checking removed gate's successors.
@@ -295,7 +298,7 @@ class Router:
             set[int]: The updated set of gate ids with no dependencies.
         """
         for succ_gate in self.gate_depend_graph.successors(removed_gate_id):
-            self.gate_depend_graph.nodes[succ_gate]["pred"].discard(removed_gate_id)
+            self.gate_depend_graph.nodes[succ_gate]["pred"].remove(removed_gate_id)
             if len(self.gate_depend_graph.nodes[succ_gate]["pred"]) == 0:
                 no_depend_gate_ids.add(succ_gate)
         return no_depend_gate_ids
@@ -556,10 +559,11 @@ class Router:
         platforms = self.find_nearest_platforms([self.curr_l2p_map[qubit] for qubit in involved_qubits])
         ghz_action = self.locate_ghz_state(involved_qubits, platforms)
         self.action_depend_graph.add_node(ghz_action.id, action=ghz_action)
-        for i in range(len(involved_qubits)):
-            logic_qubit = involved_qubits[i]
+        for logic_qubit in involved_qubits:
             self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[logic_qubit], ghz_action.id)
             self.recent_logic_qubit_action_dict[logic_qubit] = ghz_action.id
+        for i in range(len(involved_qubits)):
+            logic_qubit = involved_qubits[i]
             route_source_phy_qubit = self.curr_l2p_map[logic_qubit]
             route_target_phy_qubit = platforms[i]
             module = self.package.get_node_area(route_source_phy_qubit)
@@ -590,13 +594,15 @@ class Router:
                     self.action_depend_graph.add_edge(ghz_action.id, transfer_on_metro_acts[j].id)
                 else:
                     self.action_depend_graph.add_edge(transfer_on_metro_acts[j-1].id, transfer_on_metro_acts[j].id)
-            alight_act = Alight(logic_qubit, tele_target_phy_qubit, platforms[i])
+            alight_act = Alight(logic_qubit, tele_target_phy_qubit, route_target_phy_qubit)
             self.action_depend_graph.add_node(alight_act.id, action=alight_act)
             self.action_depend_graph.add_edge(transfer_on_metro_acts[-1].id, alight_act.id)
-            teleport_act = Teleport(logic_qubit, platforms[i], logic_qubit==tele_block.control_qubit)
+            self.curr_p2l_map[route_target_phy_qubit] = logic_qubit
+            teleport_act = Teleport(logic_qubit, route_target_phy_qubit, logic_qubit==tele_block.control_qubit)
             self.action_depend_graph.add_node(teleport_act.id, action=teleport_act)
             self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[logic_qubit], teleport_act.id)
             self.action_depend_graph.add_edge(alight_act.id, teleport_act.id)
+            self.curr_p2l_map[route_target_phy_qubit] = -1
             if i == 0:
                 tele_ctrl_act_id = teleport_act.id
             else:
@@ -760,6 +766,8 @@ class Router:
             self.action_depend_graph.add_node(immigate_board_act.id, action=immigate_board_act)
             self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[immigate_qubit], immigate_board_act.id)
             self.recent_logic_qubit_action_dict[immigate_qubit] = immigate_board_act.id
+            self.curr_l2p_map[immigate_qubit] = None
+            self.curr_p2l_map[depart_platform] = -1
             immigate_transfer_acts = self.route_on_transfer_chiplets(immigate_qubit, depart_station, arrive_station)
             for i in range(len(immigate_transfer_acts)):
                 self.action_depend_graph.add_node(immigate_transfer_acts[i].id, action=immigate_transfer_acts[i])
@@ -769,6 +777,8 @@ class Router:
             self.action_depend_graph.add_node(immigate_alight_act.id, action=immigate_alight_act)
             self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[immigate_qubit], immigate_alight_act.id)
             self.recent_logic_qubit_action_dict[immigate_qubit] = immigate_alight_act.id
+            self.curr_l2p_map[immigate_qubit] = arrive_platform
+            self.curr_p2l_map[arrive_platform] = immigate_qubit
 
             if expelled_qubit != -1:
                 # Swap the expelled_qubit from arrive_node to arrive_platform
@@ -794,15 +804,19 @@ class Router:
                 self.action_depend_graph.add_node(expelled_board_act.id, action=expelled_board_act)
                 self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[expelled_qubit], expelled_board_act.id)
                 self.recent_logic_qubit_action_dict[expelled_qubit] = expelled_board_act.id
+                self.curr_l2p_map[expelled_qubit] = None
+                self.curr_p2l_map[arrive_platform] = -1
                 expelled_transfer_acts = self.route_on_transfer_chiplets(expelled_qubit, arrive_station, depart_station)
                 for i in range(len(expelled_transfer_acts)):
                     self.action_depend_graph.add_node(expelled_transfer_acts[i].id, action=expelled_transfer_acts[i])
                     self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[expelled_qubit], expelled_transfer_acts[i].id)
                     self.recent_logic_qubit_action_dict[expelled_qubit] = expelled_transfer_acts[i].id
-                expelled_alight_act = Alight(expelled_qubit, depart_station, depart_platform, True)
+                expelled_alight_act = Alight(expelled_qubit, depart_station, depart_platform)
                 self.action_depend_graph.add_node(expelled_alight_act.id, action=expelled_alight_act)
                 self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[expelled_qubit], expelled_alight_act.id)
                 self.recent_logic_qubit_action_dict[expelled_qubit] = expelled_alight_act.id
+                self.curr_l2p_map[expelled_qubit] = depart_platform
+                self.curr_p2l_map[depart_platform] = expelled_qubit
 
                 self.action_depend_graph.add_edge(expelled_board_act.id, immigate_alight_act.id)
                 self.action_depend_graph.add_edge(immigate_board_act.id, expelled_alight_act.id)
@@ -919,7 +933,7 @@ class Router:
         """
         Schedule the actions to the circuit.
         """
-        self.circuit = Circuit(self.package, self.program.data_qubit_num, self.init_l2p_map, self.init_p2l_map, self.action_depend_graph)
+        self.circuit = Circuit(self.program.data_qubit_num, self.init_l2p_map, self.init_p2l_map, self.action_depend_graph, self.package.op_config)
 
         for action_id in self.action_depend_graph.nodes:
             self.action_depend_graph.nodes[action_id]["pred"] = set(self.action_depend_graph.predecessors(action_id))
@@ -1024,7 +1038,7 @@ class Router:
             set[int]: The updated set of action ids with no dependencies.
         """
         for succ_action in self.action_depend_graph.successors(removed_action_id):
-            self.action_depend_graph.nodes[succ_action]["pred"].discard(removed_action_id)
+            self.action_depend_graph.nodes[succ_action]["pred"].remove(removed_action_id)
             if len(self.action_depend_graph.nodes[succ_action]["pred"]) == 0:
                 no_depend_action_ids.add(succ_action)
         return no_depend_action_ids
@@ -1074,6 +1088,7 @@ class Router:
             ax.text(phy_qubit[0], phy_qubit[1], str(logic_qubit), fontsize=10, color="white", ha="center", va="center")
         ax.set_title(title, fontsize=14)
         ax.axis("on")
+        ax.xaxis.set_ticks_position('top')
         return fig
 
     def draw_qubit_mapping_highlight(self,
@@ -1102,6 +1117,7 @@ class Router:
                 ax.text(phy_qubit[0], phy_qubit[1], str(logic_qubit), fontsize=10, color="white", ha="center", va="center")
         ax.set_title(title, fontsize=14)
         ax.axis("on")
+        ax.xaxis.set_ticks_position('top')
         return fig
 
     def draw_block(self, 

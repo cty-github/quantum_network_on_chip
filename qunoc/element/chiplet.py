@@ -37,6 +37,7 @@ class QubitRole(Enum):
     Platform = auto()
     Balise = auto()
     Station = auto()
+    Empty = auto()
 
     def __repr__(self):
         return self.name
@@ -1094,26 +1095,138 @@ class ComputeModule(FuncArea):
         Returns:
             path (list[tuple[int, int]]): The list of nodes in the swap path.
         """
+        # TODO: make sure the path is inside the compute module
         assert self.has_node(source), f"source {source} is not in the compute module {self}"
         assert self.has_node(target), f"target {target} is not in the compute module {self}"
         path = [source]
+        append_path = []
         if source[0] == self.left[0]:
-            inner_source = (source[0] + 1, source[1])
+            if source[1] == self.top[0]:
+                if (source[0] + 1, source[1]) not in self.get_platforms():
+                    source = (source[0] + 1, source[1])
+                    path.append(source)
+                    source = (source[0], source[1] + 1)
+                    path.append(source)
+                else:
+                    assert (source[0], source[1] + 1) not in self.get_platforms(), f"Data qubit in the top left corner {source} can not get out."
+                    source = (source[0], source[1] + 1)
+                    path.append(source)
+                    source = (source[0] + 1, source[1])
+                    path.append(source)
+            elif source[1] == self.bottom[0]:
+                if (source[0] + 1, source[1]) not in self.get_platforms():
+                    source = (source[0] + 1, source[1])
+                    path.append(source)
+                    source = (source[0], source[1] - 1)
+                    path.append(source)
+                else:
+                    assert (source[0], source[1] - 1) not in self.get_platforms(), f"Data qubit in the bottom left corner {source} can not get out."
+                    source = (source[0], source[1] - 1)
+                    path.append(source)
+                    source = (source[0] + 1, source[1])
+                    path.append(source)
+            else:
+                source = (source[0] + 1, source[1])
+                path.append(source)
         elif source[0] == self.right[0]:
-            inner_source = (source[0] - 1, source[1])
-        if source[1] == self.top[0]:
-            inner_source = (inner_source[0], source[1] + 1)
-        elif source[1] == self.bottom[0]:
-            inner_source = (inner_source[0], source[1] - 1)
-        
+            if source[1] == self.top[0]:
+                if (source[0] - 1, source[1]) not in self.get_platforms():
+                    source = (source[0] - 1, source[1])
+                    path.append(source)
+                    source = (source[0], source[1] + 1)
+                    path.append(source)
+                else:
+                    assert (source[0], source[1] + 1) not in self.get_platforms(), f"Data qubit in the top right corner {source} can not get out."
+                    source = (source[0], source[1] + 1)
+                    path.append(source)
+                    source = (source[0] - 1, source[1])
+                    path.append(source)
+            elif source[1] == self.bottom[0]:
+                if (source[0] - 1, source[1]) not in self.get_platforms():
+                    source = (source[0] - 1, source[1])
+                    path.append(source)
+                    source = (source[0], source[1] - 1)
+                    path.append(source)
+                else:
+                    assert (source[0], source[1] - 1) not in self.get_platforms(), f"Data qubit in the bottom right corner {source} can not get out."
+                    source = (source[0], source[1] - 1)
+                    path.append(source)
+                    source = (source[0] - 1, source[1])
+                    path.append(source)
+            else:
+                source = (source[0] - 1, source[1])
+                path.append(source)
+        else:
+            if source[1] == self.top[0]:
+                source = (source[0], source[1] + 1)
+                path.append(source)
+            elif source[1] == self.bottom[0]:
+                source = (source[0], source[1] - 1)
+                path.append(source)
+            
         if target[0] == self.left[0]:
-            inner_target = (target[0] + 1, target[1])
+            if target[1] == self.top[0]:
+                if (target[0] + 1, target[1]) not in self.get_platforms():
+                    append_path.insert(0, target)
+                    target = (target[0] + 1, target[1])
+                    append_path.insert(0, target)
+                    target = (target[0], target[1] + 1)
+                else:
+                    assert (target[0], target[1] + 1) not in self.get_platforms(), f"Data qubit in the top left corner {target} can not get in."
+                    append_path.insert(0, target)
+                    target = (target[0], target[1] + 1)
+                    append_path.insert(0, target)
+                    target = (target[0] + 1, target[1])
+            elif target[1] == self.bottom[0]:
+                if (target[0] + 1, target[1]) not in self.get_platforms():
+                    append_path.insert(0, target)
+                    target = (target[0] + 1, target[1])
+                    append_path.insert(0, target)
+                    target = (target[0], target[1] - 1)
+                else:
+                    assert (target[0], target[1] - 1) not in self.get_platforms(), f"Data qubit in the bottom left corner {target} can not get in."
+                    append_path.insert(0, target)
+                    target = (target[0], target[1] - 1)
+                    append_path.insert(0, target)
+                    target = (target[0] + 1, target[1])
+            else:
+                append_path.insert(0, target)
+                target = (target[0] + 1, target[1])
         elif target[0] == self.right[0]:
-            inner_target = (target[0] - 1, target[1])
-        if target[1] == self.top[0]:
-            inner_target = (inner_target[0], target[1] + 1)
-        elif target[1] == self.bottom[0]:
-            inner_target = (inner_target[0], target[1] - 1)
+            if target[1] == self.top[0]:
+                if (target[0] - 1, target[1]) not in self.get_platforms():
+                    append_path.insert(0, target)
+                    target = (target[0] - 1, target[1])
+                    append_path.insert(0, target)
+                    target = (target[0], target[1] + 1)
+                else:
+                    assert (target[0], target[1] + 1) not in self.get_platforms(), f"Data qubit in the top right corner {target} can not get in."
+                    append_path.insert(0, target)
+                    target = (target[0], target[1] + 1)
+                    append_path.insert(0, target)
+                    target = (target[0] - 1, target[1])
+            elif target[1] == self.bottom[0]:
+                if (target[0] - 1, target[1]) not in self.get_platforms():
+                    append_path.insert(0, target)
+                    target = (target[0] - 1, target[1])
+                    append_path.insert(0, target)
+                    target = (target[0], target[1] - 1)
+                else:
+                    assert (target[0], target[1] - 1) not in self.get_platforms(), f"Data qubit in the bottom right corner {target} can not get in."
+                    append_path.insert(0, target)
+                    target = (target[0], target[1] - 1)
+                    append_path.insert(0, target)
+                    target = (target[0] - 1, target[1])
+            else:
+                append_path.insert(0, target)
+                target = (target[0] - 1, target[1])
+        else:
+            if target[1] == self.top[0]:
+                append_path.insert(0, target)
+                target = (target[0], target[1] + 1)
+            elif target[1] == self.bottom[0]:
+                append_path.insert(0, target)
+                target = (target[0], target[1] - 1)
 
         source_chiplet = self.get_node_chiplet(source)
         target_chiplet = self.get_node_chiplet(target)
@@ -1131,47 +1244,45 @@ class ComputeModule(FuncArea):
                 for i in range(source[1] - 1, target[1] - 1, -1):
                     path.append((target[0], i))
         else:
-            source_crossroad = self.get_nearest_inter_coupler_crossroad(source)
-            target_crossroad = self.get_nearest_inter_coupler_crossroad(target)
-            # swap from source to source crossroad
-            if source[0] < source_crossroad[0]:
-                for i in range(source[0] + 1, source_crossroad[0] + 1):
+            # find the x-line index has inter-chiplet coupler
+            if source[0] < target[0]:
+                inter_coupler_x = self.left[0] + ((source[0] - self.left[0]) // FuncArea.fab_model.inter_sparsity + 1) * FuncArea.fab_model.inter_sparsity
+                if inter_coupler_x >= self.right[0]:
+                    inter_coupler_x -= FuncArea.fab_model.inter_sparsity
+            else:
+                inter_coupler_x = self.left[0] + (source[0] - self.left[0]) // FuncArea.fab_model.inter_sparsity * FuncArea.fab_model.inter_sparsity
+                if inter_coupler_x == self.left[0]:
+                    inter_coupler_x += FuncArea.fab_model.inter_sparsity
+            # find the y-line index has inter-chiplet coupler
+            if source[1] < target[1]:
+                inter_coupler_y = self.top[0] + ((source[1] - self.top[0]) // FuncArea.fab_model.inter_sparsity + 1) * FuncArea.fab_model.inter_sparsity
+                if inter_coupler_y >= self.bottom[0]:
+                    inter_coupler_y -= FuncArea.fab_model.inter_sparsity
+            else:
+                inter_coupler_y = self.top[0] + (source[1] - self.top[0]) // FuncArea.fab_model.inter_sparsity * FuncArea.fab_model.inter_sparsity
+                if inter_coupler_y == self.top[0]:
+                    inter_coupler_y += FuncArea.fab_model.inter_sparsity
+                    
+            if source[0] < inter_coupler_x:
+                for i in range(source[0] + 1, inter_coupler_x + 1):
                     path.append((i, source[1]))
-            elif source[0] > source_crossroad[0]:
-                for i in range(source[0] - 1, source_crossroad[0] - 1, -1):
+            elif source[0] > inter_coupler_x:
+                for i in range(source[0] - 1, inter_coupler_x - 1, -1):
                     path.append((i, source[1]))
-            if source[1] < source_crossroad[1]:
-                for i in range(source[1] + 1, source_crossroad[1] + 1):
-                    path.append((source_crossroad[0], i))
-            elif source[1] > source_crossroad[1]:
-                for i in range(source[1] - 1, source_crossroad[1] - 1, -1):
-                    path.append((source_crossroad[0], i))
-            # swap from source crossroad to target crossroad
-            if source_crossroad[0] < target_crossroad[0]:
-                for i in range(source_crossroad[0] + 1, target_crossroad[0] + 1):
-                    path.append((i, source_crossroad[1]))
-            elif source_crossroad[0] > target_crossroad[0]:
-                for i in range(source_crossroad[0] - 1, target_crossroad[0] - 1, -1):
-                    path.append((i, source_crossroad[1]))
-            if source_crossroad[1] < target_crossroad[1]:
-                for i in range(source_crossroad[1] + 1, target_crossroad[1] + 1):
-                    path.append((target_crossroad[0], i))
-            elif source_crossroad[1] > target_crossroad[1]:
-                for i in range(source_crossroad[1] - 1, target_crossroad[1] - 1, -1):
-                    path.append((target_crossroad[0], i))
-            # swap from target crossroad to target
-            if target_crossroad[0] < target[0]:
-                for i in range(target_crossroad[0] + 1, target[0] + 1):
-                    path.append((i, target_crossroad[1]))
-            elif target_crossroad[0] > target[0]:
-                for i in range(target_crossroad[0] - 1, target[0] - 1, -1):
-                    path.append((i, target_crossroad[1]))
-            if target_crossroad[1] < target[1]:
-                for i in range(target_crossroad[1] + 1, target[1] + 1):
-                    path.append((target_crossroad[0], i))
-            elif target_crossroad[1] > target[1]:
-                for i in range(target_crossroad[1] - 1, target[1] - 1, -1):
-                    path.append((target_crossroad[0], i))
+            if source[1] < inter_coupler_y:
+                for i in range(source[1] + 1, inter_coupler_y + 1):
+                    path.append((inter_coupler_x, i))
+            elif source[1] > inter_coupler_y:
+                for i in range(source[1] - 1, inter_coupler_y - 1, -1):
+                    path.append((inter_coupler_x, i))
+            if inter_coupler_x < target[0]:
+                for i in range(inter_coupler_x + 1, target[0] + 1):
+                    path.append((i, inter_coupler_y))
+            elif inter_coupler_x > target[0]:
+                for i in range(inter_coupler_x - 1, target[0] - 1, -1):
+                    path.append((i, inter_coupler_y))
+
+        path.extend(append_path)
         return path
 
     def get_fidelity(self, source: tuple[int, int], target: tuple[int, int]) -> float:
