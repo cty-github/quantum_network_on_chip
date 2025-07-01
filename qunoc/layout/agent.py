@@ -92,7 +92,7 @@ class LayoutAgent:
         self.env = env
         self.model = PPO(LayoutPolicy, env, verbose = 1)
         if pre_trained_model_path:
-            self.load(pre_trained_model_path)
+            self.load_model(pre_trained_model_path)
         self.result_dir = result_dir
 
     def train(self, total_timesteps: int = 10000):
@@ -104,7 +104,7 @@ class LayoutAgent:
         """
         print("Training agent...")
         self.model.learn(total_timesteps = total_timesteps)
-        self.save()
+        self.save_model()
     
     def design(self) -> Package:
         """
@@ -124,7 +124,7 @@ class LayoutAgent:
             print("New score:", self.env.estimate())
         return self.env.best_package
 
-    def load(self, filepath: str = None):
+    def load_model(self, filepath: str = None):
         """
         Load a pre-trained PPO model from a file.
 
@@ -133,7 +133,7 @@ class LayoutAgent:
         """
         self.model.load(filepath if filepath else os.path.join(self.result_dir, "layout_agent.pth"))
 
-    def save(self, filepath: str = None):
+    def save_model(self, filepath: str = None):
         """
         Save the PPO model to a file.
 

@@ -305,3 +305,26 @@ def bv(data_qubit_num: int, percentage: float = 0.5) -> Program:
     for gate in control_gates:
         logic_gates.append(Control(*gate))
     return Program("bv", data_qubit_num, logic_gates)
+
+def get_program(algorithm: str, data_qubit_num: int, **kwargs) -> Program:
+    """
+    Get a quantum program by name.
+
+    Args:
+        algorithm (str): Name of the quantum algorithm (e.g., "vqe", "qft", "qaoa", "bv").
+        data_qubit_num (int): Number of data qubits.
+        **kwargs: Additional keyword arguments for specific algorithms.
+
+    Returns:
+        Program: The requested quantum program.
+    """
+    if algorithm == "vqe":
+        return vqe(data_qubit_num)
+    elif algorithm == "qft":
+        return qft(data_qubit_num)
+    elif algorithm == "qaoa":
+        return qaoa(data_qubit_num, **kwargs)
+    elif algorithm == "bv":
+        return bv(data_qubit_num, **kwargs)
+    else:
+        raise ValueError(f"Unknown program name: {algorithm}")

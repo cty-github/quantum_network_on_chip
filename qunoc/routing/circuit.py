@@ -4,8 +4,7 @@ import networkx as nx
 from copy import deepcopy
 
 from ..element.benchmark import *
-from ..element.chiplet import ComputeModule, OperationConfig
-# from ..element.package import Package
+from ..element.chiplet import OperationConfig
 
 
 class CircuitAction:
@@ -306,24 +305,21 @@ class DirectGate(RidingAction):
 
     Attributes:
         logic_gate (Control): The logical control gate.
-        module (ComputeModule): The compute module where the control gate is executed.
     """
     
-    def __init__(self, logic_gate: Control, module: ComputeModule):
+    def __init__(self, logic_gate: Control):
         """
         Initialize the local gate action.
         
         Args:
             logic_gate (Control): The logical control gate.
-            module (ComputeModule): The compute module where the control gate is executed.
         """
         super().__init__()
         self.logic_gate = logic_gate
-        self.module = module
         logging.info(f"Transformed {self}")
     
     def __repr__(self):
-        return f"{self.__class__.__name__} {self.id}: {self.logic_gate} on module {self.module}."
+        return f"{self.__class__.__name__} {self.id}: {self.logic_gate}."
 
 
 class CircuitStage:
@@ -598,7 +594,7 @@ class RidingStage(CircuitStage):
             bool: Whether the action is successfully added.
         """
         assert isinstance(action, Transport), "Action should be Transport"
-        assert action.source_physical_qubit in self.occupied_balises, "Data qubit to transport should be in source balise."
+        assert action.source_physical_qubit in self.occupied_balises, f"Data qubit on {action.source_physical_qubit} to transport should be in source balise: {self.occupied_balises}."
 
         if action.target_physical_qubit == action.source_physical_qubit:
             pass
@@ -803,6 +799,7 @@ class Circuit:
         self.op_config = op_config
         
         self.stages: list[CircuitStage] = [] # only use extend_stage to add new stage
+        CircuitStage._counter = 0  # reset the stage counter
         
         self.curr_l2p_map = deepcopy(init_l2p_map)
         self.curr_p2l_map = deepcopy(init_p2l_map)
@@ -822,7 +819,7 @@ class Circuit:
                     for action in stage.riding_actions:
                         self.string_repr += str(action) + "\n"
         return self.string_repr
-    
+
     def extend_stage(self, board_flag: bool) -> CircuitStage:
         """
         Extend the circuit with a new stage.
@@ -908,17 +905,20 @@ class Circuit:
             depth += stage_depth
         return depth
 
-    def load(self, filepath: str):
+    def to_pickle(self, filepath: str):
         """
-        Load the circuit from a file.
-        """
-        with open(filepath, "rb") as f:
-            circuit = pickle.load(f)
-            self.__dict__.update(circuit.__dict__)
-
-    def save(self, filepath: str):
-        """
-        Save the circuit to a file.
+        Save the circuit to a pickle file.
         """
         with open(filepath, "wb") as f:
             pickle.dump(self, f)
+    
+    @classmethod
+    def from_pickle(cls, filepath: str):
+        """
+        Load a circuit from a pickle file.
+        """
+        with open(filepath, 'rb') as f:
+            obj = pickle.load(f)
+        if not isinstance(obj, cls):
+            raise TypeError(f"Unpickled object is not a {cls.__name__}")
+        return obj
