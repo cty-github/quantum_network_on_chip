@@ -3,6 +3,7 @@ import pickle
 import networkx as nx
 from copy import deepcopy
 
+from ..utils.config import config
 from ..element.benchmark import *
 from ..element.chiplet import OperationConfig
 
@@ -22,6 +23,13 @@ class CircuitAction:
         """
         self.id = CircuitAction._counter
         CircuitAction._counter += 1
+    
+    def init_logging(self):
+        """
+        Initialize logging for block debugging.
+        """
+        if config.debug_block:
+            logging.info(f"Transformed {self}")
 
 class BoardingAction(CircuitAction):
     """
@@ -80,8 +88,8 @@ class GhzPreparation(BoardingAction):
         self.data_qubits = data_qubits
         self.source_physical_qubits = source_physical_qubits
         self.target_physical_qubits = target_physical_qubits
-        logging.info(f"Transformed {self}")
-    
+        self.init_logging()
+
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Prepare {self.qubit_num}-GHZ state for logic qubits {self.data_qubits} on physical qubits {self.source_physical_qubits}."
 
@@ -108,8 +116,8 @@ class Board(BoardingAction):
         self.logic_qubit = logic_qubit
         self.station = station
         self.platform = platform
-        logging.info(f"Transformed {self}")
-    
+        self.init_logging()
+
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Board logic qubit {self.logic_qubit} from physical qubit {self.platform} to physical qubit {self.station}."
 
@@ -136,8 +144,8 @@ class Alight(BoardingAction):
         self.logic_qubit = logic_qubit
         self.station = station
         self.platform = platform
-        logging.info(f"Transformed {self}")
-    
+        self.init_logging()
+
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Alight logic qubit {self.logic_qubit} from physical qubit {self.station} to physical qubit {self.platform}."
 
@@ -161,8 +169,8 @@ class Interchange(BoardingAction):
         super().__init__()
         self.logic_qubit = logic_qubit
         self.interchange = interchange
-        logging.info(f"Transformed {self}")
-    
+        self.init_logging()
+
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Interchange logic qubit {self.logic_qubit} between physical qubits {self.interchange}."
 
@@ -189,8 +197,8 @@ class Transport(RidingAction):
         self.logic_qubit = logic_qubit
         self.source_physical_qubit = source_physical_qubit
         self.target_physical_qubit = target_physical_qubit
-        logging.info(f"Transformed {self}")
-    
+        self.init_logging()
+
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Transport logic qubit {self.logic_qubit} from physical qubit {self.source_physical_qubit} to physical qubit {self.target_physical_qubit}."
 
@@ -220,8 +228,8 @@ class Teleport(RidingAction):
         self.data_qubit = data_qubit
         self.platform = platform
         self.control_flag = control_flag
-        logging.info(f"Transformed {self}")
-    
+        self.init_logging()
+
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Teleport data qubit {self.data_qubit} with ancilla qubit {self.ancilla_qubit} on physical qubit {self.platform}."
 
@@ -248,8 +256,8 @@ class Enter(RidingAction):
         self.logic_qubit = logic_qubit
         self.platform = platform
         self.register = register
-        logging.info(f"Transformed {self}")
-    
+        self.init_logging()
+
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Enter logic qubit {self.logic_qubit} to physical qubit {self.platform} from physical qubit {self.register}."
     
@@ -276,8 +284,8 @@ class Exit(RidingAction):
         self.logic_qubit = logic_qubit
         self.platform = platform
         self.register = register
-        logging.info(f"Transformed {self}")
-    
+        self.init_logging()
+
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Exit logic qubit {self.logic_qubit} from physical qubit {self.platform} to physical qubit {self.register}."
 
@@ -304,8 +312,8 @@ class SwapGate(RidingAction):
         self.logic_qubit = logic_qubit
         self.qubit_u = qubit_u
         self.qubit_v = qubit_v
-        logging.info(f"Transformed {self}")
-        
+        self.init_logging()
+
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Route logic qubit {self.logic_qubit} with swap gate between physical qubits {self.qubit_u} and {self.qubit_v}."
 
@@ -326,8 +334,8 @@ class DirectGate(RidingAction):
         """
         super().__init__()
         self.logic_gate = logic_gate
-        logging.info(f"Transformed {self}")
-    
+        self.init_logging()
+
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: {self.logic_gate}."
 
@@ -380,6 +388,16 @@ class CircuitStage:
             int: The number of actions in the stage.
         """
         raise NotImplementedError("This method should be implemented in subclasses.")
+
+    def add_action_logging(self, action: CircuitAction):
+        """
+        Add logging for the action added to the stage.
+
+        Args:
+            action (CircuitAction): The action to log.
+        """
+        if config.debug_action:
+            logging.info(f"Added {action.__class__.__name__} {action.id}.")
 
 class BoardingStage(CircuitStage):
     """
@@ -445,7 +463,7 @@ class BoardingStage(CircuitStage):
             self.curr_p2l_map[physical_qubit] = ancilla_qubit
 
         self.boarding_actions.append(action)
-        logging.info(f"Added {action.__class__.__name__} {action.id}.")
+        self.add_action_logging(action)
         return True
 
     def add_board_action(self, action: Board) -> bool:
@@ -480,7 +498,7 @@ class BoardingStage(CircuitStage):
         self.curr_p2l_map[action.station] = action.logic_qubit
 
         self.boarding_actions.append(action)
-        logging.info(f"Added {action.__class__.__name__} {action.id}.")
+        self.add_action_logging(action)
         return True
     
     def add_alight_action(self, action: Alight) -> bool:
@@ -515,7 +533,7 @@ class BoardingStage(CircuitStage):
         self.curr_p2l_map[action.platform] = action.logic_qubit
 
         self.boarding_actions.append(action)
-        logging.info(f"Added {action.__class__.__name__} {action.id}.")
+        self.add_action_logging(action)
         return True
     
     def add_interchange_action(self, action: Interchange) -> bool:
@@ -550,7 +568,7 @@ class BoardingStage(CircuitStage):
         self.curr_p2l_map[action.interchange[1]] = action.logic_qubit
 
         self.boarding_actions.append(action)
-        logging.info(f"Added {action.__class__.__name__} {action.id}.")
+        self.add_action_logging(action)
         return True
     
 class RidingStage(CircuitStage):
@@ -632,7 +650,7 @@ class RidingStage(CircuitStage):
         self.curr_p2l_map[action.target_physical_qubit] = action.logic_qubit
         
         self.riding_actions.append(action)
-        logging.info(f"Added {action.__class__.__name__} {action.id}.")
+        self.add_action_logging(action)
         return True
     
     def add_teleport_action(self, action: Teleport) -> bool:
@@ -655,7 +673,7 @@ class RidingStage(CircuitStage):
         self.curr_p2l_map[action.platform] = -1
 
         self.riding_actions.append(action)
-        logging.info(f"Added {action.__class__.__name__} {action.id}.")
+        self.add_action_logging(action)
         return True
 
     def add_enter_action(self, action: Enter) -> bool:
@@ -689,7 +707,7 @@ class RidingStage(CircuitStage):
         self.curr_p2l_map[action.platform] = action.logic_qubit
         
         self.riding_actions.append(action)
-        logging.info(f"Added {action.__class__.__name__} {action.id}.")
+        self.add_action_logging(action)
         return True
     
     def add_exit_action(self, action: Exit) -> bool:
@@ -723,7 +741,7 @@ class RidingStage(CircuitStage):
         self.curr_p2l_map[action.register] = action.logic_qubit
 
         self.riding_actions.append(action)
-        logging.info(f"Added {action.__class__.__name__} {action.id}.")
+        self.add_action_logging(action)
         return True
     
     def add_swap_action(self, action: SwapGate) -> bool:
@@ -751,7 +769,7 @@ class RidingStage(CircuitStage):
             self.curr_l2p_map[logic_qubit_v] = action.qubit_u
 
         self.riding_actions.append(action)
-        logging.info(f"Added {action.__class__.__name__} {action.id}.")
+        self.add_action_logging(action)
         return True
 
     def add_direct_action(self, action: DirectGate) -> bool:
@@ -775,7 +793,7 @@ class RidingStage(CircuitStage):
                "Control and target qubits should be adjacent on the compute module."
 
         self.riding_actions.append(action)
-        logging.info(f"Added {action.__class__.__name__} {action.id}.")
+        self.add_action_logging(action)
         return True
 
 
@@ -865,9 +883,10 @@ class Circuit:
             new_stage = RidingStage(self.curr_l2p_map, self.curr_p2l_map, self.occupied_balises, self.occupied_platforms, self.holding_ancilla_plats)
         assert new_stage.id == len(self.stages), "Stage id should be equal to the length of existing stages"
         self.stages.append(new_stage)
-        logging.info("-"*50)
-        logging.info(f"Extended circuit with {new_stage.__class__.__name__} {new_stage.id}.")
-        logging.info(f"Current qubit mapping: {new_stage.curr_l2p_map}")
+        if config.debug_action:
+            logging.info("-" * 80)
+            logging.info(f"Extended circuit with {new_stage.__class__.__name__} {new_stage.id}.")
+            logging.info(f"Current qubit mapping: {new_stage.curr_l2p_map}")
         return new_stage
     
     def estimate_fidelity(self) -> float:

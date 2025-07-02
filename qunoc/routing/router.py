@@ -1,6 +1,7 @@
 import logging
 from copy import deepcopy
 
+from ..utils.config import config
 from ..element.package import *
 from ..element.benchmark import *
 from .circuit import *
@@ -21,6 +22,14 @@ class ComputeBlock:
         """
         self.id = ComputeBlock._counter
         ComputeBlock._counter += 1
+    
+    def init_logging(self):
+        """
+        Initialize logging for the block debugging.
+        """
+        if config.debug_block:
+            logging.info("-" * 80)
+            logging.info(f"Constructed {self}")
 
 class LocalBlock(ComputeBlock):
     """
@@ -42,8 +51,7 @@ class LocalBlock(ComputeBlock):
         super().__init__()
         self.ctrl_gate = ctrl_gate
         self.module = module
-        logging.info("-"*50)
-        logging.info(f"Constructed {self}")
+        self.init_logging()
 
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Local {self.ctrl_gate} on {self.module}."
@@ -68,8 +76,7 @@ class TeleBlock(ComputeBlock):
         super().__init__()
         self.control_qubit = control_qubit
         self.target_qubits = target_qubits
-        logging.info("-"*50)
-        logging.info(f"Constructed {self}")
+        self.init_logging()
 
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Teleport qubit {self.control_qubit} to {self.target_qubits}."
@@ -94,8 +101,7 @@ class MoveBlock(ComputeBlock):
         super().__init__()
         self.ctrl_gates = ctrl_gates
         self.chiplet = chiplet
-        logging.info("-"*50)
-        logging.info(f"Constructed {self}")
+        self.init_logging()
 
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Move {self.ctrl_gates} to {self.chiplet}."
@@ -200,13 +206,16 @@ class Router:
         self.curr_l2p_map = deepcopy(self.init_l2p_map)
         self.curr_p2l_map = deepcopy(self.init_p2l_map)
 
-        logging.info(f"Initial qubit mapping: {self.init_l2p_map}")
+        if config.debug_mapping:
+            logging.info(f"Initial qubit mapping: {self.init_l2p_map}")
         fig = self.draw_qubit_mapping("Initial Qubit Mapping")
-        fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
-        make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
-        fig.savefig(os.path.join(self.result_dir, f"action_history_{len(self.action_history)}.jpg"), bbox_inches="tight")
-        make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif")
+        if config.debug_block:
+            fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
+            make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
         self.block_history.append(fig)
+        if config.debug_action:
+            fig.savefig(os.path.join(self.result_dir, f"action_history_{len(self.action_history)}.jpg"), bbox_inches="tight")
+            make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif")
         self.action_history.append(fig)
 
     # Functions for compiling compute blocks and actions
@@ -353,8 +362,9 @@ class Router:
             self.block_depend_graph.add_edge(self.gate_depend_graph.nodes[pred_gate]["block"], local_block.id)
         
         fig = self.draw_qubit_mapping_block([local_gate.control_qubit, local_gate.target_qubit], title=f"Construct LocalBlock {local_block.id}")
-        # fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
-        # make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
+        if config.debug_block:
+            fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
+            make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
         self.block_history.append(fig)
         return local_block
 
@@ -399,8 +409,9 @@ class Router:
                 self.recent_logic_qubit_action_dict[local_gate.target_qubit] = direct_gate_act.id
         
         fig = self.draw_qubit_mapping_block([local_gate.control_qubit, local_gate.target_qubit], title=f"Transform LocalBlock {local_block.id}")
-        # fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
-        # make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
+        if config.debug_block:
+            fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
+            make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
         self.block_history.append(fig)
     
     def construct_tele_block(self, tele_gates: list[Control]) -> TeleBlock:
@@ -429,8 +440,9 @@ class Router:
             self.block_depend_graph.add_edge(depend_block_id, tele_block.id)
 
         fig = self.draw_qubit_mapping_block([ctrl_qubit] + target_qubits, title=f"Construct TeleBlock {tele_block.id}")
-        # fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
-        # make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
+        if config.debug_block:
+            fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
+            make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
         self.block_history.append(fig)
         return tele_block
 
@@ -584,8 +596,9 @@ class Router:
             self.curr_p2l_map[source_physical_qubit] = ancilla_qubit
 
         fig = self.draw_qubit_mapping_block(involved_qubits, ancilla_qubits=list(zip(ghz_action.source_physical_qubits, ghz_action.ancilla_qubits)), title=f"Transform TeleBlock {tele_block.id}")
-        # fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
-        # make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
+        if config.debug_block:
+            fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
+            make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
         self.block_history.append(fig)
 
         for i in range(len(involved_qubits)):
@@ -633,6 +646,7 @@ class Router:
             teleport_act = Teleport(ancilla_qubit, data_qubit, route_target_phy_qubit, data_qubit==tele_block.control_qubit)
             self.action_depend_graph.add_node(teleport_act.id, action=teleport_act)
             self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[data_qubit], teleport_act.id)
+            self.recent_logic_qubit_action_dict[data_qubit] = teleport_act.id
             self.action_depend_graph.add_edge(alight_act.id, teleport_act.id)
             self.curr_l2p_map.pop(ancilla_qubit)
             self.curr_p2l_map[tele_source_phy_qubit] = -1
@@ -640,11 +654,11 @@ class Router:
                 tele_ctrl_act_id = teleport_act.id
             else:
                 self.action_depend_graph.add_edge(tele_ctrl_act_id, teleport_act.id)
-            self.recent_logic_qubit_action_dict[data_qubit] = teleport_act.id
         
         fig = self.draw_qubit_mapping_block(involved_qubits, ancilla_qubits=list(zip(platforms, ghz_action.ancilla_qubits)), title=f"Transform TeleBlock {tele_block.id}")
-        # fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
-        # make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
+        if config.debug_block:
+            fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
+            make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
         self.block_history.append(fig)
         
     def check_move_gate(self, gate: Control, move_gates: list[Control]) -> bool:
@@ -710,8 +724,9 @@ class Router:
             self.block_depend_graph.add_edge(depend_block_id, move_block.id)
         
         fig = self.draw_qubit_mapping_block(list(involved_qubits), title=f"Construct MoveBlock {move_block.id}")
-        # fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
-        # make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
+        if config.debug_block:
+            fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
+            make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
         self.block_history.append(fig)
         return move_block
 
@@ -931,8 +946,9 @@ class Router:
                     self.recent_logic_qubit_action_dict[local_gate.target_qubit] = direct_gate_act.id
         
         fig = self.draw_qubit_mapping_block(involved_qubits, title=f"Transform MoveBlock {move_block.id}")
-        # fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
-        # make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
+        if config.debug_block:
+            fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
+            make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
         self.block_history.append(fig)
 
     def find_node_for_immigation(self, chiplet: ComputeChiplet, native_qubits: list[int]) -> tuple[int, int]:
@@ -1026,8 +1042,9 @@ class Router:
                     else:
                         self.update_no_depend_action_ids(no_depend_action_ids, added_action_ids)
                         fig = self.draw_qubit_mapping_action([self.action_depend_graph.nodes[action_id]["action"] for action_id in added_action_ids], f"Boarding Stage {new_stage.id}")
-                        # fig.savefig(os.path.join(self.result_dir, f"action_history_{len(self.action_history)}.jpg"), bbox_inches="tight")
-                        # make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif")
+                        if config.debug_action:
+                            fig.savefig(os.path.join(self.result_dir, f"action_history_{len(self.action_history)}.jpg"), bbox_inches="tight")
+                            make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif")
                         self.action_history.append(fig)
                 # schedule GhzPreparation actions
                 ghz_visited_action_ids = set()
@@ -1043,8 +1060,9 @@ class Router:
                     else:
                         self.update_no_depend_action_ids(no_depend_action_ids, added_action_ids)
                         fig = self.draw_qubit_mapping_action([self.action_depend_graph.nodes[action_id]["action"] for action_id in added_action_ids], f"Boarding Stage {new_stage.id}")
-                        # fig.savefig(os.path.join(self.result_dir, f"action_history_{len(self.action_history)}.jpg"), bbox_inches="tight")
-                        # make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif")
+                        if config.debug_action:
+                            fig.savefig(os.path.join(self.result_dir, f"action_history_{len(self.action_history)}.jpg"), bbox_inches="tight")
+                            make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif")
                         self.action_history.append(fig)
             else:
                 assert isinstance(new_stage, RidingStage)
@@ -1060,8 +1078,9 @@ class Router:
                     else:
                         self.update_no_depend_action_ids(no_depend_action_ids, added_action_ids)
                         fig = self.draw_qubit_mapping_action([self.action_depend_graph.nodes[action_id]["action"] for action_id in added_action_ids], f"Riding Stage {new_stage.id}")
-                        # fig.savefig(os.path.join(self.result_dir, f"action_history_{len(self.action_history)}.jpg"), bbox_inches="tight")
-                        # make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif")
+                        if config.debug_action:
+                            fig.savefig(os.path.join(self.result_dir, f"action_history_{len(self.action_history)}.jpg"), bbox_inches="tight")
+                            make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif")
                         self.action_history.append(fig)
                 # schedule SwapGate, DirectGate, Teleport, Exit, and Enter actions
                 while True:
@@ -1083,8 +1102,9 @@ class Router:
                     else:
                         self.update_no_depend_action_ids(no_depend_action_ids, added_action_ids)
                         fig = self.draw_qubit_mapping_action([self.action_depend_graph.nodes[action_id]["action"] for action_id in added_action_ids], f"Riding Stage {new_stage.id}")
-                        # fig.savefig(os.path.join(self.result_dir, f"action_history_{len(self.action_history)}.jpg"), bbox_inches="tight")
-                        # make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif")
+                        if config.debug_action:
+                            fig.savefig(os.path.join(self.result_dir, f"action_history_{len(self.action_history)}.jpg"), bbox_inches="tight")
+                            make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif")
                         self.action_history.append(fig)
             board_flag = not board_flag
 
@@ -1101,14 +1121,16 @@ class Router:
         """
         if isinstance(removed_action_id, int):
             removed_action_id = {removed_action_id}
-        # logging.info(f"Scheduled actions: {[self.action_depend_graph.nodes[action_id]['action'] for action_id in removed_action_id]}.")
+        # if debug_action:
+        #     logging.info(f"Scheduled actions: {[self.action_depend_graph.nodes[action_id]['action'] for action_id in removed_action_id]}.")
         for action_id in removed_action_id:
             no_depend_action_ids.remove(action_id)
             for succ_action in self.action_depend_graph.successors(action_id):
                 self.action_depend_graph.nodes[succ_action]["pred"].remove(action_id)
                 if len(self.action_depend_graph.nodes[succ_action]["pred"]) == 0:
                     no_depend_action_ids.add(succ_action)
-        logging.info(f"Updated no depend actions: {no_depend_action_ids}.")
+        if config.debug_action:
+            logging.info(f"Updated no depend actions: {no_depend_action_ids}.")
         return no_depend_action_ids
 
     def estimate_fidelity(self) -> float:
