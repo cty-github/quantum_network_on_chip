@@ -739,9 +739,11 @@ class RidingStage(CircuitStage):
             bool: Whether the action is successfully added.
         """
         assert isinstance(action, SwapGate), "Action should be SwapGate"
+        assert self.curr_p2l_map[action.qubit_u] == action.logic_qubit, "Logic qubit should be routed by the swap gate."
 
         logic_qubit_u = self.curr_p2l_map[action.qubit_u]
         logic_qubit_v = self.curr_p2l_map[action.qubit_v]
+        logging.info(f"Swapping {logic_qubit_u} and {logic_qubit_v}.")
         self.curr_p2l_map[action.qubit_u] = logic_qubit_v
         self.curr_p2l_map[action.qubit_v] = logic_qubit_u
         if logic_qubit_u != -1:
