@@ -42,7 +42,7 @@ class LocalBlock(ComputeBlock):
         super().__init__()
         self.ctrl_gate = ctrl_gate
         self.module = module
-        logging.info("-"*20)
+        logging.info("-"*50)
         logging.info(f"Constructed {self}")
 
     def __repr__(self):
@@ -68,7 +68,7 @@ class TeleBlock(ComputeBlock):
         super().__init__()
         self.control_qubit = control_qubit
         self.target_qubits = target_qubits
-        logging.info("-"*20)
+        logging.info("-"*50)
         logging.info(f"Constructed {self}")
 
     def __repr__(self):
@@ -94,7 +94,7 @@ class MoveBlock(ComputeBlock):
         super().__init__()
         self.ctrl_gates = ctrl_gates
         self.chiplet = chiplet
-        logging.info("-"*20)
+        logging.info("-"*50)
         logging.info(f"Constructed {self}")
 
     def __repr__(self):
@@ -124,6 +124,14 @@ class Router:
         program (Program): The quantum program to be routed.
         result_dir (str): The directory to save the routing results.
 
+        package_graph (nx.Graph): The graph representing the package topology.
+        metro_graph (nx.Graph): The subgraph of the package topology representing the metro network.
+        gate_depend_graph (nx.DiGraph): The dependency graph of gates in the quantum program.
+        ancilla_qubit_id (int): The new id of the ancilla qubit in the quantum program.
+
+        block_history (list[plt.Figure]): The history of compute blocks in the routing process.
+        action_history (list[plt.Figure]): The history of actions in the routing process.
+
         init_l2p_map (dict[int, tuple[int, int]]): The initial mapping of logic qubits to physical qubits.
         init_p2l_map (dict[tuple[int, int], int]): The initial mapping of physical qubits to logic qubits.
         curr_l2p_map (dict[int, tuple[int, int]]): The current mapping of logic qubits to physical qubits.
@@ -136,7 +144,7 @@ class Router:
 
         circuit (Circuit): The physical quantum circuit after routing.
     """
-
+    
     def __init__(self, package: Package, program: Program, result_dir: str = None):
         """
         Initialize a Router.
@@ -153,6 +161,8 @@ class Router:
         self.package_graph = package.package_graph
         self.metro_graph: nx.Graph = package.package_graph.subgraph(self.package.transfer_nodes)
         self.gate_depend_graph = program.gate_depend_graph
+        self.ancilla_qubit_id = program.data_qubit_num
+        ComputeBlock._counter = 0
 
         self.block_history: list[plt.Figure] = []
         self.action_history: list[plt.Figure] = []
@@ -178,7 +188,7 @@ class Router:
         Map logic qubits to physical qubits which play as registers.
         """
         self.init_l2p_map: dict[int, tuple[int, int]] = dict()
-        self.init_p2l_map: dict[tuple[int, int], int] = {phy_qubit: -1 for phy_qubit in self.package.compute_nodes}
+        self.init_p2l_map: dict[tuple[int, int], int] = {phy_qubit: -1 for phy_qubit in self.package.compute_nodes.union(self.package.transfer_nodes)}
         logic_data_qubit_num = self.program.data_qubit_num
         physical_data_qubit_set = set(self.package.get_registers())
         if logic_data_qubit_num > len(physical_data_qubit_set):
@@ -193,6 +203,8 @@ class Router:
         fig = self.draw_qubit_mapping("Initial Qubit Mapping")
         fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
         make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
+        fig.savefig(os.path.join(self.result_dir, f"action_history_{len(self.action_history)}.jpg"), bbox_inches="tight")
+        make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif")
         self.block_history.append(fig)
         self.action_history.append(fig)
 
@@ -338,7 +350,7 @@ class Router:
         for pred_gate in self.gate_depend_graph.predecessors(local_gate.id):
             self.block_depend_graph.add_edge(self.gate_depend_graph.nodes[pred_gate]["block"], local_block.id)
         
-        fig = self.draw_qubit_mapping_highlight([local_gate.control_qubit, local_gate.target_qubit], f"Construct LocalBlock {local_block.id}")
+        fig = self.draw_qubit_mapping_block([local_gate.control_qubit, local_gate.target_qubit], title=f"Construct LocalBlock {local_block.id}")
         fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
         make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
         self.block_history.append(fig)
@@ -361,7 +373,7 @@ class Router:
                 phy_qubit_u, phy_qubit_v = swap_path[i], swap_path[i+1]
                 assert self.curr_p2l_map[phy_qubit_u] == local_gate.control_qubit, f"phy_qubit_u: {phy_qubit_u}, local_gate.control_qubit: {local_gate.control_qubit}"
                 swapped_qubit = self.curr_p2l_map[phy_qubit_v]
-                swap_gate_act = SwapGate(phy_qubit_u, phy_qubit_v)
+                swap_gate_act = SwapGate(local_gate.control_qubit, phy_qubit_u, phy_qubit_v)
                 self.action_depend_graph.add_node(swap_gate_act.id, action=swap_gate_act)
                 self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[local_gate.control_qubit], swap_gate_act.id)
                 self.recent_logic_qubit_action_dict[local_gate.control_qubit] = swap_gate_act.id
@@ -382,7 +394,7 @@ class Router:
                 self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[local_gate.target_qubit], direct_gate_act.id)
                 self.recent_logic_qubit_action_dict[local_gate.target_qubit] = direct_gate_act.id
         
-        fig = self.draw_qubit_mapping_highlight([local_gate.control_qubit, local_gate.target_qubit], f"Transform LocalBlock {local_block.id}")
+        fig = self.draw_qubit_mapping_block([local_gate.control_qubit, local_gate.target_qubit], title=f"Transform LocalBlock {local_block.id}")
         fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
         make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
         self.block_history.append(fig)
@@ -412,7 +424,7 @@ class Router:
             assert depend_block_id != tele_block.id
             self.block_depend_graph.add_edge(depend_block_id, tele_block.id)
 
-        fig = self.draw_qubit_mapping_highlight([ctrl_qubit] + target_qubits, f"Construct TeleBlock {tele_block.id}")
+        fig = self.draw_qubit_mapping_block([ctrl_qubit] + target_qubits, title=f"Construct TeleBlock {tele_block.id}")
         fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
         make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
         self.block_history.append(fig)
@@ -521,7 +533,9 @@ class Router:
         for i in range(ancilla_qubit_num):
             source_physical_qubits.append(best_ghz_balises[i])
             target_physical_qubits.append(stations[i])
-        return GhzPreparation(ancilla_qubit_num, involved_qubits, source_physical_qubits, target_physical_qubits)
+        ghz_action = GhzPreparation(ancilla_qubit_num, [self.ancilla_qubit_id + i for i in range(ancilla_qubit_num)], involved_qubits, source_physical_qubits, target_physical_qubits)
+        self.ancilla_qubit_id += ancilla_qubit_num
+        return ghz_action
 
     def route_on_transfer_chiplets(self, logic_qubit: int, source_physical_qubit: tuple[int, int], target_physical_qubit: tuple[int, int]) -> list[Transport | Interchange]:
         """
@@ -539,7 +553,8 @@ class Router:
         transfer_path, _ = self.package.get_shortest_transfer_path(source_physical_qubit, target_physical_qubit)
         for road in transfer_path.roads:
             if isinstance(road, IntraTransferRoad):
-                actions.append(Transport(logic_qubit, road.source, road.target))
+                if road.source != road.target:
+                    actions.append(Transport(logic_qubit, road.source, road.target))
             elif isinstance(road, InterChipletRoad):
                 actions.append(Interchange(logic_qubit, (road.source, road.target)))
         return actions
@@ -559,57 +574,65 @@ class Router:
         platforms = self.find_nearest_platforms([self.curr_l2p_map[qubit] for qubit in involved_qubits])
         ghz_action = self.locate_ghz_state(involved_qubits, platforms)
         self.action_depend_graph.add_node(ghz_action.id, action=ghz_action)
-        for logic_qubit in involved_qubits:
+        for logic_qubit, ancilla_qubit, source_physical_qubit in zip(involved_qubits, ghz_action.ancilla_qubits, ghz_action.source_physical_qubits):
             self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[logic_qubit], ghz_action.id)
-            self.recent_logic_qubit_action_dict[logic_qubit] = ghz_action.id
+            self.curr_l2p_map[ancilla_qubit] = source_physical_qubit
+            self.curr_p2l_map[source_physical_qubit] = ancilla_qubit
+
+        fig = self.draw_qubit_mapping_block(involved_qubits, ancilla_qubits=list(zip(ghz_action.source_physical_qubits, ghz_action.ancilla_qubits)), title=f"Transform TeleBlock {tele_block.id}")
+        fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
+        make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
+        self.block_history.append(fig)
+
         for i in range(len(involved_qubits)):
             logic_qubit = involved_qubits[i]
+            ancilla_qubit = ghz_action.ancilla_qubits[i]
             route_source_phy_qubit = self.curr_l2p_map[logic_qubit]
             route_target_phy_qubit = platforms[i]
             module = self.package.get_node_area(route_source_phy_qubit)
             assert isinstance(module, ComputeModule)
             swap_path = module.get_swap_path(route_source_phy_qubit, route_target_phy_qubit)
-            logging.info(f"Swap path for {logic_qubit}: {swap_path}")
-            for j in range(len(swap_path)-2):
-                phy_qubit_u, phy_qubit_v = swap_path[j], swap_path[j+1]
-                assert self.curr_p2l_map[phy_qubit_u] == logic_qubit, f"phy_qubit_u: {phy_qubit_u}, logic_qubit: {logic_qubit}"
-                swapped_qubit = self.curr_p2l_map[phy_qubit_v]
-                swap_gate_act = SwapGate(phy_qubit_u, phy_qubit_v)
-                self.action_depend_graph.add_node(swap_gate_act.id, action=swap_gate_act)
-                self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[logic_qubit], swap_gate_act.id)
-                self.recent_logic_qubit_action_dict[logic_qubit] = swap_gate_act.id
-                self.curr_l2p_map[logic_qubit] = phy_qubit_v
-                self.curr_p2l_map[phy_qubit_v] = logic_qubit
-                if swapped_qubit != -1:
-                    self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[swapped_qubit], swap_gate_act.id)
-                    self.recent_logic_qubit_action_dict[swapped_qubit] = swap_gate_act.id
-                    self.curr_l2p_map[swapped_qubit] = phy_qubit_u
-                self.curr_p2l_map[phy_qubit_u] = swapped_qubit
+            if len(swap_path) > 1:
+                for j in range(len(swap_path)-2):
+                    phy_qubit_u, phy_qubit_v = swap_path[j], swap_path[j+1]
+                    assert self.curr_p2l_map[phy_qubit_u] == logic_qubit, f"phy_qubit_u: {phy_qubit_u}, logic_qubit: {logic_qubit}"
+                    swapped_qubit = self.curr_p2l_map[phy_qubit_v]
+                    swap_gate_act = SwapGate(logic_qubit, phy_qubit_u, phy_qubit_v)
+                    self.action_depend_graph.add_node(swap_gate_act.id, action=swap_gate_act)
+                    self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[logic_qubit], swap_gate_act.id)
+                    self.recent_logic_qubit_action_dict[logic_qubit] = swap_gate_act.id
+                    self.curr_l2p_map[logic_qubit] = phy_qubit_v
+                    self.curr_p2l_map[phy_qubit_v] = logic_qubit
+                    if swapped_qubit != -1:
+                        self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[swapped_qubit], swap_gate_act.id)
+                        self.recent_logic_qubit_action_dict[swapped_qubit] = swap_gate_act.id
+                        self.curr_l2p_map[swapped_qubit] = phy_qubit_u
+                    self.curr_p2l_map[phy_qubit_u] = swapped_qubit
             tele_source_phy_qubit = ghz_action.source_physical_qubits[i]
             tele_target_phy_qubit = ghz_action.target_physical_qubits[i]
-            transfer_on_metro_acts = self.route_on_transfer_chiplets(logic_qubit, tele_source_phy_qubit, tele_target_phy_qubit)
+            transfer_on_metro_acts = self.route_on_transfer_chiplets(ancilla_qubit, tele_source_phy_qubit, tele_target_phy_qubit)
             for j in range(len(transfer_on_metro_acts)):
                 self.action_depend_graph.add_node(transfer_on_metro_acts[j].id, action=transfer_on_metro_acts[j])
                 if j == 0:
                     self.action_depend_graph.add_edge(ghz_action.id, transfer_on_metro_acts[j].id)
                 else:
                     self.action_depend_graph.add_edge(transfer_on_metro_acts[j-1].id, transfer_on_metro_acts[j].id)
-            alight_act = Alight(logic_qubit, tele_target_phy_qubit, route_target_phy_qubit)
+            alight_act = Alight(ancilla_qubit, tele_target_phy_qubit, route_target_phy_qubit)
             self.action_depend_graph.add_node(alight_act.id, action=alight_act)
             self.action_depend_graph.add_edge(transfer_on_metro_acts[-1].id, alight_act.id)
-            self.curr_p2l_map[route_target_phy_qubit] = logic_qubit
-            teleport_act = Teleport(logic_qubit, route_target_phy_qubit, logic_qubit==tele_block.control_qubit)
+            teleport_act = Teleport(ancilla_qubit, logic_qubit, route_target_phy_qubit, logic_qubit==tele_block.control_qubit)
             self.action_depend_graph.add_node(teleport_act.id, action=teleport_act)
             self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[logic_qubit], teleport_act.id)
             self.action_depend_graph.add_edge(alight_act.id, teleport_act.id)
-            self.curr_p2l_map[route_target_phy_qubit] = -1
+            self.curr_l2p_map.pop(ancilla_qubit)
+            self.curr_p2l_map[tele_source_phy_qubit] = -1
             if i == 0:
                 tele_ctrl_act_id = teleport_act.id
             else:
                 self.action_depend_graph.add_edge(tele_ctrl_act_id, teleport_act.id)
             self.recent_logic_qubit_action_dict[logic_qubit] = teleport_act.id
         
-        fig = self.draw_qubit_mapping_highlight(involved_qubits, f"Transform TeleBlock {tele_block.id}")
+        fig = self.draw_qubit_mapping_block(involved_qubits, ancilla_qubits=list(zip(platforms, ghz_action.ancilla_qubits)), title=f"Transform TeleBlock {tele_block.id}")
         fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
         make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
         self.block_history.append(fig)
@@ -676,7 +699,7 @@ class Router:
             assert depend_block_id != move_block.id
             self.block_depend_graph.add_edge(depend_block_id, move_block.id)
         
-        fig = self.draw_qubit_mapping_highlight(list(involved_qubits), f"Construct MoveBlock {move_block.id}")
+        fig = self.draw_qubit_mapping_block(list(involved_qubits), title=f"Construct MoveBlock {move_block.id}")
         fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
         make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
         self.block_history.append(fig)
@@ -725,8 +748,6 @@ class Router:
                 immigate_qubits.append(qubit)
             else:
                 native_qubits.append(qubit)
-        # arrive_nodes = self.find_nodes_for_immigation(move_block.chiplet, immigate_qubits, native_qubits)
-        # logging.info(f"Immigate qubits: {immigate_qubits}, arrive nodes: {arrive_nodes}")
         while len(immigate_qubits) > 0:
             immigate_qubit = immigate_qubits.pop()
             depart_node = self.curr_l2p_map[immigate_qubit]
@@ -746,11 +767,12 @@ class Router:
 
             # Swap the immigate_qubit from depart_node to depart_platform
             for j in range(len(depart_swap_path)-1):
+                assert self.curr_p2l_map[depart_swap_path[j]] == immigate_qubit, f"qubit_u: {depart_swap_path[j]}, immigate_qubit: {immigate_qubit}"
                 swapped_qubit = self.curr_p2l_map[depart_swap_path[j+1]]
                 if j == len(depart_swap_path)-2:
                     swap_gate_act = Enter(immigate_qubit, depart_platform, depart_swap_path[j])
                 else:
-                    swap_gate_act = SwapGate(depart_swap_path[j], depart_swap_path[j+1])
+                    swap_gate_act = SwapGate(immigate_qubit, depart_swap_path[j], depart_swap_path[j+1])
                 self.action_depend_graph.add_node(swap_gate_act.id, action=swap_gate_act)
                 self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[immigate_qubit], swap_gate_act.id)
                 self.recent_logic_qubit_action_dict[immigate_qubit] = swap_gate_act.id
@@ -764,8 +786,9 @@ class Router:
 
             # Swap the expelled_qubit from arrive_node to arrive_platform
             for j in range(len(arrive_swap_path)-2):
+                assert self.curr_p2l_map[arrive_swap_path[j]] == expelled_qubit, f"qubit_u: {arrive_swap_path[j]}, expelled_qubit: {expelled_qubit}"
                 swapped_qubit = self.curr_p2l_map[arrive_swap_path[j+1]]
-                swap_gate_act = SwapGate(arrive_swap_path[j], arrive_swap_path[j+1])
+                swap_gate_act = SwapGate(expelled_qubit, arrive_swap_path[j], arrive_swap_path[j+1])
                 self.action_depend_graph.add_node(swap_gate_act.id, action=swap_gate_act)
                 if expelled_qubit != -1:
                     self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[expelled_qubit], swap_gate_act.id)
@@ -791,8 +814,6 @@ class Router:
             self.action_depend_graph.add_node(immigate_board_act.id, action=immigate_board_act)
             self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[immigate_qubit], immigate_board_act.id)
             self.recent_logic_qubit_action_dict[immigate_qubit] = immigate_board_act.id
-            self.curr_l2p_map[immigate_qubit] = None
-            self.curr_p2l_map[depart_platform] = -1
             immigate_transfer_acts = self.route_on_transfer_chiplets(immigate_qubit, depart_station, arrive_station)
             for i in range(len(immigate_transfer_acts)):
                 self.action_depend_graph.add_node(immigate_transfer_acts[i].id, action=immigate_transfer_acts[i])
@@ -809,8 +830,6 @@ class Router:
                 self.action_depend_graph.add_node(expelled_board_act.id, action=expelled_board_act)
                 self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[expelled_qubit], expelled_board_act.id)
                 self.recent_logic_qubit_action_dict[expelled_qubit] = expelled_board_act.id
-                self.curr_l2p_map[expelled_qubit] = None
-                self.curr_p2l_map[arrive_platform] = -1
                 expelled_transfer_acts = self.route_on_transfer_chiplets(expelled_qubit, arrive_station, depart_station)
                 for i in range(len(expelled_transfer_acts)):
                     self.action_depend_graph.add_node(expelled_transfer_acts[i].id, action=expelled_transfer_acts[i])
@@ -859,7 +878,7 @@ class Router:
                     phy_qubit_u, phy_qubit_v = swap_path[i], swap_path[i+1]
                     assert self.curr_p2l_map[phy_qubit_u] == local_gate.control_qubit, f"phy_qubit_u: {phy_qubit_u}, local_gate.control_qubit: {local_gate.control_qubit}"
                     swapped_qubit = self.curr_p2l_map[phy_qubit_v]
-                    swap_gate_act = SwapGate(phy_qubit_u, phy_qubit_v)
+                    swap_gate_act = SwapGate(local_gate.control_qubit, phy_qubit_u, phy_qubit_v)
                     self.action_depend_graph.add_node(swap_gate_act.id, action=swap_gate_act)
                     self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[local_gate.control_qubit], swap_gate_act.id)
                     self.recent_logic_qubit_action_dict[local_gate.control_qubit] = swap_gate_act.id
@@ -880,7 +899,7 @@ class Router:
                     self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[local_gate.target_qubit], direct_gate_act.id)
                     self.recent_logic_qubit_action_dict[local_gate.target_qubit] = direct_gate_act.id
         
-        fig = self.draw_qubit_mapping_highlight(involved_qubits, f"Transform MoveBlock {move_block.id}")
+        fig = self.draw_qubit_mapping_block(involved_qubits, title=f"Transform MoveBlock {move_block.id}")
         fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
         make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
         self.block_history.append(fig)
@@ -963,96 +982,132 @@ class Router:
                 assert isinstance(new_stage, BoardingStage)
                 # schedule Alight, Interchange, and Board actions
                 while True:
-                    action_added = False
+                    added_action_ids = set()
                     for action_id in no_depend_action_ids:
                         action = self.action_depend_graph.nodes[action_id]["action"]
                         if isinstance(action, Alight) and new_stage.add_alight_action(action):
-                            no_depend_action_ids.remove(action_id)
-                            no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, action_id)
-                            action_added = True
+                            # no_depend_action_ids.remove(action_id)
+                            # no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, action_id)
+                            added_action_ids.add(action_id)
                             break
                         elif isinstance(action, Interchange) and new_stage.add_interchange_action(action):
-                            no_depend_action_ids.remove(action_id)
-                            no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, action_id)
-                            action_added = True
+                            # no_depend_action_ids.remove(action_id)
+                            # no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, action_id)
+                            added_action_ids.add(action_id)
                             break
                         elif isinstance(action, Board) and new_stage.add_board_action(action):
-                            no_depend_action_ids.remove(action_id)
-                            no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, action_id)
-                            action_added = True
+                            # no_depend_action_ids.remove(action_id)
+                            # no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, action_id)
+                            added_action_ids.add(action_id)
                             break
-                    if not action_added:
+                    if not added_action_ids:
                         break
+                    else:
+                        no_depend_action_ids.difference_update(added_action_ids)
+                        no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, added_action_ids)
+                        fig = self.draw_qubit_mapping_action([self.action_depend_graph.nodes[action_id]["action"] for action_id in added_action_ids], f"Boarding Stage {new_stage.id}")
+                        fig.savefig(os.path.join(self.result_dir, f"action_history_{len(self.action_history)}.jpg"), bbox_inches="tight")
+                        make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif")
+                        self.action_history.append(fig)
                 # schedule GhzPreparation actions
                 ghz_visited_action_ids = set()
                 while True:
-                    action_added = False
+                    added_action_ids = set()
                     for action_id in no_depend_action_ids - ghz_visited_action_ids:
                         ghz_visited_action_ids.add(action_id)
                         action = self.action_depend_graph.nodes[action_id]["action"]
                         if isinstance(action, GhzPreparation) and new_stage.add_ghz_action(action):
-                            no_depend_action_ids.remove(action_id)
-                            no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, action_id)
-                            action_added = True
-                    if not action_added:
+                            # no_depend_action_ids.remove(action_id)
+                            # no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, action_id)
+                            added_action_ids.add(action_id)
+                    if not added_action_ids:
                         break
+                    else:
+                        no_depend_action_ids.difference_update(added_action_ids)
+                        no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, added_action_ids)
+                        fig = self.draw_qubit_mapping_action([self.action_depend_graph.nodes[action_id]["action"] for action_id in added_action_ids], f"Boarding Stage {new_stage.id}")
+                        fig.savefig(os.path.join(self.result_dir, f"action_history_{len(self.action_history)}.jpg"), bbox_inches="tight")
+                        make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif")
+                        self.action_history.append(fig)
             else:
                 assert isinstance(new_stage, RidingStage)
                 # schedule Transport actions
-                for action_id in no_depend_action_ids:
-                    action = self.action_depend_graph.nodes[action_id]["action"]
-                    if isinstance(action, Transport) and new_stage.add_transport_action(action):
-                        no_depend_action_ids.remove(action_id)
-                        no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, action_id)
+                while True:
+                    added_action_ids = set()
+                    for action_id in no_depend_action_ids:
+                        action = self.action_depend_graph.nodes[action_id]["action"]
+                        if isinstance(action, Transport) and new_stage.add_transport_action(action):
+                            # no_depend_action_ids.remove(action_id)
+                            # no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, action_id)
+                            added_action_ids.add(action_id)
+                    if not added_action_ids:
+                        break
+                    else:
+                        no_depend_action_ids.difference_update(added_action_ids)
+                        no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, added_action_ids)
+                        fig = self.draw_qubit_mapping_action([self.action_depend_graph.nodes[action_id]["action"] for action_id in added_action_ids], f"Riding Stage {new_stage.id}")
+                        fig.savefig(os.path.join(self.result_dir, f"action_history_{len(self.action_history)}.jpg"), bbox_inches="tight")
+                        make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif")
+                        self.action_history.append(fig)
                 # schedule SwapGate, DirectGate, Teleport, Exit, and Enter actions
                 while True:
-                    action_added = False
+                    added_action_ids = set()
                     for action_id in no_depend_action_ids:
                         action = self.action_depend_graph.nodes[action_id]["action"]
                         if isinstance(action, SwapGate) and new_stage.add_swap_action(action):
-                            no_depend_action_ids.remove(action_id)
-                            no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, action_id)
-                            action_added = True
+                            # no_depend_action_ids.remove(action_id)
+                            # no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, action_id)
+                            added_action_ids.add(action_id)
                             break
                         elif isinstance(action, DirectGate) and new_stage.add_direct_action(action):
-                            no_depend_action_ids.remove(action_id)
-                            no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, action_id)
-                            action_added = True
+                            # no_depend_action_ids.remove(action_id)
+                            # no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, action_id)
+                            added_action_ids.add(action_id)
                             break
                         elif isinstance(action, Teleport) and new_stage.add_teleport_action(action):
-                            no_depend_action_ids.remove(action_id)
-                            no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, action_id)
-                            action_added = True
+                            # no_depend_action_ids.remove(action_id)
+                            # no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, action_id)
+                            added_action_ids.add(action_id)
                             break
                         elif isinstance(action, Exit) and new_stage.add_exit_action(action):
-                            no_depend_action_ids.remove(action_id)
-                            no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, action_id)
-                            action_added = True
+                            # no_depend_action_ids.remove(action_id)
+                            # no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, action_id)
+                            added_action_ids.add(action_id)
                             break
                         elif isinstance(action, Enter) and new_stage.add_enter_action(action):
-                            no_depend_action_ids.remove(action_id)
-                            no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, action_id)
-                            action_added = True
+                            # no_depend_action_ids.remove(action_id)
+                            # no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, action_id)
+                            added_action_ids.add(action_id)
                             break
-                    if not action_added:
+                    if not added_action_ids:
                         break
+                    else:
+                        no_depend_action_ids.difference_update(added_action_ids)
+                        no_depend_action_ids = self.update_no_depend_action_ids(no_depend_action_ids, added_action_ids)
+                        fig = self.draw_qubit_mapping_action([self.action_depend_graph.nodes[action_id]["action"] for action_id in added_action_ids], f"Riding Stage {new_stage.id}")
+                        fig.savefig(os.path.join(self.result_dir, f"action_history_{len(self.action_history)}.jpg"), bbox_inches="tight")
+                        make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif")
+                        self.action_history.append(fig)
             board_flag = not board_flag
-    
-    def update_no_depend_action_ids(self, no_depend_action_ids: set[int], removed_action_id: int) -> set[int]:
+
+    def update_no_depend_action_ids(self, no_depend_action_ids: set[int], removed_action_id: int | set[int]) -> set[int]:
         """
         Update the no_depend_action_ids set by checking removed action's successors.
 
         Args:
             no_depend_action_ids (set[int]): The original set of action ids with no dependencies.
-            removed_action_id (int): The id of the removed action.
+            removed_action_id (int | set[int]): The id of the removed action or a set of action ids.
 
         Returns:
             set[int]: The updated set of action ids with no dependencies.
         """
-        for succ_action in self.action_depend_graph.successors(removed_action_id):
-            self.action_depend_graph.nodes[succ_action]["pred"].remove(removed_action_id)
-            if len(self.action_depend_graph.nodes[succ_action]["pred"]) == 0:
-                no_depend_action_ids.add(succ_action)
+        if isinstance(removed_action_id, int):
+            removed_action_id = {removed_action_id}
+        for action_id in removed_action_id:
+            for succ_action in self.action_depend_graph.successors(action_id):
+                self.action_depend_graph.nodes[succ_action]["pred"].remove(action_id)
+                if len(self.action_depend_graph.nodes[succ_action]["pred"]) == 0:
+                    no_depend_action_ids.add(succ_action)
         return no_depend_action_ids
 
     def estimate_fidelity(self) -> float:
@@ -1087,7 +1142,7 @@ class Router:
         marginrate: float = 0.2, 
         markersize: float = 4, 
         linewidth_t: float = 1, 
-        linewidth_b: float = 2,
+        linewidth_b: float = 2, 
     ) -> plt.Figure:
         """
         Draw the logic qubit mapped to the package graph.
@@ -1103,19 +1158,21 @@ class Router:
         ax.xaxis.set_ticks_position('top')
         return fig
 
-    def draw_qubit_mapping_highlight(self,
+    def draw_qubit_mapping_block(self,
         involved_qubits: list[int],
+        ancilla_qubits: list[tuple[tuple[int, int], int]] = [],
         title: str = "",
         marginrate: float = 0.2, 
         markersize: float = 4, 
         linewidth_t: float = 1, 
-        linewidth_b: float = 2,
+        linewidth_b: float = 2, 
     ):
         """
         Draw the logic qubit mapping to the package graph with highlighted involved qubits.
 
         Args:
             involved_qubits (list[int]): The list of involved qubits to be highlighted.
+            ancilla_qubits (list[tuple[tuple[int, int], int]]): The list of ancilla qubits, each represented as a tuple of (node, qubit).
         """
         fig, ax = self.package.draw_qubits()
         for logic_qubit in range(self.program.data_qubit_num):
@@ -1127,12 +1184,115 @@ class Router:
             else:
                 ax.plot(phy_qubit[0], phy_qubit[1], "ko", markersize=4*markersize)
                 ax.text(phy_qubit[0], phy_qubit[1], str(logic_qubit), fontsize=10, color="white", ha="center", va="center")
+        for ancilla_node, ancilla_qubit in ancilla_qubits:
+            assert ancilla_node in self.package_graph.nodes, f"Ancilla node {ancilla_node} is not in the package graph."
+            ax.plot(ancilla_node[0], ancilla_node[1], "bo", markersize=4*markersize)
+            ax.text(ancilla_node[0], ancilla_node[1], str(ancilla_qubit), fontsize=10, color="white", ha="center", va="center")
         ax.set_title(title, fontsize=14)
         ax.axis("on")
         ax.xaxis.set_ticks_position('top')
         return fig
 
-    def draw_block(self, 
+    def draw_qubit_mapping_action(self,
+        involved_actions: list[CircuitAction], 
+        title: str = "", 
+        marginrate: float = 0.2, 
+        markersize: float = 4, 
+        linewidth_t: float = 1, 
+        linewidth_b: float = 2,
+    ):
+        """
+        Draw the qubit mapping action.
+
+        Args:
+            involved_actions (list[CircuitAction]): The list of involved actions to be highlighted.
+        """
+        fig, ax = self.package.draw_qubits()
+
+        involved_qubits = set()
+        for action in involved_actions:
+            if isinstance(action, (Board, Alight, Interchange, Transport, Enter, Exit, SwapGate)):
+                logic_qubit = action.logic_qubit
+                if logic_qubit != -1:
+                    phy_qubit = self.circuit.stages[-1].curr_l2p_map[logic_qubit]
+                    ax.plot(phy_qubit[0], phy_qubit[1], "ro", markersize=4*markersize)
+                    ax.text(phy_qubit[0], phy_qubit[1], str(logic_qubit), fontsize=10, color="white", ha="center", va="center")
+                    involved_qubits.add(logic_qubit)
+            elif isinstance(action, DirectGate):
+                logic_qubit_u = action.logic_gate.control_qubit
+                logic_qubit_v = action.logic_gate.target_qubit
+                phy_qubit_u = self.circuit.stages[-1].curr_l2p_map[logic_qubit_u]
+                phy_qubit_v = self.circuit.stages[-1].curr_l2p_map[logic_qubit_v]
+                ax.plot([phy_qubit_u[0], phy_qubit_v[0]], [phy_qubit_u[1], phy_qubit_v[1]], "g-", linewidth=4*linewidth_b)
+                ax.plot(phy_qubit_u[0], phy_qubit_u[1], "ro", markersize=4*markersize)
+                ax.text(phy_qubit_u[0], phy_qubit_u[1], str(logic_qubit_u), fontsize=10, color="white", ha="center", va="center")
+                ax.plot(phy_qubit_v[0], phy_qubit_v[1], "ro", markersize=4*markersize)
+                ax.text(phy_qubit_v[0], phy_qubit_v[1], str(logic_qubit_v), fontsize=10, color="white", ha="center", va="center")
+                involved_qubits.add(logic_qubit_u)
+                involved_qubits.add(logic_qubit_v)
+            elif isinstance(action, Teleport):
+                ancilla_qubit = action.ancilla_qubit
+                data_qubit = action.data_qubit
+                ancilla_node = action.platform
+                data_node = self.circuit.stages[-1].curr_l2p_map[data_qubit]
+                ax.plot([ancilla_node[0], data_node[0]], [ancilla_node[1], data_node[1]], "g-", linewidth=4*linewidth_b)
+                ax.plot(ancilla_node[0], ancilla_node[1], "bo", markersize=4*markersize)
+                ax.text(ancilla_node[0], ancilla_node[1], str(ancilla_qubit), fontsize=10, color="white", ha="center", va="center")
+                ax.plot(data_node[0], data_node[1], "ro", markersize=4*markersize)
+                ax.text(data_node[0], data_node[1], str(data_qubit), fontsize=10, color="white", ha="center", va="center")
+                involved_qubits.add(data_qubit)
+        
+        for logic_qubit, phy_qubit in self.circuit.stages[-1].curr_l2p_map.items():
+            assert phy_qubit in self.package_graph.nodes, f"Logic qubit {logic_qubit} is not mapped to a physical qubit."
+            if logic_qubit not in involved_qubits:
+                if logic_qubit < self.program.data_qubit_num:
+                    ax.plot(phy_qubit[0], phy_qubit[1], "ko", markersize=4*markersize)
+                else:
+                    ax.plot(phy_qubit[0], phy_qubit[1], "bo", markersize=4*markersize)
+                ax.text(phy_qubit[0], phy_qubit[1], str(logic_qubit), fontsize=10, color="white", ha="center", va="center")
+        
+        ax.set_title(title, fontsize=14)
+        ax.axis("on")
+        ax.xaxis.set_ticks_position('top')
+        return fig
+
+    def save_block_history(self, save_jpg: bool = True, save_gif: bool = True, duration: int = 1000):
+        """
+        Save the block history.
+
+        Args:
+            save_jpg (bool): Whether to save the block history as JPG files.
+            save_gif (bool): Whether to save the block history as a GIF file.
+            duration (int): The duration of each frame in the GIF file in milliseconds.
+        """
+        if save_jpg:
+            for i, fig in enumerate(self.block_history):
+                fig.savefig(os.path.join(self.result_dir, f"block_history_{i}.jpg"), bbox_inches="tight")
+        if save_gif:
+            if save_jpg:
+                make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif", duration=duration)
+            else:
+                make_save_gif_figure(self.block_history, os.path.join(self.result_dir, "block_history.gif"), duration=duration)
+
+    def save_action_history(self, save_jpg: bool = True, save_gif: bool = True, duration: int = 1000):
+        """
+        Save the action history.
+
+        Args:
+            save_jpg (bool): Whether to save the action history as JPG files.
+            save_gif (bool): Whether to save the action history as a GIF file.
+            duration (int): The duration of each frame in the GIF file in milliseconds.
+        """
+        if save_jpg:
+            for i, fig in enumerate(self.action_history):
+                fig.savefig(os.path.join(self.result_dir, f"action_history_{i}.jpg"), bbox_inches="tight")
+        if save_gif:
+            if save_jpg:
+                make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif", duration=duration)
+            else:
+                make_save_gif_figure(self.action_history, os.path.join(self.result_dir, "action_history.gif"), duration=duration)
+
+    def draw_block_depend(self, 
         marginrate: float = 0.2, 
         markersize: float = 4, 
         linewidth_t: float = 1, 
@@ -1170,20 +1330,40 @@ class Router:
         plt.close()
         return fig
 
-    def save_block_history(self, save_jpg: bool = True, save_gif: bool = True, duration: int = 1000):
+    def draw_action_depend(self, 
+        marginrate: float = 0.2, 
+        markersize: float = 4, 
+        linewidth_t: float = 1, 
+        linewidth_b: float = 2,
+    ) -> plt.Figure:
         """
-        Save the block history.
+        Draw the action dependency graph of the program.
 
-        Args:
-            save_jpg (bool): Whether to save the block history as JPG files.
-            save_gif (bool): Whether to save the block history as a GIF file.
-            duration (int): The duration of each frame in the GIF file in milliseconds.
+        Returns:
+            plt.Figure: The figure containing the action dependency graph.
         """
-        if save_jpg:
-            for i, fig in enumerate(self.block_history):
-                fig.savefig(os.path.join(self.result_dir, f"block_history_{i}.jpg"), bbox_inches="tight")
-        if save_gif:
-            if save_jpg:
-                make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif", duration=duration)
-            else:
-                make_save_gif_figure(self.block_history, os.path.join(self.result_dir, "block_history.gif"), duration=duration)
+        pos = nx.spring_layout(self.action_depend_graph)
+        figsize = (find_longest_topo_distance(self.action_depend_graph), find_longest_topo_distance(self.action_depend_graph))
+        fig = plt.figure(figsize=figsize)
+        nx.draw(
+            self.action_depend_graph, 
+            pos, 
+            with_labels=False, 
+            arrows=True, 
+            node_size=markersize, 
+            width=linewidth_t,
+            node_color='black', 
+            edge_color='black', 
+        )
+        labels = {node: str(node) for node in self.action_depend_graph.nodes()}
+        label_offset = (-0.04, 0.03)
+        label_pos = {k: (v[0] + label_offset[0], v[1] + label_offset[1]) for k, v in pos.items()}
+        nx.draw_networkx_labels(
+            self.action_depend_graph,
+            label_pos,
+            labels=labels,
+            font_size=10,
+            font_color='black'
+        )
+        plt.close()
+        return fig

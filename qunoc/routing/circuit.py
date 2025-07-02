@@ -51,14 +51,16 @@ class GhzPreparation(BoardingAction):
 
     Attributes:
         qubit_num (int): Number of ancilla qubits in the GHZ state.
-        logic_qubits (list[int]): The data qubits that the GHZ state is serving for.
+        ancilla_qubits (list[int]): The ancilla qubits used to prepare the GHZ state.
+        data_qubits (list[int]): The data qubits that the GHZ state is serving for.
         source_physical_qubits (list[tuple[int, int]]): The list of physical qubits where the GHZ state is prepared.
         target_physical_qubits (list[tuple[int, int]]): The list of physical qubits where the GHZ state will be routed to.
     """
 
     def __init__(self, 
             qubit_num: int, 
-            logic_qubits: list[int], 
+            ancilla_qubits: list[int],
+            data_qubits: list[int], 
             source_physical_qubits: list[tuple[int, int]], 
             target_physical_qubits: list[tuple[int, int]], 
         ):
@@ -67,19 +69,21 @@ class GhzPreparation(BoardingAction):
 
         Args:
             qubit_num (int): Number of ancilla qubits in the GHZ state.
-            logic_qubits (list[int]): The data qubits that the GHZ state is serving for.
+            ancilla_qubits (list[int]): The ancilla qubits used in the GHZ state.
+            data_qubits (list[int]): The data qubits that the GHZ state is serving for.
             source_physical_qubits (list[tuple[int, int]]): The list of physical qubits where the GHZ state is prepared.
             target_physical_qubits (list[tuple[int, int]]): The list of physical qubits where the GHZ state will be routed to.
         """
         super().__init__()
         self.qubit_num = qubit_num
-        self.logic_qubits = logic_qubits
+        self.ancilla_qubits = ancilla_qubits
+        self.data_qubits = data_qubits
         self.source_physical_qubits = source_physical_qubits
         self.target_physical_qubits = target_physical_qubits
         logging.info(f"Transformed {self}")
     
     def __repr__(self):
-        return f"{self.__class__.__name__} {self.id}: Prepare {self.qubit_num}-GHZ state for logic qubits {self.logic_qubits} on physical qubits {self.source_physical_qubits}."
+        return f"{self.__class__.__name__} {self.id}: Prepare {self.qubit_num}-GHZ state for logic qubits {self.data_qubits} on physical qubits {self.source_physical_qubits}."
 
 class Board(BoardingAction):
     """
@@ -192,31 +196,34 @@ class Transport(RidingAction):
 
 class Teleport(RidingAction):
     """
-    Represents the action to teleport a logic qubit using a prepared GHZ state.
+    Represents the action to teleport a data qubit using a prepared GHZ state.
     
     Attributes:
-        logic_qubit (int): The logic qubit to teleport.
+        ancilla_qubit (int): The ancilla qubit used for teleportation.
+        data_qubit (int): The data qubit to be teleported.
         platform (tuple[int, int]): The physical qubit on compute chiplet where the ancilla qubit is located.
         control_flag (bool): The flag marking if the data qubit is the control qubit.
     """
 
-    def __init__(self, logic_qubit: int, platform: tuple[int, int], control_flag: bool):
+    def __init__(self, ancilla_qubit: int, data_qubit: int, platform: tuple[int, int], control_flag: bool):
         """
         Initialize the teleportation action.
 
         Args:
-            logic_qubit (int): The logic qubit to teleport.
+            ancilla_qubit (int): The ancilla qubit used for teleportation.
+            data_qubit (int): The data qubit to be teleported.
             platform (tuple[int, int]): The physical qubit on compute chiplet where the ancilla qubit is located.
             control_flag (bool): The flag marking if the data qubit is the control qubit.
         """
         super().__init__()
-        self.logic_qubit = logic_qubit
+        self.ancilla_qubit = ancilla_qubit
+        self.data_qubit = data_qubit
         self.platform = platform
         self.control_flag = control_flag
         logging.info(f"Transformed {self}")
     
     def __repr__(self):
-        return f"{self.__class__.__name__} {self.id}: Teleport logic qubit {self.logic_qubit} on physical qubit {self.platform}."
+        return f"{self.__class__.__name__} {self.id}: Teleport data qubit {self.data_qubit} with ancilla qubit {self.ancilla_qubit} on physical qubit {self.platform}."
 
 class Enter(RidingAction):
     """
@@ -279,25 +286,28 @@ class SwapGate(RidingAction):
     Represents the action of applying a swap gate on a compute module.
 
     Attributes:
+        logic_qubit (int): The logic qubit routed by the swap gate.
         qubit_u (tuple[int, int]): The first qubit of the swap gate.
         qubit_v (tuple[int, int]): The second qubit of the swap gate.
     """
     
-    def __init__(self, qubit_u: tuple[int, int], qubit_v: tuple[int, int]):
+    def __init__(self, logic_qubit: int, qubit_u: tuple[int, int], qubit_v: tuple[int, int]):
         """
         Initialize the swap gate action.
 
         Args:
+            logic_qubit (int): The logic qubit routed by the swap gate.
             qubit_u (tuple[int, int]): The first qubit of the swap gate.
             qubit_v (tuple[int, int]): The second qubit of the swap gate.
         """
         super().__init__()
+        self.logic_qubit = logic_qubit
         self.qubit_u = qubit_u
         self.qubit_v = qubit_v
         logging.info(f"Transformed {self}")
         
     def __repr__(self):
-        return f"{self.__class__.__name__} {self.id}: Swap gate between physical qubits {self.qubit_u} and {self.qubit_v}."
+        return f"{self.__class__.__name__} {self.id}: Route logic qubit {self.logic_qubit} with swap gate between physical qubits {self.qubit_u} and {self.qubit_v}."
 
 class DirectGate(RidingAction):
     """
@@ -426,10 +436,13 @@ class BoardingStage(CircuitStage):
         """
         assert isinstance(action, GhzPreparation), "Action should be GhzPreparation"
 
-        for pysical_qubit in action.source_physical_qubits:
-            if pysical_qubit in self.occupied_balises:
+        for physical_qubit in action.source_physical_qubits:
+            if physical_qubit in self.occupied_balises:
                 return False
         self.occupied_balises.update(action.source_physical_qubits)
+        for ancilla_qubit, physical_qubit in zip(action.ancilla_qubits, action.source_physical_qubits):
+            self.curr_l2p_map[ancilla_qubit] = physical_qubit
+            self.curr_p2l_map[physical_qubit] = ancilla_qubit
 
         self.boarding_actions.append(action)
         logging.info(f"Added {action.__class__.__name__} {action.id}.")
@@ -463,7 +476,8 @@ class BoardingStage(CircuitStage):
             self.occupied_platforms.remove(action.platform)
             self.occupied_balises.add(action.station)
             self.curr_p2l_map[action.platform] = -1
-        self.curr_l2p_map[action.logic_qubit] = None
+        self.curr_l2p_map[action.logic_qubit] = action.station
+        self.curr_p2l_map[action.station] = action.logic_qubit
 
         self.boarding_actions.append(action)
         logging.info(f"Added {action.__class__.__name__} {action.id}.")
@@ -496,8 +510,8 @@ class BoardingStage(CircuitStage):
         else:
             self.occupied_balises.remove(action.station)
             self.occupied_platforms.add(action.platform)
-        if self.curr_l2p_map[action.logic_qubit] is None:
-            self.curr_l2p_map[action.logic_qubit] = action.platform
+            self.curr_p2l_map[action.station] = -1
+        self.curr_l2p_map[action.logic_qubit] = action.platform
         self.curr_p2l_map[action.platform] = action.logic_qubit
 
         self.boarding_actions.append(action)
@@ -531,6 +545,9 @@ class BoardingStage(CircuitStage):
         else:
             self.occupied_balises.remove(action.interchange[0])
             self.occupied_balises.add(action.interchange[1])
+            self.curr_p2l_map[action.interchange[0]] = -1
+        self.curr_l2p_map[action.logic_qubit] = action.interchange[1]
+        self.curr_p2l_map[action.interchange[1]] = action.logic_qubit
 
         self.boarding_actions.append(action)
         logging.info(f"Added {action.__class__.__name__} {action.id}.")
@@ -610,6 +627,9 @@ class RidingStage(CircuitStage):
         else:
             self.occupied_balises.remove(action.source_physical_qubit)
             self.occupied_balises.add(action.target_physical_qubit)
+            self.curr_p2l_map[action.source_physical_qubit] = -1
+        self.curr_l2p_map[action.logic_qubit] = action.target_physical_qubit
+        self.curr_p2l_map[action.target_physical_qubit] = action.logic_qubit
         
         self.riding_actions.append(action)
         logging.info(f"Added {action.__class__.__name__} {action.id}.")
@@ -631,7 +651,7 @@ class RidingStage(CircuitStage):
         assert action.platform in self.occupied_platforms, "Ancilla qubit for teleportation should be in platform."
 
         self.occupied_platforms.remove(action.platform)
-        # self.holding_ancilla_plats.remove(action.platform)
+        self.curr_l2p_map.pop(action.ancilla_qubit)
         self.curr_p2l_map[action.platform] = -1
 
         self.riding_actions.append(action)
@@ -844,7 +864,7 @@ class Circuit:
             new_stage = RidingStage(self.curr_l2p_map, self.curr_p2l_map, self.occupied_balises, self.occupied_platforms, self.holding_ancilla_plats)
         assert new_stage.id == len(self.stages), "Stage id should be equal to the length of existing stages"
         self.stages.append(new_stage)
-        logging.info("")
+        logging.info("-"*50)
         logging.info(f"Extended circuit with {new_stage.__class__.__name__} {new_stage.id}.")
         logging.info(f"Current qubit mapping: {new_stage.curr_l2p_map}")
         return new_stage

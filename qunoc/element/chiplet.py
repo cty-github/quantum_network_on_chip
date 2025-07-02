@@ -1100,6 +1100,8 @@ class ComputeModule(FuncArea):
         assert self.has_node(target), f"target {target} is not in the compute module {self}"
         path = [source]
         append_path = []
+        if source == target:
+            return path
         if source[0] == self.left[0]:
             if source[1] == self.top[0]:
                 if (source[0] + 1, source[1]) not in self.get_platforms():
