@@ -626,7 +626,10 @@ class Router:
                     self.action_depend_graph.add_edge(transfer_on_metro_acts[j-1].id, transfer_on_metro_acts[j].id)
             alight_act = Alight(ancilla_qubit, tele_target_phy_qubit, route_target_phy_qubit)
             self.action_depend_graph.add_node(alight_act.id, action=alight_act)
-            self.action_depend_graph.add_edge(transfer_on_metro_acts[-1].id, alight_act.id)
+            if len(transfer_on_metro_acts) == 0:
+                self.action_depend_graph.add_edge(ghz_action.id, alight_act.id)
+            else:
+                self.action_depend_graph.add_edge(transfer_on_metro_acts[-1].id, alight_act.id)
             teleport_act = Teleport(ancilla_qubit, data_qubit, route_target_phy_qubit, data_qubit==tele_block.control_qubit)
             self.action_depend_graph.add_node(teleport_act.id, action=teleport_act)
             self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[data_qubit], teleport_act.id)
@@ -1023,8 +1026,8 @@ class Router:
                     else:
                         self.update_no_depend_action_ids(no_depend_action_ids, added_action_ids)
                         fig = self.draw_qubit_mapping_action([self.action_depend_graph.nodes[action_id]["action"] for action_id in added_action_ids], f"Boarding Stage {new_stage.id}")
-                        fig.savefig(os.path.join(self.result_dir, f"action_history_{len(self.action_history)}.jpg"), bbox_inches="tight")
-                        make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif")
+                        # fig.savefig(os.path.join(self.result_dir, f"action_history_{len(self.action_history)}.jpg"), bbox_inches="tight")
+                        # make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif")
                         self.action_history.append(fig)
                 # schedule GhzPreparation actions
                 ghz_visited_action_ids = set()
@@ -1040,8 +1043,8 @@ class Router:
                     else:
                         self.update_no_depend_action_ids(no_depend_action_ids, added_action_ids)
                         fig = self.draw_qubit_mapping_action([self.action_depend_graph.nodes[action_id]["action"] for action_id in added_action_ids], f"Boarding Stage {new_stage.id}")
-                        fig.savefig(os.path.join(self.result_dir, f"action_history_{len(self.action_history)}.jpg"), bbox_inches="tight")
-                        make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif")
+                        # fig.savefig(os.path.join(self.result_dir, f"action_history_{len(self.action_history)}.jpg"), bbox_inches="tight")
+                        # make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif")
                         self.action_history.append(fig)
             else:
                 assert isinstance(new_stage, RidingStage)
@@ -1057,8 +1060,8 @@ class Router:
                     else:
                         self.update_no_depend_action_ids(no_depend_action_ids, added_action_ids)
                         fig = self.draw_qubit_mapping_action([self.action_depend_graph.nodes[action_id]["action"] for action_id in added_action_ids], f"Riding Stage {new_stage.id}")
-                        fig.savefig(os.path.join(self.result_dir, f"action_history_{len(self.action_history)}.jpg"), bbox_inches="tight")
-                        make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif")
+                        # fig.savefig(os.path.join(self.result_dir, f"action_history_{len(self.action_history)}.jpg"), bbox_inches="tight")
+                        # make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif")
                         self.action_history.append(fig)
                 # schedule SwapGate, DirectGate, Teleport, Exit, and Enter actions
                 while True:
@@ -1080,8 +1083,8 @@ class Router:
                     else:
                         self.update_no_depend_action_ids(no_depend_action_ids, added_action_ids)
                         fig = self.draw_qubit_mapping_action([self.action_depend_graph.nodes[action_id]["action"] for action_id in added_action_ids], f"Riding Stage {new_stage.id}")
-                        fig.savefig(os.path.join(self.result_dir, f"action_history_{len(self.action_history)}.jpg"), bbox_inches="tight")
-                        make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif")
+                        # fig.savefig(os.path.join(self.result_dir, f"action_history_{len(self.action_history)}.jpg"), bbox_inches="tight")
+                        # make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif")
                         self.action_history.append(fig)
             board_flag = not board_flag
 

@@ -743,7 +743,6 @@ class RidingStage(CircuitStage):
 
         logic_qubit_u = self.curr_p2l_map[action.qubit_u]
         logic_qubit_v = self.curr_p2l_map[action.qubit_v]
-        logging.info(f"Swapping {logic_qubit_u} and {logic_qubit_v}.")
         self.curr_p2l_map[action.qubit_u] = logic_qubit_v
         self.curr_p2l_map[action.qubit_v] = logic_qubit_u
         if logic_qubit_u != -1:
