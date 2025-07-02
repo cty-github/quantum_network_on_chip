@@ -1101,7 +1101,7 @@ class ComputeModule(FuncArea):
         path = [source]
         append_path = []
         if source == target:
-            return path
+            return path.extend(append_path)
         if source[0] == self.left[0]:
             if source[1] == self.top[0]:
                 if (source[0] + 1, source[1]) not in self.get_platforms():
@@ -1229,6 +1229,13 @@ class ComputeModule(FuncArea):
             elif target[1] == self.bottom[0]:
                 append_path.insert(0, target)
                 target = (target[0], target[1] - 1)
+            
+        if source == target:
+            while len(path) > 1 and len(append_path) > 0 and path[-2] == append_path[0]:
+                path.pop()
+                append_path.pop(0)
+            path.extend(append_path)
+            return path
 
         source_chiplet = self.get_node_chiplet(source)
         target_chiplet = self.get_node_chiplet(target)
