@@ -1014,7 +1014,6 @@ class ComputeModule(FuncArea):
     def get_distance(self, source: tuple[int, int], target: tuple[int, int]) -> int:
         """
         Get the distance between two nodes in the compute module, which is the number of edges in the shortest path.
-        # TODO: Find the shortest path considering the topology of chiplet in the compute module.
 
         Args:
             source (tuple[int, int]): The coordinate of the source node.
@@ -1023,6 +1022,7 @@ class ComputeModule(FuncArea):
         Returns:
             distance (int): The distance between the two nodes, which is the number of edges in the shortest path.
         """
+        # TODO: Find the shortest path considering the topology of chiplet in the compute module.
         assert self.has_node(source), f"source {source} is not in the compute module {self}"
         assert self.has_node(target), f"target {target} is not in the compute module {self}"
         return abs(source[0] - target[0]) + abs(source[1] - target[1])
@@ -1095,7 +1095,6 @@ class ComputeModule(FuncArea):
         Returns:
             path (list[tuple[int, int]]): The list of nodes in the swap path.
         """
-        # TODO: make sure the path is inside the compute module
         assert self.has_node(source), f"source {source} is not in the compute module {self}"
         assert self.has_node(target), f"target {target} is not in the compute module {self}"
         path = [source]
