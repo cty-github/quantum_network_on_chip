@@ -845,6 +845,10 @@ class Circuit:
         self.occupied_balises = set()
         self.occupied_platforms = set()
         self.holding_ancilla_plats = set()
+        if config.debug_action:
+            logging.info("-" * 80)
+            logging.info(f"Initialized circuit with {self.logic_qubit_num} logic qubits.")
+            logging.info(f"Current qubit mapping: {self.curr_l2p_map}")
 
     def __repr__(self):
         if not hasattr(self, "string_repr"):

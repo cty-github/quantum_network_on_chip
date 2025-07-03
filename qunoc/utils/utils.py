@@ -3,8 +3,8 @@ import io
 import numpy as np
 from PIL import Image
 from datetime import datetime
-import networkx as nx
 import matplotlib.pyplot as plt
+
 
 color_pool = ['#D9D9D9', '#C9E0E5', '#BED2C6', '#FFD19D', '#FEB29B', '#ED8687']
 
@@ -49,27 +49,35 @@ def get_unique_file_save_path(dir: str, prefix: str, ext: str) -> str:
     return f"{dir}{prefix}{index}{ext}"
 
 def delete_files_with_prefix_and_suffix(filedir: str, prefix: str, ext: str):
+    """
+    Delete files with the specified prefix and suffix in the given directory.
+
+    Args:
+        filedir (str): The directory where the files are located.
+        prefix (str): The prefix of the files to delete.
+        ext (str): The suffix of the files to delete.
+    """
     for filename in os.listdir(filedir):
         if filename.startswith(prefix) and filename.endswith(ext):
             filepath = os.path.join(filedir, filename)
             if os.path.isfile(filepath):
                 os.remove(filepath)
 
-def make_save_gif_file(filedir: str, prefix: str, ext: str, filename: str, duration: int = 1000):
+def make_save_gif_file(jpgdir: str, prefix: str, ext: str, filepath: str, duration: int = 1000):
     """
-    Make gif with figures in the director with given prefix.
+    Make gif with figures in the directory with given prefix.
 
     Args:
-        filedir (str): The director saving the figures.
+        jpgdir (str): The directory containing the jpg files.
         prefix (str): The prefix of the figures.
         ext (str): The ext of the figures.
-        filename (str): The filename of gif.
+        filepath (str): The file path to save the gif.
         duration (int): The duration of each frame in the gif.
     """
-    files = sorted([f for f in os.listdir(filedir) if f.startswith(prefix) and f.endswith(ext)], key=lambda x: int(x[len(prefix):-len(ext)]))
-    images = [Image.open(os.path.join(filedir, f)) for f in files]
+    files = sorted([f for f in os.listdir(jpgdir) if f.startswith(prefix) and f.endswith(ext)], key=lambda x: int(x[len(prefix):-len(ext)]))
+    images = [Image.open(os.path.join(jpgdir, f)) for f in files]
     images[0].save(
-        os.path.join(filedir, filename),
+        filepath,
         save_all=True,
         append_images=images[1:],
         duration=duration,

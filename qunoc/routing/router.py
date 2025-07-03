@@ -176,10 +176,6 @@ class Router:
 
         self.block_history: list[plt.Figure] = []
         self.action_history: list[plt.Figure] = []
-        if config.debug_block:
-            delete_files_with_prefix_and_suffix(self.result_dir, "block_history_", ".jpg")
-        if config.debug_action:
-            delete_files_with_prefix_and_suffix(self.result_dir, "action_history_", ".jpg")
 
     def route_program_on_package(self) -> Circuit:
         """
@@ -216,13 +212,7 @@ class Router:
         if config.debug_mapping:
             logging.info(f"Initial qubit mapping: {self.init_l2p_map}")
         fig = self.draw_qubit_mapping("Initial Qubit Mapping")
-        if config.debug_block:
-            fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
-            make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
         self.block_history.append(fig)
-        if config.debug_action:
-            fig.savefig(os.path.join(self.result_dir, f"action_history_{len(self.action_history)}.jpg"), bbox_inches="tight")
-            make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif")
         self.action_history.append(fig)
 
     # Functions for compiling compute blocks and actions
@@ -372,9 +362,6 @@ class Router:
             self.block_depend_graph.add_edge(self.gate_depend_graph.nodes[pred_gate]["block"], local_block.id)
         
         fig = self.draw_qubit_mapping_block([local_gate.control_qubit, local_gate.target_qubit], title=f"Construct LocalBlock {local_block.id}")
-        if config.debug_block:
-            fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
-            make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
         self.block_history.append(fig)
         return local_block
 
@@ -419,9 +406,6 @@ class Router:
                 self.recent_logic_qubit_action_dict[local_gate.target_qubit] = direct_gate_act.id
         
         fig = self.draw_qubit_mapping_block([local_gate.control_qubit, local_gate.target_qubit], title=f"Transform LocalBlock {local_block.id}")
-        if config.debug_block:
-            fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
-            make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
         self.block_history.append(fig)
     
     def schedule_tele_gates_no_contention(self, tele_gates: list[Control]):
@@ -498,9 +482,6 @@ class Router:
             self.block_depend_graph.add_edge(depend_block_id, tele_block.id)
 
         fig = self.draw_qubit_mapping_block([ctrl_qubit] + target_qubits, title=f"Construct TeleBlock {tele_block.id}")
-        if config.debug_block:
-            fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
-            make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
         self.block_history.append(fig)
         return tele_block
 
@@ -651,9 +632,6 @@ class Router:
             self.curr_p2l_map[source_physical_qubit] = ancilla_qubit
 
         fig = self.draw_qubit_mapping_block(involved_qubits, ancilla_qubits=list(zip(ghz_action.source_physical_qubits, ghz_action.ancilla_qubits)), title=f"Transform TeleBlock {tele_block.id}")
-        if config.debug_block:
-            fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
-            make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
         self.block_history.append(fig)
 
         for i in range(len(involved_qubits)):
@@ -711,9 +689,6 @@ class Router:
                 self.action_depend_graph.add_edge(tele_ctrl_act_id, teleport_act.id)
         
         fig = self.draw_qubit_mapping_block(involved_qubits, ancilla_qubits=list(zip(platforms, ghz_action.ancilla_qubits)), title=f"Transform TeleBlock {tele_block.id}")
-        if config.debug_block:
-            fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
-            make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
         self.block_history.append(fig)
         
     def check_move_gate(self, gate: Control, move_gates: list[Control]) -> bool:
@@ -779,9 +754,6 @@ class Router:
             self.block_depend_graph.add_edge(depend_block_id, move_block.id)
         
         fig = self.draw_qubit_mapping_block(list(involved_qubits), title=f"Construct MoveBlock {move_block.id}")
-        if config.debug_block:
-            fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
-            make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
         self.block_history.append(fig)
         return move_block
 
@@ -1001,9 +973,6 @@ class Router:
                     self.recent_logic_qubit_action_dict[local_gate.target_qubit] = direct_gate_act.id
         
         fig = self.draw_qubit_mapping_block(involved_qubits, title=f"Transform MoveBlock {move_block.id}")
-        if config.debug_block:
-            fig.savefig(os.path.join(self.result_dir, f"block_history_{len(self.block_history)}.jpg"), bbox_inches="tight")
-            make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
         self.block_history.append(fig)
 
     def find_node_for_immigation(self, chiplet: ComputeChiplet, native_qubits: list[int]) -> tuple[int, int]:
@@ -1097,9 +1066,6 @@ class Router:
                     else:
                         self.update_no_depend_action_ids(no_depend_action_ids, added_action_ids)
                         fig = self.draw_qubit_mapping_action([self.action_depend_graph.nodes[action_id]["action"] for action_id in added_action_ids], f"Boarding Stage {new_stage.id}")
-                        if config.debug_action:
-                            fig.savefig(os.path.join(self.result_dir, f"action_history_{len(self.action_history)}.jpg"), bbox_inches="tight")
-                            make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif")
                         self.action_history.append(fig)
                 # schedule GhzPreparation actions
                 ghz_visited_action_ids = set()
@@ -1115,9 +1081,6 @@ class Router:
                     else:
                         self.update_no_depend_action_ids(no_depend_action_ids, added_action_ids)
                         fig = self.draw_qubit_mapping_action([self.action_depend_graph.nodes[action_id]["action"] for action_id in added_action_ids], f"Boarding Stage {new_stage.id}")
-                        if config.debug_action:
-                            fig.savefig(os.path.join(self.result_dir, f"action_history_{len(self.action_history)}.jpg"), bbox_inches="tight")
-                            make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif")
                         self.action_history.append(fig)
             else:
                 assert isinstance(new_stage, RidingStage)
@@ -1133,9 +1096,6 @@ class Router:
                     else:
                         self.update_no_depend_action_ids(no_depend_action_ids, added_action_ids)
                         fig = self.draw_qubit_mapping_action([self.action_depend_graph.nodes[action_id]["action"] for action_id in added_action_ids], f"Riding Stage {new_stage.id}")
-                        if config.debug_action:
-                            fig.savefig(os.path.join(self.result_dir, f"action_history_{len(self.action_history)}.jpg"), bbox_inches="tight")
-                            make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif")
                         self.action_history.append(fig)
                 # schedule SwapGate, DirectGate, Teleport, Exit, and Enter actions
                 while True:
@@ -1157,9 +1117,6 @@ class Router:
                     else:
                         self.update_no_depend_action_ids(no_depend_action_ids, added_action_ids)
                         fig = self.draw_qubit_mapping_action([self.action_depend_graph.nodes[action_id]["action"] for action_id in added_action_ids], f"Riding Stage {new_stage.id}")
-                        if config.debug_action:
-                            fig.savefig(os.path.join(self.result_dir, f"action_history_{len(self.action_history)}.jpg"), bbox_inches="tight")
-                            make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif")
                         self.action_history.append(fig)
             board_flag = not board_flag
 
@@ -1344,12 +1301,13 @@ class Router:
             duration (int): The duration of each frame in the GIF file in milliseconds.
         """
         if save_jpg:
-            delete_files_with_prefix_and_suffix(self.result_dir, "block_history_", ".jpg")
+            os.makedirs(os.path.join(self.result_dir, "block_history"), exist_ok=True)
+            delete_files_with_prefix_and_suffix(os.path.join(self.result_dir, "block_history"), "block_history_", ".jpg")
             for i, fig in enumerate(self.block_history):
-                fig.savefig(os.path.join(self.result_dir, f"block_history_{i}.jpg"), bbox_inches="tight")
+                fig.savefig(os.path.join(self.result_dir, "block_history", f"block_history_{i}.jpg"), bbox_inches="tight")
         if save_gif:
             if save_jpg:
-                make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif", duration=duration)
+                make_save_gif_file(os.path.join(self.result_dir, "block_history"), "block_history_", ".jpg", os.path.join(self.result_dir, "block_history.gif"), duration=duration)
             else:
                 make_save_gif_figure(self.block_history, os.path.join(self.result_dir, "block_history.gif"), duration=duration)
 
@@ -1363,12 +1321,13 @@ class Router:
             duration (int): The duration of each frame in the GIF file in milliseconds.
         """
         if save_jpg:
-            delete_files_with_prefix_and_suffix(self.result_dir, "action_history_", ".jpg")
+            os.makedirs(os.path.join(self.result_dir, "action_history"), exist_ok=True)
+            delete_files_with_prefix_and_suffix(os.path.join(self.result_dir, "action_history"), "action_history_", ".jpg")
             for i, fig in enumerate(self.action_history):
-                fig.savefig(os.path.join(self.result_dir, f"action_history_{i}.jpg"), bbox_inches="tight")
+                fig.savefig(os.path.join(self.result_dir, "action_history", f"action_history_{i}.jpg"), bbox_inches="tight")
         if save_gif:
             if save_jpg:
-                make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif", duration=duration)
+                make_save_gif_file(os.path.join(self.result_dir, "action_history"), "action_history_", ".jpg", os.path.join(self.result_dir, "action_history.gif"), duration=duration)
             else:
                 make_save_gif_figure(self.action_history, os.path.join(self.result_dir, "action_history.gif"), duration=duration)
 

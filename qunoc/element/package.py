@@ -1318,12 +1318,13 @@ class Package:
         if not hasattr(self, "design_history"):
             raise ValueError("No design history found.")
         if save_jpg:
-            delete_files_with_prefix_and_suffix(self.result_dir, "design_history_", ".jpg")
+            os.makedirs(os.path.join(self.result_dir, "design_history"), exist_ok=True)
+            delete_files_with_prefix_and_suffix(os.path.join(self.result_dir, "design_history"), "design_history_", ".jpg")
             for i, fig in enumerate(self.design_history):
-                fig.savefig(os.path.join(self.result_dir, f"design_history_{i}.jpg"), bbox_inches="tight")
+                fig.savefig(os.path.join(self.result_dir, "design_history", f"design_history_{i}.jpg"), bbox_inches="tight")
         if save_gif:
             if save_jpg:
-                make_save_gif_file(self.result_dir, prefix="design_history_", ext=".jpg", filename="design_history.gif", duration=duration)
+                make_save_gif_file(os.path.join(self.result_dir, "design_history"), "design_history_", ".jpg", os.path.join(self.result_dir, "design_history.gif"), duration=duration)
             else:
                 make_save_gif_figure(self.design_history, os.path.join(self.result_dir, "design_history.gif"), duration=duration)
 
