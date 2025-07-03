@@ -151,6 +151,7 @@ class Router:
         local_gate_freq (dict[int, int]): The dictionary recording frequency of local gates for each logic qubit.
         recent_logic_qubit_action_dict (dict[int, int]): The dictionary recording the most recent action for each logic qubit.
         recent_physical_qubit_action_dict (dict[tuple[int, int], int]): The dictionary recording the most recent action for each physical qubit.
+        last_ghz_action_id (int): The id of the last GHZ action in the routing process.
 
         circuit (Circuit): The physical quantum circuit after routing.
     """
@@ -234,6 +235,7 @@ class Router:
         self.local_gate_freq = {logic_qubit: 0 for logic_qubit in range(self.program.data_qubit_num)}
         self.recent_logic_qubit_action_dict = {logic_qubit: -1 for logic_qubit in range(self.program.data_qubit_num)}
         self.recent_physical_qubit_action_dict = {phy_qubit: -1 for phy_qubit in self.package.compute_nodes} # queried for dependency when try to use a vacant physical qubit
+        self.last_ghz_action_id = -1
 
         for gate_id in self.gate_depend_graph.nodes:
             self.gate_depend_graph.nodes[gate_id]["pred"] = set(self.gate_depend_graph.predecessors(gate_id))
@@ -626,6 +628,8 @@ class Router:
         platforms = [tele_block.nearest_platforms[qubit] for qubit in involved_qubits]
         ghz_action = self.locate_ghz_state(involved_qubits, platforms)
         self.action_depend_graph.add_node(ghz_action.id, action=ghz_action)
+        self.action_depend_graph.add_edge(self.last_ghz_action_id, ghz_action.id)
+        self.last_ghz_action_id = ghz_action.id
         for data_qubit, ancilla_qubit, source_physical_qubit in zip(involved_qubits, ghz_action.ancilla_qubits, ghz_action.source_physical_qubits):
             self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[data_qubit], ghz_action.id)
             self.curr_l2p_map[ancilla_qubit] = source_physical_qubit
@@ -663,6 +667,7 @@ class Router:
             ancilla_qubit = ghz_action.ancilla_qubits[i]
             tele_source_phy_qubit = ghz_action.source_physical_qubits[i]
             tele_target_phy_qubit = ghz_action.target_physical_qubits[i]
+            ancilla_nodes = [tele_source_phy_qubit]
             transfer_on_metro_acts = self.route_on_transfer_chiplets(ancilla_qubit, tele_source_phy_qubit, tele_target_phy_qubit)
             for j in range(len(transfer_on_metro_acts)):
                 self.action_depend_graph.add_node(transfer_on_metro_acts[j].id, action=transfer_on_metro_acts[j])
@@ -670,12 +675,18 @@ class Router:
                     self.action_depend_graph.add_edge(ghz_action.id, transfer_on_metro_acts[j].id)
                 else:
                     self.action_depend_graph.add_edge(transfer_on_metro_acts[j-1].id, transfer_on_metro_acts[j].id)
+                if isinstance(transfer_on_metro_acts[j], Transport):
+                    ancilla_nodes.append(transfer_on_metro_acts[j].target_physical_qubit)
+                elif isinstance(transfer_on_metro_acts[j], Interchange):
+                    ancilla_nodes.append(transfer_on_metro_acts[j].interchange[1])
             alight_act = Alight(ancilla_qubit, tele_target_phy_qubit, route_target_phy_qubit)
             self.action_depend_graph.add_node(alight_act.id, action=alight_act)
             if len(transfer_on_metro_acts) == 0:
                 self.action_depend_graph.add_edge(ghz_action.id, alight_act.id)
             else:
                 self.action_depend_graph.add_edge(transfer_on_metro_acts[-1].id, alight_act.id)
+            ancilla_nodes.append(route_target_phy_qubit)
+            ghz_action.record_ancilla_qubit_nodes(ancilla_qubit, ancilla_nodes)
             teleport_act = Teleport(ancilla_qubit, data_qubit, route_target_phy_qubit, data_qubit==tele_block.control_qubit)
             self.action_depend_graph.add_node(teleport_act.id, action=teleport_act)
             self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[data_qubit], teleport_act.id)
@@ -909,8 +920,8 @@ class Router:
                 self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[expelled_qubit], expelled_alight_act.id)
                 self.recent_logic_qubit_action_dict[expelled_qubit] = expelled_alight_act.id
 
-                self.action_depend_graph.add_edge(expelled_board_act.id, immigate_alight_act.id)
-                self.action_depend_graph.add_edge(immigate_board_act.id, expelled_alight_act.id)
+                # self.action_depend_graph.add_edge(expelled_board_act.id, immigate_alight_act.id)
+                # self.action_depend_graph.add_edge(immigate_board_act.id, expelled_alight_act.id)
 
             self.curr_l2p_map[immigate_qubit] = arrive_platform
             self.curr_p2l_map[arrive_platform] = immigate_qubit
@@ -924,7 +935,7 @@ class Router:
             self.recent_logic_qubit_action_dict[immigate_qubit] = immigate_exit_act.id
             self.curr_l2p_map[immigate_qubit] = arrive_swap_path[len(arrive_swap_path)-2]
             self.curr_p2l_map[arrive_swap_path[len(arrive_swap_path)-2]] = immigate_qubit
-            self.action_depend_graph.add_edge(self.recent_physical_qubit_action_dict[arrive_swap_path[len(arrive_swap_path)-2]], immigate_exit_act.id)
+            # self.action_depend_graph.add_edge(self.recent_physical_qubit_action_dict[arrive_swap_path[len(arrive_swap_path)-2]], immigate_exit_act.id)
             self.curr_p2l_map[arrive_platform] = -1
             if expelled_qubit != -1:
                 expelled_exit_act = Exit(expelled_qubit, depart_platform, depart_swap_path[len(depart_swap_path)-2])
@@ -933,7 +944,7 @@ class Router:
                 self.recent_logic_qubit_action_dict[expelled_qubit] = expelled_exit_act.id
                 self.curr_l2p_map[expelled_qubit] = depart_swap_path[len(depart_swap_path)-2]
                 self.curr_p2l_map[depart_swap_path[len(depart_swap_path)-2]] = expelled_qubit
-                self.action_depend_graph.add_edge(self.recent_physical_qubit_action_dict[depart_swap_path[len(depart_swap_path)-2]], expelled_exit_act.id)
+                # self.action_depend_graph.add_edge(self.recent_physical_qubit_action_dict[depart_swap_path[len(depart_swap_path)-2]], expelled_exit_act.id)
                 self.curr_p2l_map[depart_platform] = -1
             
             native_qubits.append(immigate_qubit)
