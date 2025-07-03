@@ -63,19 +63,22 @@ class TeleBlock(ComputeBlock):
     Attributes:
         control_qubit (int): The control qubit of the teleportation block.
         target_qubits (list[int]): The target qubits of the teleportation block.
+        nearest_platforms (dict[int, tuple[int, int]]): The nearest platforms for each involved qubit.
     """
 
-    def __init__(self, control_qubit: int, target_qubits: list[int]):
+    def __init__(self, control_qubit: int, target_qubits: list[int], nearest_platforms: dict[int, tuple[int, int]]):
         """
         Initialize a TeleBlock.
 
         Args:
             control_qubit (int): The control qubit of the teleportation block.
             target_qubits (list[int]): The target qubits of the teleportation block.
+            nearest_platforms (dict[int, tuple[int, int]]): The nearest platforms for each involved qubit.
         """
         super().__init__()
         self.control_qubit = control_qubit
         self.target_qubits = target_qubits
+        self.nearest_platforms = nearest_platforms
         self.init_logging()
 
     def __repr__(self):
@@ -173,6 +176,10 @@ class Router:
 
         self.block_history: list[plt.Figure] = []
         self.action_history: list[plt.Figure] = []
+        if config.debug_block:
+            delete_files_with_prefix_and_suffix(self.result_dir, "block_history_", ".jpg")
+        if config.debug_action:
+            delete_files_with_prefix_and_suffix(self.result_dir, "action_history_", ".jpg")
 
     def route_program_on_package(self) -> Circuit:
         """
@@ -230,6 +237,8 @@ class Router:
         4) Otherwise, form a TeleBlock.
         """
         self.block_depend_graph = nx.DiGraph()
+        self.block_depend_graph.add_node(-1, block=None)
+        self.gate_depend_graph.nodes[-1]["block"] = -1
         self.action_depend_graph = nx.DiGraph()
         self.action_depend_graph.add_node(-1, action=None)
         self.local_gate_freq = {logic_qubit: 0 for logic_qubit in range(self.program.data_qubit_num)}
@@ -242,6 +251,8 @@ class Router:
         for gate_id in self.gate_depend_graph.nodes:
             if len(self.gate_depend_graph.nodes[gate_id]["pred"]) == 0:
                 no_depend_gate_ids.add(gate_id)
+        no_depend_gate_ids.remove(-1)
+        self.update_no_depend_gate_ids(no_depend_gate_ids, -1)
         
         while len(no_depend_gate_ids) > 0:
             gate_id = no_depend_gate_ids.pop()
@@ -300,8 +311,7 @@ class Router:
                                 self.gate_depend_graph.nodes[succ_gate]["pred"].add(restore_gate.id)
                                 no_depend_gate_ids.discard(succ_gate)
                 if block_type == "tele":
-                    tele_block = self.construct_tele_block(tele_gates)
-                    self.transform_tele_block(tele_block)
+                    self.schedule_tele_gates_no_contention(tele_gates)
                 else:
                     move_block = self.construct_move_block(move_gates)
                     self.transform_move_block(move_block)
@@ -414,19 +424,67 @@ class Router:
             make_save_gif_file(self.result_dir, prefix="block_history_", ext=".jpg", filename="block_history.gif")
         self.block_history.append(fig)
     
-    def construct_tele_block(self, tele_gates: list[Control]) -> TeleBlock:
+    def schedule_tele_gates_no_contention(self, tele_gates: list[Control]):
+        """
+        Schedule tele gates into TeleBlocks without platform contention.
+
+        Args:
+            tele_gates (list[Control]): The list of control gates to be scheduled into TeleBlocks.
+        """
+        ctrl_qubit = tele_gates[0].control_qubit
+        ctrl_module = self.package.get_node_area(self.curr_l2p_map[ctrl_qubit])
+        assert isinstance(ctrl_module, ComputeModule)
+        nearest_ctrl_platform = None
+        highest_ctrl_fide = 0
+        for platform in ctrl_module.get_platforms():
+            _, fide = self.package.get_shortest_no_transfer_path(self.curr_l2p_map[ctrl_qubit], platform)
+            if nearest_ctrl_platform is None or fide > highest_ctrl_fide:
+                nearest_ctrl_platform = platform
+                highest_ctrl_fide = fide
+        
+        while len(tele_gates) > 0:
+            nearest_platforms = {ctrl_qubit: nearest_ctrl_platform}
+            scheduled_tele_gates = []
+            for tele_gate in tele_gates:
+                targ_qubit = tele_gate.target_qubit
+                if targ_qubit in nearest_platforms:
+                    scheduled_tele_gates.append(tele_gate)
+                    continue
+                compute_module = self.package.get_node_area(self.curr_l2p_map[targ_qubit])
+                assert isinstance(compute_module, ComputeModule)
+                nearest_platform = None
+                highest_fide = 0
+                for platform in compute_module.get_platforms():
+                    if platform in nearest_platforms.values():
+                        continue
+                    _, fide = self.package.get_shortest_no_transfer_path(self.curr_l2p_map[targ_qubit], platform)
+                    if nearest_platform is None or fide > highest_fide:
+                        nearest_platform = platform
+                        highest_fide = fide
+                if nearest_platform:
+                    nearest_platforms[targ_qubit] = nearest_platform
+                    scheduled_tele_gates.append(tele_gate)
+            assert len(scheduled_tele_gates) > 0, "No scheduled tele gates found."
+            tele_block = self.construct_tele_block(scheduled_tele_gates, nearest_platforms)
+            self.transform_tele_block(tele_block)
+            for tele_gate in scheduled_tele_gates:
+                tele_gates.remove(tele_gate)
+
+    def construct_tele_block(self, tele_gates: list[Control], nearest_platforms: dict[int, tuple[int, int]]) -> TeleBlock:
         """
         Construct a teleportation block for the given tele gates and add it to the block dependency graph.
 
         Args:
             tele_gates (list[Control]): The list of control gates in the teleportation block.
+            nearest_platforms (dict[int, tuple[int, int]]): The nearest platforms for each involved qubit.
 
         Returns:
             TeleBlock: The constructed teleportation block.
         """
         ctrl_qubit = tele_gates[0].control_qubit
         target_qubits = [tele_gate.target_qubit for tele_gate in tele_gates]
-        tele_block = TeleBlock(ctrl_qubit, target_qubits)
+        assert set([ctrl_qubit] + target_qubits) == set(nearest_platforms.keys()), "Control qubit and target qubits must match the nearest platforms."
+        tele_block = TeleBlock(ctrl_qubit, target_qubits, nearest_platforms)
         self.block_depend_graph.add_node(tele_block.id, block=tele_block)
         depend_block_ids = set()
         tele_ids = [tele_gate.id for tele_gate in tele_gates]
@@ -500,7 +558,7 @@ class Router:
                 nearest_platforms.append(nearest_platform)
         return nearest_platforms
 
-    def get_balise_nearest_metro_subgraph(self, balise_id: tuple[int, int], node_num: int) -> nx.Graph:
+    def get_balise_nearest_metro_subgraph(self, balise_id: tuple[int, int], node_num: int) -> list[tuple[int, int]]:
         """
         Get the nearest metro subgraph for a balise.
 
@@ -509,22 +567,21 @@ class Router:
             node_num (int): The number of nodes in the subgraph.
 
         Return:
-            nx.Graph: The subgraph of the metro topology.
+            list[tuple[int, int]]: The list of nodes in the nearest metro subgraph.
         """
-        visited = set()
-        queue = [balise_id]
-        while queue and len(visited) < node_num:
-            node = queue.pop(0)
-            if node not in visited:
-                visited.add(node)
-                queue.extend([nbr for nbr in self.metro_graph.neighbors(node) if nbr not in visited])
-        subgraph = self.metro_graph.subgraph(visited).copy()
-        return subgraph
+        visited_balise = []
+        candidate_balise_queue = [balise_id]
+        while candidate_balise_queue and len(visited_balise) < node_num:
+            node = candidate_balise_queue.pop(0)
+            if node not in visited_balise:
+                visited_balise.append(node)
+                candidate_balise_queue.extend([nbr for nbr in self.metro_graph.neighbors(node) if nbr not in visited_balise])
+        return visited_balise
 
     def locate_ghz_state(self, involved_qubits: list[int], platforms: list[tuple[int, int]]) -> GhzPreparation:
         """
         Allocate GHZ resource for a list of logic qubits for teleportation.
-        Ensure the total transfer distance is minimized.
+        Extend the ghz graph from the station of control qubit, try to ensure the total transfer distance is minimized.
 
         Args:
             involved_qubits (list[int]): The list of logic qubits to be teleported.
@@ -535,20 +592,18 @@ class Router:
         """
         ancilla_qubit_num = len(involved_qubits)
         stations = [self.package.platform_stations_dict[platform][0] for platform in platforms]
-        best_interchange_depth = None
-        best_ghz_balises = None
-        for balise_id in self.metro_graph.nodes:
-            ghz_balise_graph = self.get_balise_nearest_metro_subgraph(balise_id, ancilla_qubit_num)
-            ghz_balises = list(ghz_balise_graph.nodes)
-            interchange_depth = max([self.package.get_inter_chiplet_distance(ghz_balises[i], stations[i]) for i in range(ancilla_qubit_num)])
-            if best_interchange_depth == None or interchange_depth < best_interchange_depth:
-                best_interchange_depth = interchange_depth
-                best_ghz_balises = ghz_balises
-        source_physical_qubits = []
-        target_physical_qubits = []
-        for i in range(ancilla_qubit_num):
-            source_physical_qubits.append(best_ghz_balises[i])
-            target_physical_qubits.append(stations[i])
+        # best_interchange_depth = None
+        # best_ghz_balises = None
+        # for balise_id in self.metro_graph.nodes:
+        #     ghz_balises = self.get_balise_nearest_metro_subgraph(balise_id, ancilla_qubit_num)
+        #     interchange_depth = max([self.package.get_inter_chiplet_distance(ghz_balises[i], stations[i]) for i in range(ancilla_qubit_num)])
+        #     if best_interchange_depth == None or interchange_depth < best_interchange_depth:
+        #         best_interchange_depth = interchange_depth
+        #         best_ghz_balises = ghz_balises
+        # source_physical_qubits = best_ghz_balises
+        ghz_balises = self.get_balise_nearest_metro_subgraph(stations[0], ancilla_qubit_num)
+        source_physical_qubits = ghz_balises
+        target_physical_qubits = stations
         ghz_action = GhzPreparation(ancilla_qubit_num, [self.ancilla_qubit_id + i for i in range(ancilla_qubit_num)], involved_qubits, source_physical_qubits, target_physical_qubits)
         self.ancilla_qubit_id += ancilla_qubit_num
         return ghz_action
@@ -587,7 +642,7 @@ class Router:
         Action dependency: GhzPreparation -> TransferChipletRoute & SwapGate -> Alight -> Teleport.
         """
         involved_qubits = [tele_block.control_qubit] + tele_block.target_qubits
-        platforms = self.find_nearest_platforms([self.curr_l2p_map[qubit] for qubit in involved_qubits])
+        platforms = [tele_block.nearest_platforms[qubit] for qubit in involved_qubits]
         ghz_action = self.locate_ghz_state(involved_qubits, platforms)
         self.action_depend_graph.add_node(ghz_action.id, action=ghz_action)
         for data_qubit, ancilla_qubit, source_physical_qubit in zip(involved_qubits, ghz_action.ancilla_qubits, ghz_action.source_physical_qubits):
@@ -1289,6 +1344,7 @@ class Router:
             duration (int): The duration of each frame in the GIF file in milliseconds.
         """
         if save_jpg:
+            delete_files_with_prefix_and_suffix(self.result_dir, "block_history_", ".jpg")
             for i, fig in enumerate(self.block_history):
                 fig.savefig(os.path.join(self.result_dir, f"block_history_{i}.jpg"), bbox_inches="tight")
         if save_gif:
@@ -1307,6 +1363,7 @@ class Router:
             duration (int): The duration of each frame in the GIF file in milliseconds.
         """
         if save_jpg:
+            delete_files_with_prefix_and_suffix(self.result_dir, "action_history_", ".jpg")
             for i, fig in enumerate(self.action_history):
                 fig.savefig(os.path.join(self.result_dir, f"action_history_{i}.jpg"), bbox_inches="tight")
         if save_gif:
@@ -1314,6 +1371,28 @@ class Router:
                 make_save_gif_file(self.result_dir, prefix="action_history_", ext=".jpg", filename="action_history.gif", duration=duration)
             else:
                 make_save_gif_figure(self.action_history, os.path.join(self.result_dir, "action_history.gif"), duration=duration)
+
+    def get_block_depth(self) -> int:
+        """
+        Get the depth of the block dependency graph.
+
+        Returns:
+            int: The depth of the block dependency graph.
+        """
+        if not hasattr(self, "block_depth"):
+            self.block_depth = nx.algorithms.dag_longest_path_length(self.block_depend_graph)
+        return self.block_depth
+    
+    def get_action_depth(self) -> int:
+        """
+        Get the depth of the action dependency graph.
+
+        Returns:
+            int: The depth of the action dependency graph.
+        """
+        if not hasattr(self, "action_depth"):
+            self.action_depth = nx.algorithms.dag_longest_path_length(self.action_depend_graph)
+        return self.action_depth
 
     def draw_block_depend(self, 
         marginrate: float = 0.2, 
@@ -1328,7 +1407,7 @@ class Router:
             plt.Figure: The figure containing the block dependency graph.
         """
         pos = nx.spring_layout(self.block_depend_graph)
-        figsize = (find_longest_topo_distance(self.block_depend_graph), find_longest_topo_distance(self.block_depend_graph))
+        figsize = (self.get_block_depth(), self.get_block_depth())
         fig = plt.figure(figsize=figsize)
         nx.draw(
             self.block_depend_graph, 
@@ -1366,7 +1445,7 @@ class Router:
             plt.Figure: The figure containing the action dependency graph.
         """
         pos = nx.spring_layout(self.action_depend_graph)
-        figsize = (find_longest_topo_distance(self.action_depend_graph), find_longest_topo_distance(self.action_depend_graph))
+        figsize = (self.get_action_depth(), self.get_action_depth())
         fig = plt.figure(figsize=figsize)
         nx.draw(
             self.action_depend_graph, 

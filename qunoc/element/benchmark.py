@@ -3,8 +3,6 @@ from random import sample
 import matplotlib.pyplot as plt
 import qiskit
 
-from ..utils.utils import find_longest_topo_distance
-
 
 class Gate:
     """
@@ -106,39 +104,33 @@ class Program:
             nx.DiGraph: The gate dependency graph.
         """
         if not hasattr(self, "gate_depend_graph"):
-            recent_qubit_info = {i: {"recent_role": None, "recent_ctrls": [], "recent_other": None} for i in range(self.data_qubit_num)}
+            recent_qubit_info = {i: {"recent_role": None, "recent_ctrls": [], "recent_other": -1} for i in range(self.data_qubit_num)}
             self.gate_depend_graph: nx.DiGraph = nx.DiGraph()
+            self.gate_depend_graph.add_node(-1, gate=None)
             for gate in self.logic_gates:
                 if isinstance(gate, Barrier):
                     self.gate_depend_graph.add_node(gate.id, gate=gate)
                     qubit = gate.qubit
-                    if recent_qubit_info[qubit]["recent_role"]:
-                        if recent_qubit_info[qubit]["recent_role"] == "control":
-                            for ctrl_gate_id in recent_qubit_info[qubit]["recent_ctrls"]:
-                                self.gate_depend_graph.add_edge(ctrl_gate_id, gate.id)
-                        else:
-                            self.gate_depend_graph.add_edge(recent_qubit_info[qubit]["recent_other"], gate.id)
+                    if recent_qubit_info[qubit]["recent_role"] == "control":
+                        for ctrl_gate_id in recent_qubit_info[qubit]["recent_ctrls"]:
+                            self.gate_depend_graph.add_edge(ctrl_gate_id, gate.id)
+                    else:
+                        self.gate_depend_graph.add_edge(recent_qubit_info[qubit]["recent_other"], gate.id)
                     recent_qubit_info[qubit]["recent_role"] = "barrier"
                     recent_qubit_info[qubit]["recent_ctrls"] = []
                     recent_qubit_info[qubit]["recent_other"] = gate.id
                 elif isinstance(gate, Control):
                     self.gate_depend_graph.add_node(gate.id, gate=gate)
                     control = gate.control_qubit
-                    if recent_qubit_info[control]["recent_role"]:
-                        if recent_qubit_info[control]["recent_role"] == "control":
-                            if recent_qubit_info[control]["recent_other"]:
-                                self.gate_depend_graph.add_edge(recent_qubit_info[control]["recent_other"], gate.id)
-                        else:
-                            self.gate_depend_graph.add_edge(recent_qubit_info[control]["recent_other"], gate.id)
+                    self.gate_depend_graph.add_edge(recent_qubit_info[control]["recent_other"], gate.id)
                     recent_qubit_info[control]["recent_role"] = "control"
                     recent_qubit_info[control]["recent_ctrls"].append(gate.id)
                     target = gate.target_qubit
-                    if recent_qubit_info[target]["recent_role"]:
-                        if recent_qubit_info[target]["recent_role"] == "control":
-                                for ctrl_gate_id in recent_qubit_info[target]["recent_ctrls"]:
-                                    self.gate_depend_graph.add_edge(ctrl_gate_id, gate.id)
-                        else:
-                            self.gate_depend_graph.add_edge(recent_qubit_info[target]["recent_other"], gate.id)
+                    if recent_qubit_info[target]["recent_role"] == "control":
+                            for ctrl_gate_id in recent_qubit_info[target]["recent_ctrls"]:
+                                self.gate_depend_graph.add_edge(ctrl_gate_id, gate.id)
+                    else:
+                        self.gate_depend_graph.add_edge(recent_qubit_info[target]["recent_other"], gate.id)
                     recent_qubit_info[target]["recent_role"] = "target"
                     recent_qubit_info[target]["recent_ctrls"] = []
                     recent_qubit_info[target]["recent_other"] = gate.id
@@ -158,6 +150,17 @@ class Program:
         assert nx.is_directed_acyclic_graph(self.gate_depend_graph), "Gate dependency graph is not a DAG."
         return self.gate_depend_graph
     
+    def get_circuit_depth(self) -> int:
+        """
+        Get the depth of the quantum circuit represented by the program.
+
+        Returns:
+            int: The depth of the quantum circuit.
+        """
+        if not hasattr(self, "circuit_depth"):
+            self.circuit_depth = nx.algorithms.dag_longest_path_length(self.gate_depend_graph)
+        return self.circuit_depth
+
     def get_qiskit_circuit(self) -> qiskit.QuantumCircuit:
         """
         Convert the program to a Qiskit quantum circuit.
@@ -189,7 +192,7 @@ class Program:
             plt.Figure: A matplotlib figure representing the gate dependency graph.
         """
         pos = nx.spring_layout(self.gate_depend_graph)
-        figsize = (find_longest_topo_distance(self.gate_depend_graph), find_longest_topo_distance(self.gate_depend_graph))
+        figsize = (self.get_circuit_depth(), self.get_circuit_depth())
         fig = plt.figure(figsize=figsize)
         nx.draw(
             self.gate_depend_graph, 

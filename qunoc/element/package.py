@@ -8,7 +8,7 @@ import networkx as nx
 from anytree import Node
 import matplotlib.pyplot as plt
 
-from ..utils.utils import color_pool, get_unique_file_save_path, make_save_gif_file, make_save_gif_figure
+from ..utils.utils import color_pool, delete_files_with_prefix_and_suffix, make_save_gif_file, make_save_gif_figure
 from .chiplet import *
 
 
@@ -1318,6 +1318,7 @@ class Package:
         if not hasattr(self, "design_history"):
             raise ValueError("No design history found.")
         if save_jpg:
+            delete_files_with_prefix_and_suffix(self.result_dir, "design_history_", ".jpg")
             for i, fig in enumerate(self.design_history):
                 fig.savefig(os.path.join(self.result_dir, f"design_history_{i}.jpg"), bbox_inches="tight")
         if save_gif:
