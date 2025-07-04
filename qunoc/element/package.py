@@ -1192,6 +1192,27 @@ class Package:
             raise ValueError("Invalid physical qubit: {}".format(node))
         return self.package_graph.nodes[node]["qubit"].area
 
+    def get_coupler_fide(self, phy_qubit_u: tuple[int, int], phy_qubit_v: tuple[int, int]) -> float:
+        """
+        Get the fidelity of the coupler between two physical qubits.
+
+        Args:
+            phy_qubit_u (tuple[int, int]): The coordinate of the first physical qubit.
+            phy_qubit_v (tuple[int, int]): The coordinate of the second physical qubit.
+
+        Returns:
+            float: The fidelity of the coupler.
+        """
+        if not self.package_graph.has_edge(phy_qubit_u, phy_qubit_v):
+            raise ValueError(f"No coupler between {phy_qubit_u} and {phy_qubit_v}")
+        if self.package_graph.edges[(phy_qubit_u, phy_qubit_v)]["type"] == EdgeType.Intra:
+            chiplet = self.get_node_chiplet(phy_qubit_u)
+            return self.fab_model.get_intra_fide(chiplet.get_capacity())
+        elif self.package_graph.edges[(phy_qubit_u, phy_qubit_v)]["type"] == EdgeType.Inter:
+            return self.fab_model.inter_fide
+        else:
+            raise ValueError(f"Invalid edge type between {phy_qubit_u} and {phy_qubit_v}: {self.package_graph.edges[(phy_qubit_u, phy_qubit_v)]['type']}")
+
     def draw_qubits(self, 
         marginrate: float = 0.2, 
         markersize: float = 4, 

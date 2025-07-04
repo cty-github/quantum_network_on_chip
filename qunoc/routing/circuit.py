@@ -63,6 +63,7 @@ class GhzPreparation(BoardingAction):
         data_qubits (list[int]): The data qubits that the GHZ state is serving for.
         source_physical_qubits (list[tuple[int, int]]): The list of physical qubits where the GHZ state is prepared.
         target_physical_qubits (list[tuple[int, int]]): The list of physical qubits where the GHZ state will be routed to.
+        tele_gate_ids (list[int]): The list of teleportation gate ids that the GHZ state is serving for.
 
         ancilla_qubit_nodes (dict[int, list[tuple[int, int]]]): The dictionary recording the ancilla nodes used for each ancilla qubit.
     """
@@ -73,6 +74,8 @@ class GhzPreparation(BoardingAction):
             data_qubits: list[int], 
             source_physical_qubits: list[tuple[int, int]], 
             target_physical_qubits: list[tuple[int, int]], 
+            ghz_balise_graph: list[tuple[tuple[int, int], tuple[int, int]]], 
+            tele_gate_ids: list[int]
         ):
         """
         Initialize the GHZ preparation action.
@@ -83,6 +86,8 @@ class GhzPreparation(BoardingAction):
             data_qubits (list[int]): The data qubits that the GHZ state is serving for.
             source_physical_qubits (list[tuple[int, int]]): The list of physical qubits where the GHZ state is prepared.
             target_physical_qubits (list[tuple[int, int]]): The list of physical qubits where the GHZ state will be routed to.
+            ghz_balise_graph (list[tuple[tuple[int, int], tuple[int, int]]]): The list of physical qubits where the GHZ state is prepared and how it is linked to the subgraph.
+            tele_gate_ids (list[int]): The list of teleportation gate ids that the GHZ state is serving for.
         """
         super().__init__()
         self.qubit_num = qubit_num
@@ -90,6 +95,8 @@ class GhzPreparation(BoardingAction):
         self.data_qubits = data_qubits
         self.source_physical_qubits = source_physical_qubits
         self.target_physical_qubits = target_physical_qubits
+        self.ghz_balise_graph = ghz_balise_graph
+        self.tele_gate_ids = tele_gate_ids
         self.init_logging()
 
     def __repr__(self):
@@ -235,10 +242,11 @@ class Teleport(RidingAction):
         ancilla_qubit (int): The ancilla qubit used for teleportation.
         data_qubit (int): The data qubit to be teleported.
         platform (tuple[int, int]): The physical qubit on compute chiplet where the ancilla qubit is located.
+        register (tuple[int, int]): The physical qubit on compute chiplet where the data qubit is located.
         control_flag (bool): The flag marking if the data qubit is the control qubit.
     """
 
-    def __init__(self, ancilla_qubit: int, data_qubit: int, platform: tuple[int, int], control_flag: bool):
+    def __init__(self, ancilla_qubit: int, data_qubit: int, platform: tuple[int, int], register: tuple[int, int], control_flag: bool):
         """
         Initialize the teleportation action.
 
@@ -246,12 +254,14 @@ class Teleport(RidingAction):
             ancilla_qubit (int): The ancilla qubit used for teleportation.
             data_qubit (int): The data qubit to be teleported.
             platform (tuple[int, int]): The physical qubit on compute chiplet where the ancilla qubit is located.
+            register (tuple[int, int]): The physical qubit on compute chiplet where the data qubit is located.
             control_flag (bool): The flag marking if the data qubit is the control qubit.
         """
         super().__init__()
         self.ancilla_qubit = ancilla_qubit
         self.data_qubit = data_qubit
         self.platform = platform
+        self.register = register
         self.control_flag = control_flag
         self.init_logging()
 
@@ -348,17 +358,23 @@ class DirectGate(RidingAction):
 
     Attributes:
         logic_gate (Control): The logical control gate.
+        phy_ctrl_qubit (tuple[int, int]): The physical qubit where the control qubit is located.
+        phy_targ_qubit (tuple[int, int]): The physical qubit where the target qubit is located.
     """
     
-    def __init__(self, logic_gate: Control):
+    def __init__(self, logic_gate: Control, phy_ctrl_qubit: tuple[int, int], phy_targ_qubit: tuple[int, int]):
         """
         Initialize the local gate action.
         
         Args:
             logic_gate (Control): The logical control gate.
+            phy_ctrl_qubit (tuple[int, int]): The physical qubit where the control qubit is located.
+            phy_targ_qubit (tuple[int, int]): The physical qubit where the target qubit is located.
         """
         super().__init__()
         self.logic_gate = logic_gate
+        self.phy_ctrl_qubit = phy_ctrl_qubit
+        self.phy_targ_qubit = phy_targ_qubit
         self.init_logging()
 
     def __repr__(self):
@@ -659,7 +675,7 @@ class RidingStage(CircuitStage):
             bool: Whether the action is successfully added.
         """
         assert isinstance(action, Transport), "Action should be Transport"
-        assert action.source_physical_qubit in self.occupied_balises, f"In action {action.id}, data qubit {action.source_physical_qubit} to transport should be in source balise {self.occupied_balises}."
+        assert action.source_physical_qubit in self.occupied_balises, f"In action {action.id}, data qubit {action.logic_qubit} to transport should be in source balise {action.source_physical_qubit}."
 
         if action.target_physical_qubit == action.source_physical_qubit:
             pass
@@ -697,6 +713,7 @@ class RidingStage(CircuitStage):
         """
         assert isinstance(action, Teleport), "Action should be Teleport"
         assert action.platform in self.occupied_platforms, f"In action {action.id}, ancilla qubit {action.ancilla_qubit} for teleportation should be in platform {action.platform}."
+        assert self.curr_p2l_map[action.register] == action.data_qubit, f"In action {action.id}, data qubit {action.data_qubit} to teleport should be in register {action.register}."
 
         self.occupied_platforms.remove(action.platform)
         self.curr_l2p_map.pop(action.ancilla_qubit)
@@ -816,7 +833,11 @@ class RidingStage(CircuitStage):
             bool: Whether the action is successfully added.
         """
         assert isinstance(action, DirectGate), "Action should be LocalGate"
-        
+        assert self.curr_p2l_map[action.phy_ctrl_qubit] == action.logic_gate.control_qubit, \
+            f"In action {action.id}, control qubit {action.logic_gate.control_qubit} should be in physical qubit {action.phy_ctrl_qubit}."
+        assert self.curr_p2l_map[action.phy_targ_qubit] == action.logic_gate.target_qubit, \
+            f"In action {action.id}, target qubit {action.logic_gate.target_qubit} should be in physical qubit {action.phy_targ_qubit}."
+
         physical_qubit_control = self.curr_l2p_map[action.logic_gate.control_qubit]
         physical_qubit_target = self.curr_l2p_map[action.logic_gate.target_qubit]
         assert (physical_qubit_control[0] == physical_qubit_target[0] and abs(physical_qubit_control[1] - physical_qubit_target[1]) == 1) or \
@@ -850,15 +871,15 @@ class Circuit:
         occupied_platforms (set): The set of platforms occupied by logic qubits.
         hold_ancilla_plats (set): The set of platforms holding ancilla qubits.
     """
-    
-    def __init__(self, logic_qubit_num: int, init_l2p_map: dict, init_p2l_map: dict, action_depend_graph: nx.DiGraph, op_config: OperationConfig):
+
+    def __init__(self, logic_qubit_num: int, init_l2p_map: dict[int, tuple[int, int]], init_p2l_map: dict[tuple[int, int], int], action_depend_graph: nx.DiGraph, op_config: OperationConfig):
         """
         Initialize the circuit.
 
         Args:
             logic_qubit_num (int): The number of logic qubits in the circuit.
-            init_l2p_map (dict): The initial mapping from logical qubits to physical qubits.
-            init_p2l_map (dict): The initial mapping from physical qubits to logical qubits.
+            init_l2p_map (dict[int, tuple[int, int]]): The initial mapping from logical qubits to physical qubits.
+            init_p2l_map (dict[tuple[int, int], int]): The initial mapping from physical qubits to logical qubits.
             action_depend_graph (nx.DiGraph): The directed acyclic graph representing dependencies between actions.
             op_config (OperationConfig): The configuration for operations, including time constants for different operations.
         """
@@ -923,26 +944,6 @@ class Circuit:
             logging.info(f"Extended circuit with {new_stage.__class__.__name__} {new_stage.id}.")
             logging.info(f"Current qubit mapping: {new_stage.curr_l2p_map}")
         return new_stage
-    
-    def estimate_fidelity(self) -> float:
-        """
-        Estimate the fidelity of the entire circuit.
-
-        Returns:
-            float: The estimated fidelity of the circuit.
-        """
-        # TODO: complete the function
-        pass
-
-    def estimate_average_qst_fide(self) -> float:
-        """
-        Estimate the average fidelity of each quantum state transfer in the circuit.
-
-        Returns:
-            float: The estimated average fidelity of quantum state transfer.
-        """
-        # TODO: complete the function
-        pass
     
     def estimate_depth(self) -> int:
         """

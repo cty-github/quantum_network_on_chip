@@ -1,4 +1,5 @@
 import logging
+import statistics
 from copy import deepcopy
 
 from ..utils.config import config
@@ -61,21 +62,24 @@ class TeleBlock(ComputeBlock):
     Represents a teleportation block in which gates are executed by teleportation.
 
     Attributes:
+        tele_gates (list[Control]): The gates to be executed in the teleportation block.
         control_qubit (int): The control qubit of the teleportation block.
         target_qubits (list[int]): The target qubits of the teleportation block.
         nearest_platforms (dict[int, tuple[int, int]]): The nearest platforms for each involved qubit.
     """
 
-    def __init__(self, control_qubit: int, target_qubits: list[int], nearest_platforms: dict[int, tuple[int, int]]):
+    def __init__(self, tele_gates: list[Control], control_qubit: int, target_qubits: list[int], nearest_platforms: dict[int, tuple[int, int]]):
         """
         Initialize a TeleBlock.
 
         Args:
+            tele_gates (list[Control]): The gates to be executed in the teleportation block.
             control_qubit (int): The control qubit of the teleportation block.
             target_qubits (list[int]): The target qubits of the teleportation block.
             nearest_platforms (dict[int, tuple[int, int]]): The nearest platforms for each involved qubit.
         """
         super().__init__()
+        self.tele_gates = tele_gates
         self.control_qubit = control_qubit
         self.target_qubits = target_qubits
         self.nearest_platforms = nearest_platforms
@@ -137,6 +141,7 @@ class Router:
         metro_graph (nx.Graph): The subgraph of the package topology representing the metro network.
         gate_depend_graph (nx.DiGraph): The dependency graph of gates in the quantum program.
         ancilla_qubit_id (int): The new id of the ancilla qubit in the quantum program.
+        gate_actions (dict[int, list[int]]): The actions for each gate in the quantum program.
 
         block_history (list[plt.Figure]): The history of compute blocks in the routing process.
         action_history (list[plt.Figure]): The history of actions in the routing process.
@@ -171,10 +176,12 @@ class Router:
 
         self.package_graph = package.package_graph
         self.metro_graph: nx.Graph = package.package_graph.subgraph(self.package.transfer_nodes)
+
         self.gate_depend_graph = program.gate_depend_graph
         self.ancilla_qubit_id = program.data_qubit_num
-        ComputeBlock._counter = 0
+        self.gate_actions: dict[int, list[int]] = dict()
 
+        ComputeBlock._counter = 0
         self.block_history: list[plt.Figure] = []
         self.action_history: list[plt.Figure] = []
 
@@ -376,6 +383,7 @@ class Router:
         Action dependency: SwapGate -> DirectGate.
         """
         local_gate = local_block.ctrl_gate
+        self.gate_actions[local_gate.id] = []
         compute_module = local_block.module
         swap_path = compute_module.get_swap_path(self.curr_l2p_map[local_gate.control_qubit], self.curr_l2p_map[local_gate.target_qubit])
         for i in range(len(swap_path)-1):
@@ -384,6 +392,7 @@ class Router:
                 assert self.curr_p2l_map[phy_qubit_u] == local_gate.control_qubit, f"phy_qubit_u: {phy_qubit_u}, local_gate.control_qubit: {local_gate.control_qubit}"
                 swapped_qubit = self.curr_p2l_map[phy_qubit_v]
                 swap_gate_act = SwapGate(local_gate.control_qubit, phy_qubit_u, phy_qubit_v)
+                self.gate_actions[local_gate.id].append(swap_gate_act.id)
                 self.action_depend_graph.add_node(swap_gate_act.id, action=swap_gate_act)
                 self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[local_gate.control_qubit], swap_gate_act.id)
                 self.recent_logic_qubit_action_dict[local_gate.control_qubit] = swap_gate_act.id
@@ -400,7 +409,8 @@ class Router:
             else:
                 assert self.curr_p2l_map[swap_path[i]] == local_gate.control_qubit, f"phy_qubit_u: {swap_path[i]}, local_gate.control_qubit: {local_gate.control_qubit}"
                 assert self.curr_p2l_map[swap_path[i+1]] == local_gate.target_qubit, f"phy_qubit_v: {swap_path[i+1]}, local_gate.target_qubit: {local_gate.target_qubit}"
-                direct_gate_act = DirectGate(local_gate)
+                direct_gate_act = DirectGate(local_gate, swap_path[i], swap_path[i+1])
+                self.gate_actions[local_gate.id].append(direct_gate_act.id)
                 self.action_depend_graph.add_node(direct_gate_act.id, action=direct_gate_act)
                 self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[local_gate.control_qubit], direct_gate_act.id)
                 self.recent_logic_qubit_action_dict[local_gate.control_qubit] = direct_gate_act.id
@@ -470,7 +480,7 @@ class Router:
         ctrl_qubit = tele_gates[0].control_qubit
         target_qubits = [tele_gate.target_qubit for tele_gate in tele_gates]
         assert set([ctrl_qubit] + target_qubits) == set(nearest_platforms.keys()), "Control qubit and target qubits must match the nearest platforms."
-        tele_block = TeleBlock(ctrl_qubit, target_qubits, nearest_platforms)
+        tele_block = TeleBlock(tele_gates, ctrl_qubit, target_qubits, nearest_platforms)
         self.block_depend_graph.add_node(tele_block.id, block=tele_block)
         depend_block_ids = set()
         tele_ids = [tele_gate.id for tele_gate in tele_gates]
@@ -541,7 +551,7 @@ class Router:
                 nearest_platforms.append(nearest_platform)
         return nearest_platforms
 
-    def get_balise_nearest_metro_subgraph(self, balise_id: tuple[int, int], node_num: int) -> list[tuple[int, int]]:
+    def get_balise_nearest_metro_subgraph(self, balise_id: tuple[int, int], node_num: int) -> list[tuple[tuple[int, int], tuple[int, int]]]:
         """
         Get the nearest metro subgraph for a balise.
 
@@ -550,18 +560,21 @@ class Router:
             node_num (int): The number of nodes in the subgraph.
 
         Return:
-            list[tuple[int, int]]: The list of nodes in the nearest metro subgraph.
+            list[tuple[tuple[int, int], tuple[int, int]]]: The list of nodes in the nearest metro subgraph and how it is linked to the subgraph.
         """
-        visited_balise = []
-        candidate_balise_queue = [balise_id]
-        while candidate_balise_queue and len(visited_balise) < node_num:
-            node = candidate_balise_queue.pop(0)
+        visited_balise: set[tuple[int, int]] = set()
+        visited_balise_graph: list[tuple[tuple[int, int], tuple[int, int]]] = []
+        candidate_balise_queue = [(balise_id, None)]
+        while candidate_balise_queue and len(visited_balise_graph) < node_num:
+            node, parent = candidate_balise_queue.pop(0)
             if node not in visited_balise:
-                visited_balise.append(node)
-                candidate_balise_queue.extend([nbr for nbr in self.metro_graph.neighbors(node) if nbr not in visited_balise])
-        return visited_balise
+                visited_balise.add(node)
+                visited_balise_graph.append((node, parent))
+                candidate_balise_queue.extend([(nbr, node) for nbr in self.metro_graph.neighbors(node) if nbr not in visited_balise])
+        assert len(visited_balise) == len(visited_balise_graph), "Repeated balise found in the visited balise graph."
+        return visited_balise_graph
 
-    def locate_ghz_state(self, involved_qubits: list[int], platforms: list[tuple[int, int]]) -> GhzPreparation:
+    def locate_ghz_state(self, involved_qubits: list[int], platforms: list[tuple[int, int]], tele_gate_ids: list[int]) -> GhzPreparation:
         """
         Allocate GHZ resource for a list of logic qubits for teleportation.
         Extend the ghz graph from the station of control qubit, try to ensure the total transfer distance is minimized.
@@ -575,19 +588,10 @@ class Router:
         """
         ancilla_qubit_num = len(involved_qubits)
         stations = [self.package.platform_stations_dict[platform][0] for platform in platforms]
-        # best_interchange_depth = None
-        # best_ghz_balises = None
-        # for balise_id in self.metro_graph.nodes:
-        #     ghz_balises = self.get_balise_nearest_metro_subgraph(balise_id, ancilla_qubit_num)
-        #     interchange_depth = max([self.package.get_inter_chiplet_distance(ghz_balises[i], stations[i]) for i in range(ancilla_qubit_num)])
-        #     if best_interchange_depth == None or interchange_depth < best_interchange_depth:
-        #         best_interchange_depth = interchange_depth
-        #         best_ghz_balises = ghz_balises
-        # source_physical_qubits = best_ghz_balises
-        ghz_balises = self.get_balise_nearest_metro_subgraph(stations[0], ancilla_qubit_num)
-        source_physical_qubits = ghz_balises
+        ghz_balise_graph = self.get_balise_nearest_metro_subgraph(stations[0], ancilla_qubit_num)
+        source_physical_qubits = [ghz_balise for ghz_balise, _ in ghz_balise_graph]
         target_physical_qubits = stations
-        ghz_action = GhzPreparation(ancilla_qubit_num, [self.ancilla_qubit_id + i for i in range(ancilla_qubit_num)], involved_qubits, source_physical_qubits, target_physical_qubits)
+        ghz_action = GhzPreparation(ancilla_qubit_num, [self.ancilla_qubit_id + i for i in range(ancilla_qubit_num)], involved_qubits, source_physical_qubits, target_physical_qubits, ghz_balise_graph, tele_gate_ids)
         self.ancilla_qubit_id += ancilla_qubit_num
         return ghz_action
 
@@ -626,7 +630,9 @@ class Router:
         """
         involved_qubits = [tele_block.control_qubit] + tele_block.target_qubits
         platforms = [tele_block.nearest_platforms[qubit] for qubit in involved_qubits]
-        ghz_action = self.locate_ghz_state(involved_qubits, platforms)
+        ghz_action = self.locate_ghz_state(involved_qubits, platforms, [tele_gate.id for tele_gate in tele_block.tele_gates])
+        for tele_gate in tele_block.tele_gates:
+            self.gate_actions[tele_gate.id] = [ghz_action.id]
         self.action_depend_graph.add_node(ghz_action.id, action=ghz_action)
         self.action_depend_graph.add_edge(self.last_ghz_action_id, ghz_action.id)
         self.last_ghz_action_id = ghz_action.id
@@ -640,6 +646,7 @@ class Router:
 
         for i in range(len(involved_qubits)):
             data_qubit = involved_qubits[i]
+            qubit_actions = []
             route_source_phy_qubit = self.curr_l2p_map[data_qubit]
             route_target_phy_qubit = platforms[i]
             module = self.package.get_node_area(route_source_phy_qubit)
@@ -650,6 +657,7 @@ class Router:
                 assert self.curr_p2l_map[phy_qubit_u] == data_qubit, f"phy_qubit_u: {phy_qubit_u}, logic_qubit: {data_qubit}"
                 swapped_qubit = self.curr_p2l_map[phy_qubit_v]
                 swap_gate_act = SwapGate(data_qubit, phy_qubit_u, phy_qubit_v)
+                qubit_actions.append(swap_gate_act.id)
                 self.action_depend_graph.add_node(swap_gate_act.id, action=swap_gate_act)
                 self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[data_qubit], swap_gate_act.id)
                 self.recent_logic_qubit_action_dict[data_qubit] = swap_gate_act.id
@@ -670,6 +678,7 @@ class Router:
             ancilla_nodes = [tele_source_phy_qubit]
             transfer_on_metro_acts = self.route_on_transfer_chiplets(ancilla_qubit, tele_source_phy_qubit, tele_target_phy_qubit)
             for j in range(len(transfer_on_metro_acts)):
+                qubit_actions.append(transfer_on_metro_acts[j].id)
                 self.action_depend_graph.add_node(transfer_on_metro_acts[j].id, action=transfer_on_metro_acts[j])
                 if j == 0:
                     self.action_depend_graph.add_edge(ghz_action.id, transfer_on_metro_acts[j].id)
@@ -680,6 +689,7 @@ class Router:
                 elif isinstance(transfer_on_metro_acts[j], Interchange):
                     ancilla_nodes.append(transfer_on_metro_acts[j].interchange[1])
             alight_act = Alight(ancilla_qubit, tele_target_phy_qubit, route_target_phy_qubit)
+            qubit_actions.append(alight_act.id)
             self.action_depend_graph.add_node(alight_act.id, action=alight_act)
             if len(transfer_on_metro_acts) == 0:
                 self.action_depend_graph.add_edge(ghz_action.id, alight_act.id)
@@ -687,7 +697,8 @@ class Router:
                 self.action_depend_graph.add_edge(transfer_on_metro_acts[-1].id, alight_act.id)
             ancilla_nodes.append(route_target_phy_qubit)
             ghz_action.record_ancilla_qubit_nodes(ancilla_qubit, ancilla_nodes)
-            teleport_act = Teleport(ancilla_qubit, data_qubit, route_target_phy_qubit, data_qubit==tele_block.control_qubit)
+            teleport_act = Teleport(ancilla_qubit, data_qubit, route_target_phy_qubit, swap_path[-2], data_qubit==tele_block.control_qubit)
+            qubit_actions.append(teleport_act.id)
             self.action_depend_graph.add_node(teleport_act.id, action=teleport_act)
             self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[data_qubit], teleport_act.id)
             self.recent_logic_qubit_action_dict[data_qubit] = teleport_act.id
@@ -695,8 +706,12 @@ class Router:
             self.curr_l2p_map.pop(ancilla_qubit)
             self.curr_p2l_map[tele_source_phy_qubit] = -1
             if i == 0:
+                for tele_gate in tele_block.tele_gates:
+                    self.gate_actions[tele_gate.id].extend(qubit_actions)
                 tele_ctrl_act_id = teleport_act.id
             else:
+                assert tele_block.tele_gates[i-1].target_qubit == data_qubit
+                self.gate_actions[tele_block.tele_gates[i-1].id].extend(qubit_actions)
                 self.action_depend_graph.add_edge(tele_ctrl_act_id, teleport_act.id)
         
         fig = self.draw_qubit_mapping_block(involved_qubits, ancilla_qubits=list(zip(platforms, ghz_action.ancilla_qubits)), title=f"Transform TeleBlock {tele_block.id}")
@@ -813,6 +828,7 @@ class Router:
                 native_qubits.append(qubit)
         while len(immigate_qubits) > 0:
             immigate_qubit = immigate_qubits.pop()
+            qubit_actions = []
             depart_node = self.curr_l2p_map[immigate_qubit]
             depart_module = self.package.get_node_area(depart_node)
             assert isinstance(depart_module, ComputeModule)
@@ -833,6 +849,7 @@ class Router:
                 assert self.curr_p2l_map[depart_swap_path[j]] == immigate_qubit, f"qubit_u: {depart_swap_path[j]}, immigate_qubit: {immigate_qubit}"
                 swapped_qubit = self.curr_p2l_map[depart_swap_path[j+1]]
                 swap_gate_act = SwapGate(immigate_qubit, depart_swap_path[j], depart_swap_path[j+1])
+                qubit_actions.append(swap_gate_act.id)
                 self.action_depend_graph.add_node(swap_gate_act.id, action=swap_gate_act)
                 self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[immigate_qubit], swap_gate_act.id)
                 self.recent_logic_qubit_action_dict[immigate_qubit] = swap_gate_act.id
@@ -847,6 +864,7 @@ class Router:
                     self.recent_physical_qubit_action_dict[depart_swap_path[j]] = swap_gate_act.id
                 self.curr_p2l_map[depart_swap_path[j]] = swapped_qubit
             immigate_enter_act = Enter(immigate_qubit, depart_platform, depart_swap_path[-2])
+            qubit_actions.append(immigate_enter_act.id)
             self.action_depend_graph.add_node(immigate_enter_act.id, action=immigate_enter_act)
             self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[immigate_qubit], immigate_enter_act.id)
             self.recent_logic_qubit_action_dict[immigate_qubit] = immigate_enter_act.id
@@ -862,6 +880,7 @@ class Router:
                 if expelled_qubit == -1 and swapped_qubit == -1:
                     continue
                 swap_gate_act = SwapGate(expelled_qubit, arrive_swap_path[j], arrive_swap_path[j+1])
+                qubit_actions.append(swap_gate_act.id)
                 self.action_depend_graph.add_node(swap_gate_act.id, action=swap_gate_act)
                 if expelled_qubit != -1:
                     self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[expelled_qubit], swap_gate_act.id)
@@ -881,6 +900,7 @@ class Router:
                 self.curr_p2l_map[arrive_swap_path[j]] = swapped_qubit
             if expelled_qubit != -1:
                 expelled_enter_act = Enter(expelled_qubit, arrive_platform, arrive_swap_path[-2])
+                qubit_actions.append(expelled_enter_act.id)
                 self.action_depend_graph.add_node(expelled_enter_act.id, action=expelled_enter_act)
                 self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[expelled_qubit], expelled_enter_act.id)
                 self.recent_logic_qubit_action_dict[expelled_qubit] = expelled_enter_act.id
@@ -891,15 +911,18 @@ class Router:
 
             # Transfer the immigate_qubit from depart_platform to arrive_platform
             immigate_board_act = Board(immigate_qubit, depart_station, depart_platform)
+            qubit_actions.append(immigate_board_act.id)
             self.action_depend_graph.add_node(immigate_board_act.id, action=immigate_board_act)
             self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[immigate_qubit], immigate_board_act.id)
             self.recent_logic_qubit_action_dict[immigate_qubit] = immigate_board_act.id
             immigate_transfer_acts = self.route_on_transfer_chiplets(immigate_qubit, depart_station, arrive_station)
             for i in range(len(immigate_transfer_acts)):
+                qubit_actions.append(immigate_transfer_acts[i].id)
                 self.action_depend_graph.add_node(immigate_transfer_acts[i].id, action=immigate_transfer_acts[i])
                 self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[immigate_qubit], immigate_transfer_acts[i].id)
                 self.recent_logic_qubit_action_dict[immigate_qubit] = immigate_transfer_acts[i].id
             immigate_alight_act = Alight(immigate_qubit, arrive_station, arrive_platform)
+            qubit_actions.append(immigate_alight_act.id)
             self.action_depend_graph.add_node(immigate_alight_act.id, action=immigate_alight_act)
             self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[immigate_qubit], immigate_alight_act.id)
             self.recent_logic_qubit_action_dict[immigate_qubit] = immigate_alight_act.id
@@ -907,15 +930,18 @@ class Router:
             if expelled_qubit != -1:
                 # Transfer the expelled_qubit from arrive_platform to depart_platform
                 expelled_board_act = Board(expelled_qubit, arrive_station, arrive_platform)
+                qubit_actions.append(expelled_board_act.id)
                 self.action_depend_graph.add_node(expelled_board_act.id, action=expelled_board_act)
                 self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[expelled_qubit], expelled_board_act.id)
                 self.recent_logic_qubit_action_dict[expelled_qubit] = expelled_board_act.id
                 expelled_transfer_acts = self.route_on_transfer_chiplets(expelled_qubit, arrive_station, depart_station)
                 for i in range(len(expelled_transfer_acts)):
+                    qubit_actions.append(expelled_transfer_acts[i].id)
                     self.action_depend_graph.add_node(expelled_transfer_acts[i].id, action=expelled_transfer_acts[i])
                     self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[expelled_qubit], expelled_transfer_acts[i].id)
                     self.recent_logic_qubit_action_dict[expelled_qubit] = expelled_transfer_acts[i].id
                 expelled_alight_act = Alight(expelled_qubit, depart_station, depart_platform)
+                qubit_actions.append(expelled_alight_act.id)
                 self.action_depend_graph.add_node(expelled_alight_act.id, action=expelled_alight_act)
                 self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[expelled_qubit], expelled_alight_act.id)
                 self.recent_logic_qubit_action_dict[expelled_qubit] = expelled_alight_act.id
@@ -930,6 +956,7 @@ class Router:
             self.curr_p2l_map[depart_platform] = expelled_qubit
 
             immigate_exit_act = Exit(immigate_qubit, arrive_platform, arrive_swap_path[len(arrive_swap_path)-2])
+            qubit_actions.append(immigate_exit_act.id)
             self.action_depend_graph.add_node(immigate_exit_act.id, action=immigate_exit_act)
             self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[immigate_qubit], immigate_exit_act.id)
             self.recent_logic_qubit_action_dict[immigate_qubit] = immigate_exit_act.id
@@ -939,6 +966,7 @@ class Router:
             self.curr_p2l_map[arrive_platform] = -1
             if expelled_qubit != -1:
                 expelled_exit_act = Exit(expelled_qubit, depart_platform, depart_swap_path[len(depart_swap_path)-2])
+                qubit_actions.append(expelled_exit_act.id)
                 self.action_depend_graph.add_node(expelled_exit_act.id, action=expelled_exit_act)
                 self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[expelled_qubit], expelled_exit_act.id)
                 self.recent_logic_qubit_action_dict[expelled_qubit] = expelled_exit_act.id
@@ -947,12 +975,19 @@ class Router:
                 # self.action_depend_graph.add_edge(self.recent_physical_qubit_action_dict[depart_swap_path[len(depart_swap_path)-2]], expelled_exit_act.id)
                 self.curr_p2l_map[depart_platform] = -1
             
+            for ctrl_gate in move_block.ctrl_gates:
+                if ctrl_gate.control_qubit == immigate_qubit or ctrl_gate.target_qubit == immigate_qubit:
+                    if ctrl_gate.id not in self.gate_actions:
+                        self.gate_actions[ctrl_gate.id] = []
+                    self.gate_actions[ctrl_gate.id].extend(qubit_actions)
             native_qubits.append(immigate_qubit)
 
         # Route the local gates in the move block
         compute_module = self.package.get_node_area(move_block.chiplet.get_nodes()[0])
         assert isinstance(compute_module, ComputeModule)
         for local_gate in move_block.ctrl_gates:
+            if local_gate.id not in self.gate_actions:
+                self.gate_actions[local_gate.id] = []
             swap_path = compute_module.get_swap_path(self.curr_l2p_map[local_gate.control_qubit], self.curr_l2p_map[local_gate.target_qubit])
             for i in range(len(swap_path)-1):
                 if i < len(swap_path)-2:
@@ -960,6 +995,7 @@ class Router:
                     assert self.curr_p2l_map[phy_qubit_u] == local_gate.control_qubit, f"phy_qubit_u: {phy_qubit_u}, local_gate.control_qubit: {local_gate.control_qubit}"
                     swapped_qubit = self.curr_p2l_map[phy_qubit_v]
                     swap_gate_act = SwapGate(local_gate.control_qubit, phy_qubit_u, phy_qubit_v)
+                    self.gate_actions[local_gate.id].append(swap_gate_act.id)
                     self.action_depend_graph.add_node(swap_gate_act.id, action=swap_gate_act)
                     self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[local_gate.control_qubit], swap_gate_act.id)
                     self.recent_logic_qubit_action_dict[local_gate.control_qubit] = swap_gate_act.id
@@ -976,7 +1012,8 @@ class Router:
                 else:
                     assert self.curr_p2l_map[swap_path[i]] == local_gate.control_qubit, f"phy_qubit_u: {swap_path[i]}, local_gate.control_qubit: {local_gate.control_qubit}"
                     assert self.curr_p2l_map[swap_path[i+1]] == local_gate.target_qubit, f"phy_qubit_v: {swap_path[i+1]}, local_gate.target_qubit: {local_gate.target_qubit}"
-                    direct_gate_act = DirectGate(local_gate)
+                    direct_gate_act = DirectGate(local_gate, swap_path[i], swap_path[i+1])
+                    self.gate_actions[local_gate.id].append(direct_gate_act.id)
                     self.action_depend_graph.add_node(direct_gate_act.id, action=direct_gate_act)
                     self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[local_gate.control_qubit], direct_gate_act.id)
                     self.recent_logic_qubit_action_dict[local_gate.control_qubit] = direct_gate_act.id
@@ -1156,24 +1193,64 @@ class Router:
             logging.info(f"Updated no depend actions: {no_depend_action_ids}.")
         return no_depend_action_ids
 
-    def estimate_fidelity(self) -> float:
+    def estimate_gate_fides(self) -> dict[int, float]:
+        """
+        Estimate the fidelity for each gate in the circuit.
+
+        Returns:
+            dict[int, float]: A dictionary mapping gate ids to their estimated fidelities.
+        """
+        if not hasattr(self, "gate_fides"):
+            self.gate_fides: dict[int, float] = dict()
+            for gate_id, action_ids in self.gate_actions.items():
+                self.gate_fides[gate_id] = 1.0
+                for action_id in action_ids:
+                    action = self.action_depend_graph.nodes[action_id]["action"]
+                    if isinstance(action, GhzPreparation):
+                        ghz_edge = action.ghz_balise_graph[action.tele_gate_ids.index(gate_id) + 1]
+                        self.gate_fides[gate_id] *= self.package.get_coupler_fide(*ghz_edge)
+                    elif isinstance(action, (Board, Alight, Interchange)):
+                        self.gate_fides[gate_id] *= self.package.fab_model.inter_fide
+                    elif isinstance(action, Transport):
+                        qst_dist = abs(action.source_physical_qubit[0] - action.target_physical_qubit[0]) + abs(action.source_physical_qubit[1] - action.target_physical_qubit[1])
+                        self.gate_fides[gate_id] *= self.package.fab_model.enhanced_fide ** qst_dist
+                    elif isinstance(action, Teleport):
+                        phy_qubit_u = action.platform
+                        phy_qubit_v = action.register
+                        self.gate_fides[gate_id] *= self.package.get_coupler_fide(phy_qubit_u, phy_qubit_v)
+                    elif isinstance(action, (Enter, Exit, SwapGate, DirectGate)):
+                        if isinstance(action, (Enter, Exit)):
+                            phy_qubit_u = action.platform
+                            phy_qubit_v = action.register
+                        elif isinstance(action, SwapGate):
+                            phy_qubit_u = action.qubit_u
+                            phy_qubit_v = action.qubit_v
+                        elif isinstance(action, DirectGate):
+                            phy_qubit_u = action.phy_ctrl_qubit
+                            phy_qubit_v = action.phy_targ_qubit
+                        self.gate_fides[gate_id] *= self.package.get_coupler_fide(phy_qubit_u, phy_qubit_v) ** 3
+        return self.gate_fides
+
+    def estimate_qunoc_circuit_fide(self) -> float:
         """
         Estimate the fidelity of the circuit.
 
         Return:
             float, the estimated fidelity of the circuit.
         """
-        return self.circuit.estimate_fidelity()
+        gate_fides = self.estimate_gate_fides()
+        return math.prod(gate_fides.values())
 
-    def estimate_average_qst_fide(self) -> float:
+    def estimate_average_gate_fide(self) -> float:
         """
-        Estimate the average fidelity of each quantum state transfer in the circuit.
+        Estimate the average fidelity of each quantum gate in the circuit.
 
         Returns:
-            float: The estimated average fidelity of quantum state transfer.
+            float: The estimated average fidelity of quantum gate operations.
         """
-        return self.circuit.estimate_average_qst_fide()
-    
+        gate_fides = self.estimate_gate_fides()
+        return statistics.geometric_mean(gate_fides.values())
+
     def estimate_depth(self) -> int:
         """
         Estimate the depth of the circuit.

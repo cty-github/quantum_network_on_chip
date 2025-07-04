@@ -512,7 +512,7 @@ class Gap:
     """
     fab_model: FabricateModel = None
 
-    def __init__(self, axis:int, pos: tuple[int, int], start: int, end: int):
+    def __init__(self, axis: int, pos: tuple[int, int], start: int, end: int):
         """
         Initialize a gap.
 
@@ -553,7 +553,7 @@ class IntraComputeGap(Gap):
     Represents the gap in a compute module.
     """
 
-    def __init__(self, axis:int, pos: tuple[int, int], start: int, end: int):
+    def __init__(self, axis: int, pos: tuple[int, int], start: int, end: int):
         """
         Initialize a gap in a function area.
 
@@ -570,7 +570,7 @@ class ComputeTransferGap(Gap):
     Represents the gap between a compute module and a transfer line.
     """
 
-    def __init__(self, axis:int, pos: tuple[int, int], start: int, end: int):
+    def __init__(self, axis: int, pos: tuple[int, int], start: int, end: int):
         """
         Initialize a gap between two function area.
 
