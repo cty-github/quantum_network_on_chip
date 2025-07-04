@@ -2,8 +2,8 @@ from collections import deque, defaultdict, Counter
 from functools import *
 from numpy import *
 import networkx as nx
-from Chiplet import *
-from Circuit import *
+from .Chiplet import *
+from .Circuit import *
 
 VERBOSE = False
 

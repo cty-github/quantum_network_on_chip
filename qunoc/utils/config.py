@@ -1,3 +1,5 @@
+# qunoc/utils/config.py
+
 class Config:
     def __init__(self):
         self.debug_mapping = False

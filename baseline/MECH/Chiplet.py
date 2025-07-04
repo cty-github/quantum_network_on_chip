@@ -1,7 +1,7 @@
 import networkx as nx
 import matplotlib.pyplot as plt
 from numpy import *
-from CouplingGraph import *
+from .CouplingGraph import *
 
 def pick_n_elements(lst, n):
     m = len(lst) // n

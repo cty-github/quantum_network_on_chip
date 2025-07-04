@@ -1,7 +1,7 @@
 from random import choices, sample
 from collections import defaultdict
 from math import *
-from Chiplet import *
+from .Chiplet import *
 
 from qiskit import QuantumCircuit
 from qiskit.transpiler import CouplingMap, PassManager

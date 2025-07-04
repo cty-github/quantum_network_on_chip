@@ -1,7 +1,7 @@
 from collections import Counter
-from Chiplet import *
-from Circuit import *
-from HighwayOccupancy import *
+from .Chiplet import *
+from .Circuit import *
+from .HighwayOccupancy import *
 
 class ControlBlock:
     def __init__(self, control, target_counter=Counter()):

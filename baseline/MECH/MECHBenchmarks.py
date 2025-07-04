@@ -1,9 +1,10 @@
 from collections import Counter, defaultdict
 from random import sample
-from Circuit import *
-from Chiplet import *
-from HighwayOccupancy import *
-from Router import *
+from .Circuit import *
+from .Chiplet import *
+from .HighwayOccupancy import *
+from .Router import *
+from qunoc.element.package import OperationConfig
 
 def VQE(data_qubit_num):
     program = []
@@ -48,7 +49,7 @@ def BV(data_qubit_num, percentage=0.5):
         program.append(control_block)
     return program
     
-def MECH_experiments(structure, chiplet_array_dim, chiplet_size, custom_highway_qubits=None, custom_highway_edges=[], benchmarks=['vqe','qft','qaoa','bv'], cross_link_sparsity=1, prep_period=None, meas_period=2, cross_chip_gate_weight = 7.4, meas_weight = 2.2):
+def MECH_experiments(structure, chiplet_array_dim, chiplet_size, custom_highway_qubits=None, custom_highway_edges=[], benchmarks=['vqe','qft','qaoa','bv'], cross_link_sparsity=1, prep_period=None, meas_period=2, cross_chip_gate_weight = 7.4, meas_weight = 2.2, op_config: OperationConfig = OperationConfig()):
     G=gen_chiplet_array(structure, chiplet_array_dim[0], chiplet_array_dim[1], chiplet_size[0], chiplet_size[1], cross_link_sparsity=cross_link_sparsity)
     if prep_period is None:
         if structure in ['square', 'hexagon']:
@@ -90,10 +91,13 @@ def MECH_experiments(structure, chiplet_array_dim, chiplet_size, custom_highway_
         cross_chip_gate_num = 0
         meas_num = 0
 
+        mech_circuit_depth = 0
         for idx in range(router.circuit.depth):
+            layer_depth = 0
             for line in range(len(router.circuit.circuit_lines)):
                 if router.circuit.take_role(line, idx) == 'q':
                     meas_num += 1
+                    layer_depth = max(layer_depth, op_config.measure_time)
                 if router.circuit.take_role(line, idx) in ['t', 'mt']:
                     node = router.circuit.take_node(line, idx)
                     if isinstance(node,  OpNode):
@@ -104,11 +108,15 @@ def MECH_experiments(structure, chiplet_array_dim, chiplet_size, custom_highway_
                     
                     if router.chip.has_edge(control_qubit, target_qubit) and router.chip.edges[(control_qubit, target_qubit)]['type'] == 'cross_chip':
                         cross_chip_gate_num += 1
+                        layer_depth = max(layer_depth, op_config.inter_time)
                     else:
                         on_chip_gate_num += 1
+                        layer_depth = max(layer_depth, op_config.intra_time)
+            mech_circuit_depth += layer_depth
 
         eff_gate_num = on_chip_gate_num + cross_chip_gate_num * cross_chip_gate_weight + meas_num * meas_weight
-        result[b] = {'depth': router.circuit.depth, 'eff_gate_num': eff_gate_num, 'on-chip': on_chip_gate_num, 'cross-chip': cross_chip_gate_num, 'meas_num': meas_num, 'weight':(cross_chip_gate_weight, meas_weight), 
-                     'periods':(prep_period, meas_period), 'shuttle_num': len(router.highway_manager.shuttle_stack), 'sparsity':cross_link_sparsity}
+        result[b] = {'depth': router.circuit.depth, 'eff_gate_num': eff_gate_num, 'on-chip': on_chip_gate_num, 'cross-chip': cross_chip_gate_num, 'meas_num': meas_num, 
+                     'mech_circuit_depth': mech_circuit_depth, 
+                     'weight':(cross_chip_gate_weight, meas_weight), 'periods':(prep_period, meas_period), 'shuttle_num': len(router.highway_manager.shuttle_stack), 'sparsity':cross_link_sparsity}
 
     return result

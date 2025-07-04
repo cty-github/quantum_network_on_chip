@@ -76,10 +76,10 @@ class FabricateModel:
         max_length: int = 50, 
         compute_geometry: str = "square", 
         inter_sparsity: int = 3, 
-        single_fide: float = 0.9999, 
+        single_fide: float = 0.999, 
         intra_fide_dict: dict[int, float] = {27: 0.993, 65: 0.989, 127: 0.988}, 
-        enhanced_fide: float = 0.9999, 
-        inter_fide: float = 0.99, 
+        enhanced_fide: float = 0.992 ** 0.2, 
+        inter_fide: float = 0.983, 
         yield_5: float = 0.99, 
         yield_decay: float = 2, 
     ):
@@ -167,12 +167,12 @@ class OperationConfig:
     """
     
     def __init__(self, 
-            single_time: float = 0.0001, 
-            intra_time: float = 0.0002, 
-            inter_time: float = 0.0003, 
-            qst_time_constant: float = 0.0004, 
-            measure_time: float = 0.0005, 
-            reset_time: float = 0.0006
+            single_time: float = 34, 
+            intra_time: float = 25, 
+            inter_time: float = float(np.mean([152, 148, 164, 128, 176, 116, 284, 108, 468, 116])),
+            qst_time_constant: float = 25, 
+            measure_time: float = 2280, 
+            reset_time: float = 400
         ):
         """
         Initialize the operation configuration.
