@@ -1210,7 +1210,7 @@ class Router:
                         ghz_edge = action.ghz_balise_graph[action.tele_gate_ids.index(gate_id) + 1]
                         self.gate_fides[gate_id] *= self.package.get_coupler_fide(*ghz_edge)
                     elif isinstance(action, (Board, Alight, Interchange)):
-                        self.gate_fides[gate_id] *= self.package.fab_model.inter_fide
+                        self.gate_fides[gate_id] *= self.package.fab_model.inter_fide ** 3
                     elif isinstance(action, Transport):
                         qst_dist = abs(action.source_physical_qubit[0] - action.target_physical_qubit[0]) + abs(action.source_physical_qubit[1] - action.target_physical_qubit[1])
                         self.gate_fides[gate_id] *= self.package.fab_model.enhanced_fide ** qst_dist
@@ -1231,6 +1231,58 @@ class Router:
                         self.gate_fides[gate_id] *= self.package.get_coupler_fide(phy_qubit_u, phy_qubit_v) ** 3
         return self.gate_fides
 
+    def statistic_op_num_fide(self) -> tuple[int, int, int, float]:
+        """
+        Statistic the number of intra and inter gates, the distance of quantum state transfer, and the total fidelity of the circuit.
+
+        Returns:
+            tuple[int, int, int, float]: A tuple containing the number of intra gates, inter gates, quantum state transfer distance, and total fidelity.
+        """
+        intra_gate_num = 0
+        inter_gate_num = 0
+        qst_distance = 0
+        total_fidelity = 1.0
+        for action_id in self.action_depend_graph.nodes:
+            action = self.action_depend_graph.nodes[action_id]["action"]
+            if isinstance(action, GhzPreparation):
+                for balise, parent in action.ghz_balise_graph:
+                    if parent:
+                        if self.package_graph.edges[balise, parent]["type"] == EdgeType.Intra:
+                            intra_gate_num += 1
+                        else:
+                            inter_gate_num += 1
+                        total_fidelity *= self.package.get_coupler_fide(balise, parent)
+            elif isinstance(action, (Board, Alight, Interchange)):
+                inter_gate_num += 3
+                total_fidelity *= self.package.fab_model.inter_fide ** 3
+            elif isinstance(action, Transport):
+                qst_distance += abs(action.source_physical_qubit[0] - action.target_physical_qubit[0]) + abs(action.source_physical_qubit[1] - action.target_physical_qubit[1])
+                total_fidelity *= self.package.fab_model.enhanced_fide ** (abs(action.source_physical_qubit[0] - action.target_physical_qubit[0]) + abs(action.source_physical_qubit[1] - action.target_physical_qubit[1]))
+            elif isinstance(action, Teleport):
+                phy_qubit_u = action.platform
+                phy_qubit_v = action.register
+                if self.package_graph.edges[phy_qubit_u, phy_qubit_v]["type"] == EdgeType.Intra:
+                    intra_gate_num += 1
+                else:
+                    inter_gate_num += 1
+                total_fidelity *= self.package.get_coupler_fide(phy_qubit_u, phy_qubit_v)
+            elif isinstance(action, (Enter, Exit, SwapGate, DirectGate)):
+                if isinstance(action, (Enter, Exit)):
+                    phy_qubit_u = action.platform
+                    phy_qubit_v = action.register
+                elif isinstance(action, SwapGate):
+                    phy_qubit_u = action.qubit_u
+                    phy_qubit_v = action.qubit_v
+                elif isinstance(action, DirectGate):
+                    phy_qubit_u = action.phy_ctrl_qubit
+                    phy_qubit_v = action.phy_targ_qubit
+                if self.package_graph.edges[phy_qubit_u, phy_qubit_v]["type"] == EdgeType.Intra:
+                    intra_gate_num += 3
+                else:
+                    inter_gate_num += 3
+                total_fidelity *= self.package.get_coupler_fide(phy_qubit_u, phy_qubit_v) ** 3
+        return intra_gate_num, inter_gate_num, qst_distance, total_fidelity
+
     def estimate_qunoc_circuit_fide(self) -> float:
         """
         Estimate the fidelity of the circuit.
@@ -1238,8 +1290,8 @@ class Router:
         Return:
             float, the estimated fidelity of the circuit.
         """
-        gate_fides = self.estimate_gate_fides()
-        return math.prod(gate_fides.values())
+        _, _, _, total_fidelity = self.statistic_op_num_fide()
+        return total_fidelity
 
     def estimate_average_gate_fide(self) -> float:
         """
@@ -1248,9 +1300,9 @@ class Router:
         Returns:
             float: The estimated average fidelity of quantum gate operations.
         """
-        gate_fides = self.estimate_gate_fides()
-        return statistics.geometric_mean(gate_fides.values())
-
+        _, _, _, total_fidelity = self.statistic_op_num_fide()
+        return total_fidelity ** (1 / self.program.gate_depend_graph.number_of_nodes())
+    
     def estimate_depth(self) -> int:
         """
         Estimate the depth of the circuit.
