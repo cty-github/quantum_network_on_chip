@@ -117,11 +117,14 @@ class QuNoCEnv(gym.Env):
         )
 
     def render(self, mode = "human", filepath: str = None):
-        fig = self.package.draw_qubits()[0]
-        if mode == "human":
-            fig.show()
-        if filepath:
-            fig.savefig(filepath, bbox_inches="tight")
+        try:
+            fig, ax = self.package.draw_qubits()
+            if mode == "human":
+                fig.show()
+            if filepath:
+                fig.savefig(filepath, bbox_inches="tight")
+        except Exception as e:
+            logging.info(f"Failed to draw qubits: {e}")
 
     def estimate(self) -> float:
         """

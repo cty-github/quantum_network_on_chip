@@ -1063,15 +1063,15 @@ class ComputeModule(FuncArea):
         right_inter_distance = self.chiplet_x_num - chiplet.in_module_coord[0] - 1 if self.right[2] else math.inf
         bottom_inter_distance = self.chiplet_y_num - chiplet.in_module_coord[1] - 1 if self.bottom[2] else math.inf
         min_inter_distance = min(left_inter_distance, top_inter_distance, right_inter_distance, bottom_inter_distance)
-        nearest_chiplets: list[ComputeChiplet] = []
+        nearest_chiplets: set[ComputeChiplet] = set()
         if left_inter_distance == min_inter_distance:
-            nearest_chiplets.append(self.chiplet_matrix[(0, chiplet.in_module_coord[1])])
+            nearest_chiplets.add(self.chiplet_matrix[(0, chiplet.in_module_coord[1])])
         if top_inter_distance == min_inter_distance:
-            nearest_chiplets.append(self.chiplet_matrix[(chiplet.in_module_coord[0], 0)])
+            nearest_chiplets.add(self.chiplet_matrix[(chiplet.in_module_coord[0], 0)])
         if right_inter_distance == min_inter_distance:
-            nearest_chiplets.append(self.chiplet_matrix[(self.chiplet_x_num - 1, chiplet.in_module_coord[1])])
+            nearest_chiplets.add(self.chiplet_matrix[(self.chiplet_x_num - 1, chiplet.in_module_coord[1])])
         if bottom_inter_distance == min_inter_distance:
-            nearest_chiplets.append(self.chiplet_matrix[(chiplet.in_module_coord[0], self.chiplet_y_num - 1)])
+            nearest_chiplets.add(self.chiplet_matrix[(chiplet.in_module_coord[0], self.chiplet_y_num - 1)])
 
         min_distance = math.inf
         nearest_platform = None
@@ -1081,7 +1081,7 @@ class ComputeModule(FuncArea):
                 if distance < min_distance:
                     min_distance = distance
                     nearest_platform = platform
-        # assert nearest_platform is not None, f"No metro system in the package!!!"
+        assert nearest_platform is not None, f"No metro system in the package!!!"
         return nearest_platform
 
     def get_swap_path(self, source: tuple[int, int], target: tuple[int, int]) -> list[tuple[int, int]]:

@@ -1,5 +1,6 @@
 import os
 import random
+import logging
 from itertools import product
 from collections import defaultdict
 
@@ -288,7 +289,7 @@ class Package:
             try:
                 self.design_history.append(self.draw_qubits()[0])
             except Exception as e:
-                print("Error in drawing qubits: ", e)
+                logging.info(f"Failed to draw qubits: {e}")
             if self.design_strategy == "heuristic":
                 old_compute_module = self.compute_modules[0]
                 length_width_ratio = max(self.package_size) / min(self.package_size)
@@ -344,7 +345,7 @@ class Package:
                         )
             elif self.design_strategy == "greedy":
                 best_score = self.estimate_score()
-                print("Initial score: ", best_score)
+                logging.info(f"Initial score: {best_score}")
                 while True:
                     best_action: tuple = None
                     candidate_modules: list[ComputeModule] = [area.name for area in list(self.design_tree_root.leaves) if isinstance(area.name, ComputeModule)]
@@ -361,8 +362,8 @@ class Package:
                     if best_action is None:
                         break
                     self.design_module_top_down(*best_action)
-                    print("New action: ", best_action)
-                    print("New score: ", best_score)
+                    logging.info(f"New action: {best_action}")
+                    logging.info(f"New score: {best_score}")
             elif self.design_strategy == "rl":
                 # The rest rl design process is implemented outside in the LayoutAgent.
                 pass
@@ -827,7 +828,7 @@ class Package:
             try:
                 self.design_history.append(self.draw_qubits()[0])
             except Exception as e:
-                print("Error in drawing qubits: ", e)
+                logging.info(f"Failed to draw qubits: {e}")
 
     def try_design_module(self, 
         old_module: ComputeModule, 
@@ -872,15 +873,18 @@ class Package:
         """
         self.compute_chiplets: list[ComputeChiplet] = []
         self.stations: set[tuple[int, int]] = set()
-        self.platform_stations_dict: dict[tuple[int, int], list[tuple[int, int]]] = defaultdict(list)
+        self.platform_stations_dict: dict[tuple[int, int], list[tuple[int, int]]] = {}
         for compute_module in self.compute_modules:
             self.compute_chiplets.extend(compute_module.get_chiplets())
             platform_station_pairs = compute_module.get_platform_station_pairs()
             for platform, station in platform_station_pairs:
                 self.stations.add(station)
+                if platform not in self.platform_stations_dict:
+                    self.platform_stations_dict[platform] = []
                 self.platform_stations_dict[platform].append(station)
                 self.package_graph.nodes[platform]["qubit"].role = QubitRole.Platform
                 self.package_graph.nodes[station]["qubit"].role = QubitRole.Station
+        # logging.info("Platform stations: {}".format(self.platform_stations_dict))
         self.transfer_chiplets: list[TransferChiplet] = []
         self.interchanges: set[Coupler] = set()
         for transfer_line in self.transfer_lines:

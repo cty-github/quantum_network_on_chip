@@ -31,7 +31,11 @@ class LayoutFeaturesExtractor(BaseFeaturesExtractor):
         in_channels = observation_space.shape[0]  # Should be 5
 
         self.cnn = nn.Sequential(
-            nn.Conv2d(in_channels, 32, kernel_size=5, stride=1, padding=2),
+            nn.Conv2d(in_channels, 16, kernel_size=5, stride=1, padding=2),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2),
+
+            nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2),
 
@@ -39,6 +43,8 @@ class LayoutFeaturesExtractor(BaseFeaturesExtractor):
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2),
 
+            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
             nn.Flatten()
         )
 
