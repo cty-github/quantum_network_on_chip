@@ -119,6 +119,7 @@ def MECH_experiments(structure, chiplet_array_dim, chiplet_size, custom_highway_
             'periods':(prep_period, meas_period), 
             'shuttle_num': len(router.highway_manager.shuttle_stack), 
             'sparsity':cross_link_sparsity, 
+            'data_qubit_num': data_qubit_num,
             'gate_num': gate_num
         }
 

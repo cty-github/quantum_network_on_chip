@@ -952,6 +952,7 @@ class Circuit:
         Returns:
             int: The estimated depth of the circuit.
         """
+        # TODO: Estimate of the boarding stage is not accurate, action dependency in this stage is not considered.
         depth = 0
         for stage in self.stages:
             if isinstance(stage, BoardingStage):
