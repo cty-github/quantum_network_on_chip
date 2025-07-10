@@ -292,7 +292,7 @@ class Chiplet:
         Get the center coordinate of the chiplet.
 
         Returns:
-            coordinate (tuple[float, float]): the center coordinate of the chiplet
+            coordinate (tuple[float, float]): The center coordinate of the chiplet.
         """
         raise NotImplementedError("This method should be implemented in subclasses.")
     
@@ -301,7 +301,7 @@ class Chiplet:
         Get the nodes in the chiplet.
 
         Returns:
-            nodes (list[tuple[int, int]]): the list of nodes in the chiplet
+            nodes (list[tuple[int, int]]): The list of nodes in the chiplet.
         """
         raise NotImplementedError("This method should be implemented in subclasses.")
 

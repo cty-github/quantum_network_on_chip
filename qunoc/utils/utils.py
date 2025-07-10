@@ -63,19 +63,19 @@ def delete_files_with_prefix_and_suffix(filedir: str, prefix: str, ext: str):
             if os.path.isfile(filepath):
                 os.remove(filepath)
 
-def make_save_gif_file(jpgdir: str, prefix: str, ext: str, filepath: str, duration: int = 1000):
+def make_save_gif_file(pngdir: str, prefix: str, ext: str, filepath: str, duration: int = 1000):
     """
     Make gif with figures in the directory with given prefix.
 
     Args:
-        jpgdir (str): The directory containing the jpg files.
+        pngdir (str): The directory containing the png files.
         prefix (str): The prefix of the figures.
         ext (str): The ext of the figures.
         filepath (str): The file path to save the gif.
         duration (int): The duration of each frame in the gif.
     """
-    files = sorted([f for f in os.listdir(jpgdir) if f.startswith(prefix) and f.endswith(ext)], key=lambda x: int(x[len(prefix):-len(ext)]))
-    images = [Image.open(os.path.join(jpgdir, f)) for f in files]
+    files = sorted([f for f in os.listdir(pngdir) if f.startswith(prefix) and f.endswith(ext)], key=lambda x: int(x[len(prefix):-len(ext)]))
+    images = [Image.open(os.path.join(pngdir, f)) for f in files]
     images[0].save(
         filepath,
         save_all=True,
@@ -96,7 +96,7 @@ def make_save_gif_figure(figures: list[plt.Figure], filepath: str, duration: int
     images = []
     for fig in figures:
         buf = io.BytesIO()
-        fig.savefig(buf, format="jpg", bbox_inches="tight")  # Save to buffer
+        fig.savefig(buf, format="png", bbox_inches="tight")  # Save to buffer
         buf.seek(0)
         img = Image.open(buf).convert("RGB")  # Convert to RGB to avoid mode issues
         images.append(img)

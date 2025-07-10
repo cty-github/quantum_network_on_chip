@@ -232,7 +232,7 @@ class Package:
         """
         if pre_designed_package_path:
             self.load(pre_designed_package_path)
-            pass
+            return
         self.package_size = package_size
         self.node_num = package_size[0] * package_size[1]
         self.fab_model = fab_model
@@ -287,9 +287,10 @@ class Package:
                 self.complete_area(area)
             self.complete_package()
             try:
-                self.design_history.append(self.draw_qubits()[0])
+                fig, _ = self.draw_qubits()
+                self.design_history.append(fig)
             except Exception as e:
-                logging.info(f"Failed to draw qubits: {e}")
+                logging.warning(f"Failed to draw qubits: {e}")
             if self.design_strategy == "heuristic":
                 old_compute_module = self.compute_modules[0]
                 length_width_ratio = max(self.package_size) / min(self.package_size)
@@ -360,6 +361,7 @@ class Package:
                             best_action = action
                             best_score = score
                     if best_action is None:
+                        self.complete_package()
                         break
                     self.design_module_top_down(*best_action)
                     logging.info(f"New action: {best_action}")
@@ -826,9 +828,10 @@ class Package:
         self.complete_package()
         if record:
             try:
-                self.design_history.append(self.draw_qubits()[0])
+                fig, _ = self.draw_qubits()
+                self.design_history.append(fig)
             except Exception as e:
-                logging.info(f"Failed to draw qubits: {e}")
+                logging.warning(f"Failed to draw qubits: {e}")
 
     def try_design_module(self, 
         old_module: ComputeModule, 
@@ -884,7 +887,6 @@ class Package:
                 self.platform_stations_dict[platform].append(station)
                 self.package_graph.nodes[platform]["qubit"].role = QubitRole.Platform
                 self.package_graph.nodes[station]["qubit"].role = QubitRole.Station
-        # logging.info("Platform stations: {}".format(self.platform_stations_dict))
         self.transfer_chiplets: list[TransferChiplet] = []
         self.interchanges: set[Coupler] = set()
         for transfer_line in self.transfer_lines:
@@ -1132,7 +1134,7 @@ class Package:
             float: The estimated efficiency of the package.
         """
         if num is None:
-            num = int(math.sqrt(self.node_num))
+            num = int(self.node_num ** 0.8)
         fide_avg, fide_std = self.estimate_transfer(num)
         return -math.log(1 - fide_avg) / fide_std * len(self.compute_nodes) / (self.node_num)
         cost = self.estimate_cost()
@@ -1221,14 +1223,18 @@ class Package:
         marginrate: float = 0.2, 
         markersize: float = 4, 
         linewidth_t: float = 1, 
-        linewidth_b: float = 2
+        linewidth_b: float = 2, 
+        axis_off: bool = True
     ) -> tuple[plt.Figure, plt.Axes]:
         """
         Draw the package graph in qubit level.
+        Note: Ensure to be called in try cells.
 
         Returns:
             tuple[plt.Figure, plt.Axes]: The figure of the package graph.
         """
+        if self.node_num > 22500:
+            raise OverflowError()
         fig = plt.figure(figsize=self.package_size)
         ax = fig.add_subplot(1, 1, 1)
         for node in self.package_graph.nodes:
@@ -1301,7 +1307,10 @@ class Package:
         for node in self.package_graph.nodes:
             if self.package_graph.nodes[node]["type"] != NodeType.Empty:
                 ax.plot(node[0], node[1], "ko", markersize=markersize) # draw the physical qubit
-        ax.axis("off")
+        if axis_off:
+            ax.axis("off")
+        else:
+            ax.xaxis.set_ticks_position('top')
         ax.invert_yaxis()
         plt.close(fig)
         return fig, ax
@@ -1310,7 +1319,8 @@ class Package:
         marginrate: float = 0.2, 
         markersize: float = 4, 
         linewidth_t: float = 1, 
-        linewidth_b: float = 2
+        linewidth_b: float = 2, 
+        axis_off: bool = True
     ) -> tuple[plt.Figure, plt.Axes]:
         """
         Draw the metro topology graph.
@@ -1326,30 +1336,33 @@ class Package:
             pos_u = node_u.get_coordinate()
             pos_v = node_v.get_coordinate()
             ax.plot([pos_u[0], pos_v[0]], [pos_u[1], pos_v[1]], "k-", linewidth=linewidth_t)
-        ax.axis("off")
+        if axis_off:
+            ax.axis("off")
+        else:
+            ax.xaxis.set_ticks_position('top')
         ax.invert_yaxis()
         plt.close(fig)
         return fig, ax
 
-    def save_design_history(self, save_jpg: bool = True, save_gif: bool = True, duration: int = 1000):
+    def save_design_history(self, save_png: bool = True, save_gif: bool = True, duration: int = 1000):
         """
         Save the design history.
 
         Args:
-            save_jpg (bool): Whether to save the design history as JPG files.
+            save_png (bool): Whether to save the design history as png files.
             save_gif (bool): Whether to save the design history as a GIF.
             duration (int): The duration of each frame in the GIF in milliseconds.
         """
-        if not hasattr(self, "design_history"):
-            raise ValueError("No design history found.")
-        if save_jpg:
+        if len(self.design_history) == 0:
+            return
+        if save_png:
             os.makedirs(os.path.join(self.result_dir, "design_history"), exist_ok=True)
-            delete_files_with_prefix_and_suffix(os.path.join(self.result_dir, "design_history"), "design_history_", ".jpg")
+            delete_files_with_prefix_and_suffix(os.path.join(self.result_dir, "design_history"), "design_history_", ".png")
             for i, fig in enumerate(self.design_history):
-                fig.savefig(os.path.join(self.result_dir, "design_history", f"design_history_{i}.jpg"), bbox_inches="tight")
+                fig.savefig(os.path.join(self.result_dir, "design_history", f"design_history_{i}.png"), bbox_inches="tight")
         if save_gif:
-            if save_jpg:
-                make_save_gif_file(os.path.join(self.result_dir, "design_history"), "design_history_", ".jpg", os.path.join(self.result_dir, "design_history.gif"), duration=duration)
+            if save_png:
+                make_save_gif_file(os.path.join(self.result_dir, "design_history"), "design_history_", ".png", os.path.join(self.result_dir, "design_history.gif"), duration=duration)
             else:
                 make_save_gif_figure(self.design_history, os.path.join(self.result_dir, "design_history.gif"), duration=duration)
 
@@ -1360,11 +1373,14 @@ class Package:
         Args:
             filepath (str): The path to the file to load the package from. If None, load from "package.pkl" in the result directory.
         """
-        with open(filepath if filepath else os.path.join(self.result_dir, "package.pkl"), "rb") as f:
+        if not filepath:
+            filepath = os.path.join(self.result_dir, "package.pkl")
+        with open(filepath, "rb") as f:
             package = pickle.load(f)
             self.__dict__.update(package.__dict__)
             FuncArea.fab_model = self.fab_model
             Gap.fab_model = self.fab_model
+            logging.info(f"Package loaded from {filepath}")
 
     def save(self, filepath: str = None):
         """
@@ -1373,5 +1389,8 @@ class Package:
         Args:
             filepath (str): The path to the file to save the package to. If None, save to "package.pkl" in the result directory.
         """
-        with open(filepath if filepath else os.path.join(self.result_dir, "package.pkl"), "wb") as f:
+        if not filepath:
+            filepath = os.path.join(self.result_dir, "package.pkl")
+        with open(filepath, "wb") as f:
             pickle.dump(self, f)
+            logging.info(f"Package saved to {filepath}")

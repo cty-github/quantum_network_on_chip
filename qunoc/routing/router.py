@@ -219,9 +219,12 @@ class Router:
 
         if config.debug_mapping:
             logging.info(f"Initial qubit mapping: {self.init_l2p_map}")
-        fig = self.draw_qubit_mapping("Initial Qubit Mapping")
-        self.block_history.append(fig)
-        self.action_history.append(fig)
+        try:
+            fig = self.draw_qubit_mapping("Initial Qubit Mapping")
+            self.block_history.append(fig)
+            self.action_history.append(fig)
+        except Exception as e:
+            logging.warning(f"Failed to draw qubit mapping: {e}")
 
     # Functions for compiling compute blocks and actions
     def compile_blocks_and_actions(self):
@@ -370,8 +373,12 @@ class Router:
         for pred_gate in self.gate_depend_graph.predecessors(local_gate.id):
             self.block_depend_graph.add_edge(self.gate_depend_graph.nodes[pred_gate]["block"], local_block.id)
         
-        fig = self.draw_qubit_mapping_block([local_gate.control_qubit, local_gate.target_qubit], title=f"Construct LocalBlock {local_block.id}")
-        self.block_history.append(fig)
+        try:
+            fig = self.draw_qubit_mapping_block([local_gate.control_qubit, local_gate.target_qubit], title=f"Construct LocalBlock {local_block.id}")
+            self.block_history.append(fig)
+        except Exception as e:
+            logging.warning(f"Failed to draw qubit mapping block: {e}")
+
         return local_block
 
     def transform_local_block(self, local_block: LocalBlock):
@@ -420,8 +427,11 @@ class Router:
                 self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[local_gate.target_qubit], direct_gate_act.id)
                 self.recent_logic_qubit_action_dict[local_gate.target_qubit] = direct_gate_act.id
         
-        fig = self.draw_qubit_mapping_block([local_gate.control_qubit, local_gate.target_qubit], title=f"Transform LocalBlock {local_block.id}")
-        self.block_history.append(fig)
+        try:
+            fig = self.draw_qubit_mapping_block([local_gate.control_qubit, local_gate.target_qubit], title=f"Transform LocalBlock {local_block.id}")
+            self.block_history.append(fig)
+        except Exception as e:
+            logging.warning(f"Failed to draw qubit mapping block: {e}")
     
     def schedule_tele_gates_no_contention(self, tele_gates: list[Control]):
         """
@@ -496,8 +506,12 @@ class Router:
             assert depend_block_id != tele_block.id
             self.block_depend_graph.add_edge(depend_block_id, tele_block.id)
 
-        fig = self.draw_qubit_mapping_block([ctrl_qubit] + target_qubits, title=f"Construct TeleBlock {tele_block.id}")
-        self.block_history.append(fig)
+        try:
+            fig = self.draw_qubit_mapping_block([ctrl_qubit] + target_qubits, title=f"Construct TeleBlock {tele_block.id}")
+            self.block_history.append(fig)
+        except Exception as e:
+            logging.warning(f"Failed to draw qubit mapping block: {e}")
+
         return tele_block
 
     def find_nearest_platform(self, physical_qubit: tuple[int, int]) -> tuple[int, int]:
@@ -646,8 +660,11 @@ class Router:
             self.curr_l2p_map[ancilla_qubit] = source_physical_qubit
             self.curr_p2l_map[source_physical_qubit] = ancilla_qubit
 
-        fig = self.draw_qubit_mapping_block(involved_qubits, ancilla_qubits=list(zip(ghz_action.source_physical_qubits, ghz_action.ancilla_qubits)), title=f"Transform TeleBlock {tele_block.id}")
-        self.block_history.append(fig)
+        try:
+            fig = self.draw_qubit_mapping_block(involved_qubits, ancilla_qubits=list(zip(ghz_action.source_physical_qubits, ghz_action.ancilla_qubits)), title=f"Transform TeleBlock {tele_block.id}")
+            self.block_history.append(fig)
+        except Exception as e:
+            logging.warning(f"Failed to draw qubit mapping block: {e}")
 
         for i in range(len(involved_qubits)):
             data_qubit = involved_qubits[i]
@@ -720,8 +737,11 @@ class Router:
                 self.action_depend_graph.add_edge(tele_ctrl_act_id, teleport_act.id)
             self.block_depend_graph.nodes[tele_block.id]["actions"].extend(qubit_actions)
         
-        fig = self.draw_qubit_mapping_block(involved_qubits, ancilla_qubits=list(zip(platforms, ghz_action.ancilla_qubits)), title=f"Transform TeleBlock {tele_block.id}")
-        self.block_history.append(fig)
+        try:
+            fig = self.draw_qubit_mapping_block(involved_qubits, ancilla_qubits=list(zip(platforms, ghz_action.ancilla_qubits)), title=f"Transform TeleBlock {tele_block.id}")
+            self.block_history.append(fig)
+        except Exception as e:
+            logging.warning(f"Failed to draw qubit mapping block: {e}")
         
     def check_move_gate(self, gate: Control, move_gates: list[Control]) -> bool:
         """
@@ -785,8 +805,12 @@ class Router:
             assert depend_block_id != move_block.id
             self.block_depend_graph.add_edge(depend_block_id, move_block.id)
         
-        fig = self.draw_qubit_mapping_block(list(involved_qubits), title=f"Construct MoveBlock {move_block.id}")
-        self.block_history.append(fig)
+        try:
+            fig = self.draw_qubit_mapping_block(list(involved_qubits), title=f"Construct MoveBlock {move_block.id}")
+            self.block_history.append(fig)
+        except Exception as e:
+            logging.warning(f"Failed to draw qubit mapping block: {e}")
+
         return move_block
 
     def find_chiplet_for_move_block(self, involved_qubits: list[int]) -> ComputeChiplet:
@@ -1030,8 +1054,11 @@ class Router:
                     self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[local_gate.target_qubit], direct_gate_act.id)
                     self.recent_logic_qubit_action_dict[local_gate.target_qubit] = direct_gate_act.id
         
-        fig = self.draw_qubit_mapping_block(involved_qubits, title=f"Transform MoveBlock {move_block.id}")
-        self.block_history.append(fig)
+        try:
+            fig = self.draw_qubit_mapping_block(involved_qubits, title=f"Transform MoveBlock {move_block.id}")
+            self.block_history.append(fig)
+        except Exception as e:
+            logging.warning(f"Failed to draw qubit mapping block: {e}")
 
     def find_node_for_immigation(self, chiplet: ComputeChiplet, native_qubits: list[int]) -> tuple[int, int]:
         """
@@ -1123,8 +1150,11 @@ class Router:
                         break
                     else:
                         self.update_no_depend_action_ids(no_depend_action_ids, added_action_ids)
-                        fig = self.draw_qubit_mapping_action([self.action_depend_graph.nodes[action_id]["action"] for action_id in added_action_ids], f"Boarding Stage {new_stage.id}")
-                        self.action_history.append(fig)
+                        try:
+                            fig = self.draw_qubit_mapping_action([self.action_depend_graph.nodes[action_id]["action"] for action_id in added_action_ids], f"Boarding Stage {new_stage.id}")
+                            self.action_history.append(fig)
+                        except Exception as e:
+                            logging.warning(f"Failed to draw qubit mapping action: {e}")
                 # schedule GhzPreparation actions
                 ghz_visited_action_ids = set()
                 while True:
@@ -1138,8 +1168,11 @@ class Router:
                         break
                     else:
                         self.update_no_depend_action_ids(no_depend_action_ids, added_action_ids)
-                        fig = self.draw_qubit_mapping_action([self.action_depend_graph.nodes[action_id]["action"] for action_id in added_action_ids], f"Boarding Stage {new_stage.id}")
-                        self.action_history.append(fig)
+                        try:
+                            fig = self.draw_qubit_mapping_action([self.action_depend_graph.nodes[action_id]["action"] for action_id in added_action_ids], f"Boarding Stage {new_stage.id}")
+                            self.action_history.append(fig)
+                        except Exception as e:
+                            logging.warning(f"Failed to draw qubit mapping action: {e}")
             else:
                 assert isinstance(new_stage, RidingStage)
                 # schedule Transport actions
@@ -1153,8 +1186,11 @@ class Router:
                         break
                     else:
                         self.update_no_depend_action_ids(no_depend_action_ids, added_action_ids)
-                        fig = self.draw_qubit_mapping_action([self.action_depend_graph.nodes[action_id]["action"] for action_id in added_action_ids], f"Riding Stage {new_stage.id}")
-                        self.action_history.append(fig)
+                        try:
+                            fig = self.draw_qubit_mapping_action([self.action_depend_graph.nodes[action_id]["action"] for action_id in added_action_ids], f"Riding Stage {new_stage.id}")
+                            self.action_history.append(fig)
+                        except Exception as e:
+                            logging.warning(f"Failed to draw qubit mapping action: {e}")
                 # schedule SwapGate, DirectGate, Teleport, Exit, and Enter actions
                 while True:
                     added_action_ids = set()
@@ -1174,8 +1210,11 @@ class Router:
                         break
                     else:
                         self.update_no_depend_action_ids(no_depend_action_ids, added_action_ids)
-                        fig = self.draw_qubit_mapping_action([self.action_depend_graph.nodes[action_id]["action"] for action_id in added_action_ids], f"Riding Stage {new_stage.id}")
-                        self.action_history.append(fig)
+                        try:
+                            fig = self.draw_qubit_mapping_action([self.action_depend_graph.nodes[action_id]["action"] for action_id in added_action_ids], f"Riding Stage {new_stage.id}")
+                            self.action_history.append(fig)
+                        except Exception as e:
+                            logging.warning(f"Failed to draw qubit mapping action: {e}")
             board_flag = not board_flag
 
     def update_no_depend_action_ids(self, no_depend_action_ids: set[int], removed_action_id: int | set[int]) -> set[int]:
@@ -1202,6 +1241,31 @@ class Router:
         if config.debug_action:
             logging.info(f"Updated no depend actions: {no_depend_action_ids}.")
         return no_depend_action_ids
+
+    def schedule_actions_to_circuit_in_order(self):
+        """
+        Schedule the actions to circuit in order.
+        """
+        self.circuit = Circuit(self.program.data_qubit_num, self.init_l2p_map, self.init_p2l_map, self.action_depend_graph, self.package.op_config)
+
+        for action_id in self.action_depend_graph.nodes:
+            self.action_depend_graph.nodes[action_id]["pred"] = set(self.action_depend_graph.predecessors(action_id))
+        no_depend_action_ids: set[int] = set()
+        for action_id in self.action_depend_graph.nodes:
+            if len(self.action_depend_graph.nodes[action_id]["pred"]) == 0:
+                no_depend_action_ids.add(action_id)
+        self.update_no_depend_action_ids(no_depend_action_ids, -1)
+        self.action_depend_graph.nodes[-1]["stage"] = 0
+
+        for action_id in self.action_depend_graph.nodes:
+            if action_id == -1:
+                continue
+            else:
+                assert action_id in no_depend_action_ids
+            action = self.action_depend_graph.nodes[action_id]["action"]
+            stage_id = self.circuit.add_action_into_earliest_stage(action)
+            self.update_no_depend_action_ids(no_depend_action_ids, action_id)
+            self.action_depend_graph.nodes[action_id]["stage"] = stage_id
 
     def estimate_gate_fides(self) -> dict[int, float]:
         """
@@ -1332,8 +1396,14 @@ class Router:
     ) -> plt.Figure:
         """
         Draw the logic qubit mapped to the package graph.
+        Note: Ensure to be called in try cells.
         """
-        fig, ax = self.package.draw_qubits()
+        try:
+            fig, ax = self.package.draw_qubits()
+        except Exception as e:
+            logging.warning(f"Failed to draw qubits: {e}")
+            raise e
+        
         for logic_qubit in range(self.program.data_qubit_num):
             phy_qubit = self.curr_l2p_map[logic_qubit]
             assert phy_qubit in self.package_graph.nodes, f"Logic qubit {logic_qubit} is not mapped to a physical qubit."
@@ -1355,12 +1425,18 @@ class Router:
     ):
         """
         Draw the logic qubit mapping to the package graph with highlighted involved qubits.
+        Note: Ensure to be called in try cells.
 
         Args:
             involved_qubits (list[int]): The list of involved qubits to be highlighted.
             ancilla_qubits (list[tuple[tuple[int, int], int]]): The list of ancilla qubits, each represented as a tuple of (node, qubit).
         """
-        fig, ax = self.package.draw_qubits()
+        try:
+            fig, ax = self.package.draw_qubits()
+        except Exception as e:
+            logging.warning(f"Failed to draw qubits: {e}")
+            raise e
+
         for logic_qubit in range(self.program.data_qubit_num):
             phy_qubit = self.curr_l2p_map[logic_qubit]
             assert phy_qubit in self.package_graph.nodes, f"Logic qubit {logic_qubit} is not mapped to a physical qubit."
@@ -1389,11 +1465,16 @@ class Router:
     ):
         """
         Draw the qubit mapping action.
+        Note: Ensure to be called in try cells.
 
         Args:
             involved_actions (list[CircuitAction]): The list of involved actions to be highlighted.
         """
-        fig, ax = self.package.draw_qubits()
+        try:
+            fig, ax = self.package.draw_qubits()
+        except Exception as e:
+            logging.warning(f"Failed to draw qubits: {e}")
+            raise e
 
         involved_qubits = set()
         for action in involved_actions:
@@ -1442,43 +1523,47 @@ class Router:
         ax.xaxis.set_ticks_position('top')
         return fig
 
-    def save_block_history(self, save_jpg: bool = True, save_gif: bool = True, duration: int = 1000):
+    def save_block_history(self, save_png: bool = True, save_gif: bool = True, duration: int = 1000):
         """
         Save the block history.
 
         Args:
-            save_jpg (bool): Whether to save the block history as JPG files.
+            save_png (bool): Whether to save the block history as png files.
             save_gif (bool): Whether to save the block history as a GIF file.
             duration (int): The duration of each frame in the GIF file in milliseconds.
         """
-        if save_jpg:
+        if len(self.block_history) == 0:
+            return
+        if save_png:
             os.makedirs(os.path.join(self.result_dir, "block_history"), exist_ok=True)
-            delete_files_with_prefix_and_suffix(os.path.join(self.result_dir, "block_history"), "block_history_", ".jpg")
+            delete_files_with_prefix_and_suffix(os.path.join(self.result_dir, "block_history"), "block_history_", ".png")
             for i, fig in enumerate(self.block_history):
-                fig.savefig(os.path.join(self.result_dir, "block_history", f"block_history_{i}.jpg"), bbox_inches="tight")
+                fig.savefig(os.path.join(self.result_dir, "block_history", f"block_history_{i}.png"), bbox_inches="tight")
         if save_gif:
-            if save_jpg:
-                make_save_gif_file(os.path.join(self.result_dir, "block_history"), "block_history_", ".jpg", os.path.join(self.result_dir, "block_history.gif"), duration=duration)
+            if save_png:
+                make_save_gif_file(os.path.join(self.result_dir, "block_history"), "block_history_", ".png", os.path.join(self.result_dir, "block_history.gif"), duration=duration)
             else:
                 make_save_gif_figure(self.block_history, os.path.join(self.result_dir, "block_history.gif"), duration=duration)
 
-    def save_action_history(self, save_jpg: bool = True, save_gif: bool = True, duration: int = 1000):
+    def save_action_history(self, save_png: bool = True, save_gif: bool = True, duration: int = 1000):
         """
         Save the action history.
 
         Args:
-            save_jpg (bool): Whether to save the action history as JPG files.
+            save_png (bool): Whether to save the action history as png files.
             save_gif (bool): Whether to save the action history as a GIF file.
             duration (int): The duration of each frame in the GIF file in milliseconds.
         """
-        if save_jpg:
+        if len(self.action_history) == 0:
+            return
+        if save_png:
             os.makedirs(os.path.join(self.result_dir, "action_history"), exist_ok=True)
-            delete_files_with_prefix_and_suffix(os.path.join(self.result_dir, "action_history"), "action_history_", ".jpg")
+            delete_files_with_prefix_and_suffix(os.path.join(self.result_dir, "action_history"), "action_history_", ".png")
             for i, fig in enumerate(self.action_history):
-                fig.savefig(os.path.join(self.result_dir, "action_history", f"action_history_{i}.jpg"), bbox_inches="tight")
+                fig.savefig(os.path.join(self.result_dir, "action_history", f"action_history_{i}.png"), bbox_inches="tight")
         if save_gif:
-            if save_jpg:
-                make_save_gif_file(os.path.join(self.result_dir, "action_history"), "action_history_", ".jpg", os.path.join(self.result_dir, "action_history.gif"), duration=duration)
+            if save_png:
+                make_save_gif_file(os.path.join(self.result_dir, "action_history"), "action_history_", ".png", os.path.join(self.result_dir, "action_history.gif"), duration=duration)
             else:
                 make_save_gif_figure(self.action_history, os.path.join(self.result_dir, "action_history.gif"), duration=duration)
 

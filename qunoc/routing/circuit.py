@@ -429,6 +429,18 @@ class CircuitStage:
             int: The number of actions in the stage.
         """
         raise NotImplementedError("This method should be implemented in subclasses.")
+    
+    def add_action(self, action: CircuitAction) -> bool:
+        """
+        Try to add action into the stage.
+
+        Args:
+            action (CircuitAction): The action to add.
+
+        Returns:
+            bool: Whether the action is successfully added.
+        """
+        raise NotImplementedError("This method should be implemented in subclasses.")
 
     def add_action_logging(self, action: CircuitAction):
         """
@@ -480,6 +492,10 @@ class BoardingStage(CircuitStage):
 
     def get_action_num(self) -> int:
         return len(self.boarding_actions)
+
+    def add_action(self, action: CircuitAction) -> bool:
+        if isinstance(action, RidingAction):
+            return False
 
     def add_ghz_action(self, action: GhzPreparation) -> bool:
         """
@@ -944,6 +960,29 @@ class Circuit:
             logging.info(f"Extended circuit with {new_stage.__class__.__name__} {new_stage.id}.")
             logging.info(f"Current qubit mapping: {new_stage.curr_l2p_map}")
         return new_stage
+
+    def add_action_into_earliest_stage(self, action: CircuitAction) -> int:
+        """
+        Add the action into the earlist stage.
+
+        Args:
+            action (CircuitAction): The action to be added.
+
+        Returns:
+            int: The stage id the action added to.
+        """
+        earliest_stage_id = 0
+        for pred_action in self.action_depend_graph.predecessors(action.id):
+            earliest_stage_id = max(earliest_stage_id, self.action_depend_graph.nodes[pred_action]["stage"])
+        while True:
+            if earliest_stage_id < len(self.stages):
+                stage = self.stages[earliest_stage_id]
+            else:
+                stage = self.extend_stage(bool(len(self.stages) % 2 == 0))
+            if stage.add_action(action):
+                return earliest_stage_id
+            else:
+                earliest_stage_id += 1
     
     def estimate_depth(self) -> int:
         """

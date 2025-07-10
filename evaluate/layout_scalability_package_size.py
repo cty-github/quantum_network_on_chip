@@ -1,29 +1,29 @@
 import os
-exp_dir = "./result/layout_scalability/package_size"
-os.makedirs(exp_dir, exist_ok=True)
-
 import sys
 sys.path.append('..')
-
 import logging
+import csv
+
+from qunoc.utils.utils import get_timestamp
+from qunoc.element.package import *
+from qunoc.layout.env import QuNoCEnv
+from qunoc.layout.agent import LayoutAgent
+
+exp_dir = "./result/layout_scalability/package_size"
+os.makedirs(exp_dir, exist_ok=True)
 logging.basicConfig(
-    filename=os.path.join(exp_dir, "log.txt"),
+    filename=os.path.join(exp_dir, f"log_{get_timestamp()}.txt"),
     filemode='w',
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO,
-    encoding='utf-8'
+    encoding="utf-8"
 )
 
-import csv
 output_path = os.path.join(exp_dir, "output.csv")
 if not os.path.exists(output_path):
     with open(output_path, mode='w', newline='') as file:
         writer = csv.writer(file)
         writer.writerow(["PackageSize", "DesignStrategy", "Score", "Fidelity"])
-
-from qunoc.element.package import *
-from qunoc.layout.env import QuNoCEnv
-from qunoc.layout.agent import LayoutAgent
 
 design_strategy_to_test = ["baseline", "greedy", "rl"]
 package_length_to_test = list(range(40, 220, 20))
@@ -49,20 +49,26 @@ for design_strategy, package_length in product(design_strategy_to_test, package_
 
         if design_strategy == "baseline":
             package = Package(package_size, design_strategy="rl", result_dir=result_dir)
-            package.save()
         elif design_strategy == "greedy":
             package = Package(package_size, design_strategy="greedy", result_dir=result_dir)
-            package.save()
         elif design_strategy == "rl":
             env = QuNoCEnv(package_size, patience=5)
             agent = LayoutAgent(env, result_dir=result_dir)
             agent.train(total_timesteps=100000)
             package = agent.design()
-            package.save()
-
+        
         score = package.estimate_score()
         fidelity = package.estimate_transfer()[0]
         with open(output_path, mode='a', newline='') as file:
             writer = csv.writer(file)
             writer.writerow([package_length, design_strategy, score, fidelity])
         logging.info(f"Tested score: {score}, fidelity: {fidelity}")
+
+        package.save()
+        package.save_design_history()
+        try:
+            fig, _ = package.draw_qubits(axis_off=False)
+            fig.savefig(os.path.join(result_dir, "package.png"))
+            logging.info(f"Saved package visualizing results")
+        except Exception as e:
+            logging.warning(f"Failed to draw qubits: {e}")

@@ -70,7 +70,7 @@ class Circuit:
         return idx > self.get_line_depth(line) - 1 or self.take_node(line, idx) is None
     
     def add_node_with_role(self, line, idx, node, role):
-        assert idx >= 0, "idx should >= 0"
+        assert idx >= 0, "idx = {} should >= 0".format(idx)
         assert self.is_position_empty(line, idx), "Failed to add {} to ({},{}) because the position is already taken".format(node, line, idx)
         node.depth = idx + 1
         for i in range(self.get_line_depth(line), idx+1):
