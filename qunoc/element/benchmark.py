@@ -201,8 +201,8 @@ class Program:
             arrows=True, 
             node_size=markersize, 
             width=linewidth_t,
-            node_color='black', 
-            edge_color='black', 
+            node_color="black", 
+            edge_color="black", 
         )
         labels = {node: str(node) for node in self.gate_depend_graph.nodes()}
         label_offset = (-0.04, 0.03)
@@ -212,7 +212,7 @@ class Program:
             label_pos,
             labels=labels,
             font_size=10,
-            font_color='black'
+            font_color="black"
         )
         plt.close()
         return fig
@@ -229,7 +229,7 @@ class Program:
         Returns:
             plt.Figure: A matplotlib figure representing the circuit.
         """
-        return self.qiskit_circuit.draw(output='mpl')
+        return self.qiskit_circuit.draw(output="mpl")
 
 def vqe(data_qubit_num: int) -> Program:
     """

@@ -6,7 +6,7 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 
 
-color_pool = ['#D9D9D9', '#C9E0E5', '#BED2C6', '#FFD19D', '#FEB29B', '#ED8687']
+color_pool = ["#D9D9D9", "#C9E0E5", "#BED2C6", "#FFD19D", "#FEB29B", "#ED8687"]
 
 def log_decay(x, a, b):
     return 1 - a * np.log(1 + b * x)

@@ -1230,8 +1230,6 @@ class Router:
         """
         if isinstance(removed_action_id, int):
             removed_action_id = {removed_action_id}
-        # if debug_action:
-        #     logging.info(f"Scheduled actions: {[self.action_depend_graph.nodes[action_id]['action'] for action_id in removed_action_id]}.")
         for action_id in removed_action_id:
             no_depend_action_ids.remove(action_id)
             for succ_action in self.action_depend_graph.successors(action_id):
@@ -1312,7 +1310,6 @@ class Router:
         Returns:
             tuple[int, int, int, float]: A tuple containing the number of intra gates, inter gates, quantum state transfer distance, and total fidelity.
         """
-        # TODO: The paired actions may be statisticed multiple times, which may lead to an overestimation of the fidelity.
         intra_gate_num = 0
         inter_gate_num = 0
         qst_distance = 0
@@ -1331,8 +1328,8 @@ class Router:
                 inter_gate_num += 3
                 total_fidelity *= self.package.fab_model.inter_fide ** 3
             elif isinstance(action, Transport):
-                qst_distance += abs(action.source_physical_qubit[0] - action.target_physical_qubit[0]) + abs(action.source_physical_qubit[1] - action.target_physical_qubit[1])
-                total_fidelity *= self.package.fab_model.enhanced_fide ** (abs(action.source_physical_qubit[0] - action.target_physical_qubit[0]) + abs(action.source_physical_qubit[1] - action.target_physical_qubit[1]))
+                qst_distance += action.get_distance()
+                total_fidelity *= self.package.fab_model.enhanced_fide ** action.get_distance()
             elif isinstance(action, Teleport):
                 phy_qubit_u = action.platform
                 phy_qubit_v = action.register
@@ -1411,7 +1408,7 @@ class Router:
             ax.text(phy_qubit[0], phy_qubit[1], str(logic_qubit), fontsize=10, color="white", ha="center", va="center")
         ax.set_title(title, fontsize=14)
         ax.axis("on")
-        ax.xaxis.set_ticks_position('top')
+        ax.xaxis.set_ticks_position("top")
         return fig
 
     def draw_qubit_mapping_block(self,
@@ -1452,7 +1449,7 @@ class Router:
             ax.text(ancilla_node[0], ancilla_node[1], str(ancilla_qubit), fontsize=10, color="white", ha="center", va="center")
         ax.set_title(title, fontsize=14)
         ax.axis("on")
-        ax.xaxis.set_ticks_position('top')
+        ax.xaxis.set_ticks_position("top")
         return fig
 
     def draw_qubit_mapping_action(self,
@@ -1520,7 +1517,7 @@ class Router:
         
         ax.set_title(title, fontsize=14)
         ax.axis("on")
-        ax.xaxis.set_ticks_position('top')
+        ax.xaxis.set_ticks_position("top")
         return fig
 
     def save_block_history(self, save_png: bool = True, save_gif: bool = True, duration: int = 1000):
@@ -1611,8 +1608,8 @@ class Router:
             arrows=True, 
             node_size=markersize, 
             width=linewidth_t,
-            node_color='black', 
-            edge_color='black', 
+            node_color="black", 
+            edge_color="black", 
         )
         labels = {node: str(node) for node in self.block_depend_graph.nodes()}
         label_offset = (-0.04, 0.03)
@@ -1622,7 +1619,7 @@ class Router:
             label_pos,
             labels=labels,
             font_size=10,
-            font_color='black'
+            font_color="black"
         )
         plt.close()
         return fig
@@ -1649,8 +1646,8 @@ class Router:
             arrows=True, 
             node_size=markersize, 
             width=linewidth_t,
-            node_color='black', 
-            edge_color='black', 
+            node_color="black", 
+            edge_color="black", 
         )
         labels = {node: str(node) for node in self.action_depend_graph.nodes()}
         label_offset = (-0.04, 0.03)
@@ -1660,7 +1657,7 @@ class Router:
             label_pos,
             labels=labels,
             font_size=10,
-            font_color='black'
+            font_color="black"
         )
         plt.close()
         return fig

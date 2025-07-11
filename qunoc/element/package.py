@@ -555,11 +555,11 @@ class Package:
                     node_u = get_full_space_tuple(gap.pos[0], gap.axis, i)
                     node_v = get_full_space_tuple(gap.pos[1], gap.axis, i)
                     if i in gap.get_couplers():
-                        self.package_graph.edges[(node_u, node_v)]['type'] = EdgeType.Inter
+                        self.package_graph.edges[(node_u, node_v)]["type"] = EdgeType.Inter
                     else:
-                        self.package_graph.edges[(node_u, node_v)]['type'] = EdgeType.Empty
+                        self.package_graph.edges[(node_u, node_v)]["type"] = EdgeType.Empty
             for edge in func_area.get_intra_edges():
-                self.package_graph.edges[edge]['type'] = EdgeType.Intra
+                self.package_graph.edges[edge]["type"] = EdgeType.Intra
         elif isinstance(func_area, TransferLine):
             for chiplet in func_area.get_chiplets():
                 for node in chiplet.get_nodes():
@@ -571,9 +571,9 @@ class Package:
                     self.transfer_nodes.add(node)
                     self.compute_nodes.discard(node)
             for interchange in func_area.get_interchanges():
-                self.package_graph.edges[(interchange.qubit_u, interchange.qubit_v)]['type'] = EdgeType.Inter
+                self.package_graph.edges[(interchange.qubit_u, interchange.qubit_v)]["type"] = EdgeType.Inter
             for edge in func_area.get_intra_edges():
-                self.package_graph.edges[edge]['type'] = EdgeType.Intra
+                self.package_graph.edges[edge]["type"] = EdgeType.Intra
 
     def design_module_top_down(self, 
         old_module: ComputeModule, 
@@ -1217,7 +1217,7 @@ class Package:
         elif self.package_graph.edges[(phy_qubit_u, phy_qubit_v)]["type"] == EdgeType.Inter:
             return self.fab_model.inter_fide
         else:
-            raise ValueError(f"Invalid edge type between {phy_qubit_u} and {phy_qubit_v}: {self.package_graph.edges[(phy_qubit_u, phy_qubit_v)]['type']}")
+            raise ValueError(f"Invalid edge type between {phy_qubit_u} and {phy_qubit_v}: {self.package_graph.edges[(phy_qubit_u, phy_qubit_v)]["type"]}")
 
     def draw_qubits(self, 
         marginrate: float = 0.2, 
@@ -1310,7 +1310,7 @@ class Package:
         if axis_off:
             ax.axis("off")
         else:
-            ax.xaxis.set_ticks_position('top')
+            ax.xaxis.set_ticks_position("top")
         ax.invert_yaxis()
         plt.close(fig)
         return fig, ax
@@ -1339,7 +1339,7 @@ class Package:
         if axis_off:
             ax.axis("off")
         else:
-            ax.xaxis.set_ticks_position('top')
+            ax.xaxis.set_ticks_position("top")
         ax.invert_yaxis()
         plt.close(fig)
         return fig, ax

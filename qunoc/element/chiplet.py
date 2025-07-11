@@ -61,7 +61,7 @@ class FabricateModel:
         max_capacity (int): The max number of qubits in a chiplet.
         max_square_size (int): The size of max square chiplet.
         max_length (int): The max length of a qubit chain in the chiplet.
-        compute_geometry (str): The qubit topology in a chiplet, i.e. 'square', 'hexagon', 'heavy square', 'heavy hexagon'.
+        compute_geometry (str): The qubit topology in a chiplet, i.e. "square", "hexagon", "heavy square", "heavy hexagon".
         inter_sparsity (int): The sparsity of coupler between chiplets.
         single_fide (float): The fidelity of single gate.
         intra_fide_params (tuple[float, float]): The parameters of the intra_fide function.
@@ -89,7 +89,7 @@ class FabricateModel:
         Args:
             max_capacity (int): The max number of qubits in a chiplet.
             max_length (int): The max length of a qubit chain in the chiplet.
-            compute_geometry (str): The qubit topology in a chiplet, i.e. 'square', 'hexagon', 'heavy square', 'heavy hexagon'.
+            compute_geometry (str): The qubit topology in a chiplet, i.e. "square", "hexagon", "heavy square", "heavy hexagon".
             inter_sparsity (int): The sparsity of coupler between chiplets.
             single_fide (float): The fidelity of single gate.
             intra_fide_dict (dict[int,float]): The fidelity of intra-chiplet CZ according to the qubit number.
@@ -371,7 +371,7 @@ class ComputeChiplet(Chiplet):
         top (int): The top boundary of the chiplet.
         right (int): The right boundary of the chiplet.
         bottom (int): The bottom boundary of the chiplet.
-        geometry (str): The qubit topology in the chiplet, i.e. 'square', 'hexagon', 'heavy square', 'heavy hexagon'.
+        geometry (str): The qubit topology in the chiplet, i.e. "square", "hexagon", "heavy square", "heavy hexagon".
     """
 
     def __init__(self, intra_fide: float, in_module_coord: tuple[int, int], left: int, top: int, right: int, bottom: int, geometry: str = "square"):
@@ -383,7 +383,7 @@ class ComputeChiplet(Chiplet):
             top (int): The top boundary of the chiplet.
             right (int): The right boundary of the chiplet.
             bottom (int): The bottom boundary of the chiplet.
-            geometry (str): The qubit topology in the chiplet, i.e. 'square', 'hexagon', 'heavy square', 'heavy hexagon'.
+            geometry (str): The qubit topology in the chiplet, i.e. "square", "hexagon", "heavy square", "heavy hexagon".
         """
         super().__init__(intra_fide)
         self.in_module_coord = in_module_coord

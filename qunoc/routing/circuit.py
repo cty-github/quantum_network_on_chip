@@ -1,4 +1,5 @@
 import logging
+import math
 import pickle
 import networkx as nx
 from copy import deepcopy
@@ -110,7 +111,7 @@ class GhzPreparation(BoardingAction):
             ancilla_qubit (int): The ancilla qubit.
             ancilla_nodes (list[tuple[int, int]]): The list of physical qubits where the ancilla qubit is located.
         """
-        if not hasattr(self, 'ancilla_qubit_nodes'):
+        if not hasattr(self, "ancilla_qubit_nodes"):
             self.ancilla_qubit_nodes = {}
         self.ancilla_qubit_nodes[ancilla_qubit] = ancilla_nodes
     
@@ -121,9 +122,25 @@ class GhzPreparation(BoardingAction):
         Returns:
             dict[int, list[tuple[int, int]]]: The dictionary recording the ancilla nodes used for each ancilla qubit.
         """
-        if not hasattr(self, 'ancilla_qubit_nodes'):
+        if not hasattr(self, "ancilla_qubit_nodes"):
             self.ancilla_qubit_nodes = {}
         return self.ancilla_qubit_nodes
+
+    def get_depth(self) -> int:
+        """
+        Get the depth of contructing the GHZ state.
+
+        Returns:
+            int: The CX depth.
+        """
+        balise_depth_dict = dict()
+        for balise, parent in self.ghz_balise_graph:
+            if parent is None:
+                balise_depth_dict[balise] = 0
+            else:
+                assert parent in balise_depth_dict
+                balise_depth_dict[balise] = balise_depth_dict[parent] + 1
+        return max(balise_depth_dict.values())
 
 class Board(BoardingAction):
     """
@@ -233,6 +250,15 @@ class Transport(RidingAction):
 
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Transport logic qubit {self.logic_qubit} from physical qubit {self.source_physical_qubit} to physical qubit {self.target_physical_qubit}."
+    
+    def get_distance(self) -> int:
+        """
+        Get the distance of QST.
+
+        Returns:
+            int: The distance of QST.
+        """
+        return abs(self.source_physical_qubit[0] - self.target_physical_qubit[0]) + abs(self.source_physical_qubit[1] - self.target_physical_qubit[1])
 
 class Teleport(RidingAction):
     """
@@ -496,6 +522,14 @@ class BoardingStage(CircuitStage):
     def add_action(self, action: CircuitAction) -> bool:
         if isinstance(action, RidingAction):
             return False
+        elif isinstance(action, GhzPreparation):
+            return self.add_ghz_action(action)
+        elif isinstance(action, Board):
+            return self.add_board_action(action)
+        elif isinstance(action, Alight):
+            return self.add_alight_action(action)
+        elif isinstance(action, Interchange):
+            return self.add_interchange_action(action)
 
     def add_ghz_action(self, action: GhzPreparation) -> bool:
         """
@@ -677,6 +711,22 @@ class RidingStage(CircuitStage):
 
     def get_action_num(self) -> int:
         return len(self.riding_actions)
+
+    def add_action(self, action: CircuitAction) -> bool:
+        if isinstance(action, BoardingAction):
+            return False
+        elif isinstance(action, Transport):
+            return self.add_transport_action(action)
+        elif isinstance(action, Teleport):
+            return self.add_teleport_action(action)
+        elif isinstance(action, Enter):
+            return self.add_enter_action(action)
+        elif isinstance(action, Exit):
+            return self.add_exit_action(action)
+        elif isinstance(action, SwapGate):
+            return self.add_swap_action(action)
+        elif isinstance(action, DirectGate):
+            return self.add_direct_action(action)
 
     def add_transport_action(self, action: Transport) -> bool:
         """
@@ -991,32 +1041,38 @@ class Circuit:
         Returns:
             int: The estimated depth of the circuit.
         """
-        # TODO: Estimate of the boarding stage is not accurate, action dependency in this stage is not considered.
         depth = 0
         for stage in self.stages:
             if isinstance(stage, BoardingStage):
-                inter_chiplet_flag = False
-                ghz_flag = False
+                inter_actions: list[BoardingAction] = []
+                ghz_actions: list[GhzPreparation] = []
                 for action in stage.boarding_actions:
                     if isinstance(action, Board) or isinstance(action, Alight) or isinstance(action, Interchange):
-                        inter_chiplet_flag = True
+                        inter_actions.append(action)
                     elif isinstance(action, GhzPreparation):
-                        ghz_flag = True
-                inter_chiplet_depth = 2 * self.op_config.inter_time + 3 * self.op_config.single_time if inter_chiplet_flag else 0
-                ghz_depth = 2 * self.op_config.qst_time_constant + 2 * self.op_config.single_time if ghz_flag else 0
-                stage_depth = max(inter_chiplet_depth, ghz_depth)
+                        ghz_actions.append(action)
+                inter_action_graph = self.action_depend_graph.subgraph([action.id for action in inter_actions])
+                inter_depth = nx.dag_longest_path_length(inter_action_graph) * 2 * self.op_config.inter_time
+                ghz_depth = 0
+                for ghz_action in ghz_actions:
+                    ghz_depth = max(ghz_depth, ghz_action.get_depth())
+                ghz_depth = ghz_depth * self.op_config.inter_time
+                stage_depth = max(inter_depth, ghz_depth)
             elif isinstance(stage, RidingStage):
-                transfer_actions = []
-                compute_actions = []
+                transport_actions: list[Transport] = []
+                compute_actions: list[RidingAction] = []
                 for action in stage.riding_actions:
                     if isinstance(action, Transport):
-                        transfer_actions.append(action)
+                        transport_actions.append(action)
                     else:
                         assert isinstance(action, (Teleport, SwapGate, DirectGate, Enter, Exit)), "Action should be Teleport, SwapGate, DirectGate, Enter or Exit"
                         compute_actions.append(action)
-                transfer_depth = len(transfer_actions) * self.op_config.qst_time_constant
-                compute_action_graph = self.action_depend_graph.subgraph(compute_actions)
-                computer_depth = nx.dag_longest_path_length(compute_action_graph) * self.op_config.intra_time if compute_action_graph else 0
+                transport_depth = 0
+                for transport_action in transport_actions:
+                    transport_depth = max(transport_depth, transport_action.get_distance())
+                transfer_depth = math.sqrt(transfer_depth) * self.op_config.qst_time_constant
+                compute_action_graph = self.action_depend_graph.subgraph([action.id for action in compute_actions])
+                computer_depth = nx.dag_longest_path_length(compute_action_graph) * self.op_config.intra_time
                 stage_depth = max(transfer_depth, computer_depth)
             depth += stage_depth
         return depth
@@ -1033,7 +1089,7 @@ class Circuit:
         """
         Load a circuit from a pickle file.
         """
-        with open(filepath, 'rb') as f:
+        with open(filepath, "rb") as f:
             obj = pickle.load(f)
         if not isinstance(obj, cls):
             raise TypeError(f"Unpickled object is not a {cls.__name__}")
