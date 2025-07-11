@@ -49,7 +49,7 @@ def BV(data_qubit_num, percentage=0.5):
         program.append(control_block)
     return program
     
-def MECH_experiments(structure, chiplet_array_dim, chiplet_size, custom_highway_qubits=None, custom_highway_edges=[], benchmarks=['vqe','qft','qaoa','bv'], cross_link_sparsity=1, prep_period=None, meas_period=2, cross_chip_gate_weight = 7.4, meas_weight = 2.2):
+def MECH_experiments(structure, chiplet_array_dim, chiplet_size, custom_highway_qubits=None, custom_highway_edges=[], benchmarks=['vqe','qft','qaoa','bv'], data_qubit_num=None, cross_link_sparsity=1, prep_period=None, meas_period=2, cross_chip_gate_weight = 7.4, meas_weight = 2.2):
     G=gen_chiplet_array(structure, chiplet_array_dim[0], chiplet_array_dim[1], chiplet_size[0], chiplet_size[1], cross_link_sparsity=cross_link_sparsity)
     if prep_period is None:
         if structure in ['square', 'hexagon']:
@@ -62,14 +62,26 @@ def MECH_experiments(structure, chiplet_array_dim, chiplet_size, custom_highway_
     else:
         gen_highway_layout(G)
 
-    data_qubit_num = len(G.nodes) - len(get_highway_qubits(G))
+    if data_qubit_num is None:
+        data_qubit_num = len(G.nodes) - len(get_highway_qubits(G))
     benchmark_program_dict = {'vqe': VQE(data_qubit_num), 'qft': QFT(data_qubit_num), 'qaoa': QAOA(data_qubit_num), 'bv': BV(data_qubit_num)}
     result = defaultdict(dict)
 
     for b in benchmarks:
         print('-'*16+'executing ', b)
         program = benchmark_program_dict[b]
-        router = Router(G, prep_period=prep_period, meas_period=meas_period)
+        initial_v2p = dict()
+        data_idx, highway_idx = 0, len(G.nodes) - len(get_highway_qubits(G))
+        nodes = set(G.nodes)
+        while len(nodes) > 0:
+            node = nodes.pop()
+            if get_node_type(G, node)  == 'data':
+                initial_v2p[data_idx] = node
+                data_idx += 1
+            else:
+                initial_v2p[highway_idx] = node
+                highway_idx += 1
+        router = Router(G, initial_v2p=initial_v2p, prep_period=prep_period, meas_period=meas_period)
 
         gate_num = 0
         for i, control_block in enumerate(program):

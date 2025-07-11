@@ -53,9 +53,12 @@ for design_strategy, package_x_size in product(design_strategy_to_test, package_
         elif design_strategy == "greedy":
             package = Package(package_size, design_strategy="greedy", result_dir=result_dir)
         elif design_strategy == "rl":
-            env = QuNoCEnv(package_size, patience=5)
-            agent = LayoutAgent(env, result_dir=result_dir)
-            agent.train(total_timesteps=100000)
+            env = QuNoCEnv(package_size, patience=5, result_dir=result_dir)
+            if os.path.exists(os.path.join(result_dir, "layout_agent.pth")):
+                agent = LayoutAgent(env, pre_trained_model_path=os.path.join(result_dir, "layout_agent.pth"))
+            else:
+                agent = LayoutAgent(env, result_dir=result_dir)
+                agent.train(total_timesteps=100*package_size[0]*package_size[1])
             package = agent.design()
         
         score = package.estimate_score()

@@ -53,19 +53,22 @@ for baseline, algorithm, package_length in product(baseline_to_test, algorithm_t
     result_dir = os.path.join(exp_dir, f"{package_length}_{package_length}_{algorithm}_{baseline}")
     os.makedirs(result_dir, exist_ok=True)
     package_size = (package_length, package_length)
+    data_qubit_num = package_size[0] * package_size[1] // 100
 
     if baseline == "mech":
-        exp_result_dict = MECH_experiments(structure="square", chiplet_array_dim=(package_length//10, package_length//10), chiplet_size=(10, 10), benchmarks=[algorithm])
+        exp_result_dict = MECH_experiments(structure="square", chiplet_array_dim=(package_length//10, package_length//10), chiplet_size=(10, 10), benchmarks=[algorithm], data_qubit_num=data_qubit_num)
         exp_result = exp_result_dict[algorithm]
-        data_qubit_num = exp_result["data_qubit_num"]
+        import json
+        with open(os.path.join(result_dir, "exp_result.json"), 'w') as json_file:
+            json.dump(exp_result, json_file)
         circuit_depth = get_mech_circuit_depth(exp_result)
         gate_fidelity = get_mech_gate_fidelity(exp_result, (10, 10))
     elif baseline == "qunoc":
         package = Package(pre_designed_package_path=os.path.join("./result/layout_scalability/package_size", f"{package_length}_{package_length}_greedy/package_layout.pkl"))
-        data_qubit_num = get_mech_data_qubit_num(structure="square", chiplet_array_dim=(package_length//10, package_length//10), chiplet_size=(10, 10))
         program = get_program(algorithm, data_qubit_num)
         router = Router(package, program, result_dir)
         circuit = router.route_program_on_package()
+        intra_gate_num, inter_gate_num, qst_dist, total_fide = router.statistic_op_num_fide()
         circuit_depth = router.estimate_depth()
         gate_fidelity = router.estimate_average_gate_fide()
     
