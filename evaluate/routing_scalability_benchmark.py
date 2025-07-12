@@ -3,6 +3,7 @@ import sys
 sys.path.append("..")
 import logging
 import csv
+import json
 
 from qunoc.utils.utils import get_timestamp
 from qunoc.element.benchmark import get_program
@@ -52,13 +53,25 @@ for baseline, algorithm, package_length in product(baseline_to_test, algorithm_t
     logging.info(f"Testing package length: {package_length}, algorithm: {algorithm}, baseline: {baseline}")
     result_dir = os.path.join(exp_dir, f"{package_length}_{package_length}_{algorithm}_{baseline}")
     os.makedirs(result_dir, exist_ok=True)
+    if os.path.exists(os.path.join(result_dir, "exp_result.json")):
+        logging.info(f"Result already exists for {package_length}_{package_length}_{algorithm}_{baseline}, skipping...")
+        continue
     package_size = (package_length, package_length)
-    data_qubit_num = package_size[0] * package_size[1] // 100
+    node_num = math.prod(package_size)
+    if node_num < 100:
+        data_qubit_num = node_num // 100
+    else:
+        data_qubit_num = node_num // 100
 
     if baseline == "mech":
-        exp_result_dict = MECH_experiments(structure="square", chiplet_array_dim=(package_length//10, package_length//10), chiplet_size=(10, 10), benchmarks=[algorithm], data_qubit_num=data_qubit_num)
+        if package_length < 100:
+            chiplet_array_dim = (package_length // 10, package_length // 10)
+            chiplet_size = (10, 10)
+        else:
+            chiplet_array_dim = (package_length // 20, package_length // 20)
+            chiplet_size = (20, 20)
+        exp_result_dict = MECH_experiments(structure="square", chiplet_array_dim=chiplet_array_dim, chiplet_size=chiplet_size, benchmarks=[algorithm], data_qubit_num=data_qubit_num)
         exp_result = exp_result_dict[algorithm]
-        import json
         with open(os.path.join(result_dir, "exp_result.json"), 'w') as json_file:
             json.dump(exp_result, json_file)
         circuit_depth = get_mech_circuit_depth(exp_result)
@@ -68,9 +81,20 @@ for baseline, algorithm, package_length in product(baseline_to_test, algorithm_t
         program = get_program(algorithm, data_qubit_num)
         router = Router(package, program, result_dir)
         circuit = router.route_program_on_package()
-        intra_gate_num, inter_gate_num, qst_dist, total_fide = router.statistic_op_num_fide()
+        intra_gate_num, inter_gate_num, qst_dist, meas_num, total_fide = router.statistic_op_num_fide()
         circuit_depth = router.estimate_depth()
         gate_fidelity = router.estimate_average_gate_fide()
+        exp_result = {
+            "circuit_depth": circuit_depth,
+            "intra_gate": intra_gate_num,
+            "inter_gate": inter_gate_num, 
+            'meas_num': meas_num, 
+            'sparsity': FabricateModel().inter_sparsity, 
+            'data_qubit_num': data_qubit_num,
+            'gate_num': len(program.logic_gates)
+        }
+        with open(os.path.join(result_dir, "exp_result.json"), 'w') as json_file:
+            json.dump(exp_result, json_file)
     
     with open(output_path, mode='a', newline='') as file:
         writer = csv.writer(file)

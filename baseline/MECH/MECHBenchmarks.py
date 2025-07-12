@@ -1,3 +1,4 @@
+import logging
 from collections import Counter, defaultdict
 from random import sample
 from .Circuit import *

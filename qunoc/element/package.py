@@ -1217,7 +1217,7 @@ class Package:
         elif self.package_graph.edges[(phy_qubit_u, phy_qubit_v)]["type"] == EdgeType.Inter:
             return self.fab_model.inter_fide
         else:
-            raise ValueError(f"Invalid edge type between {phy_qubit_u} and {phy_qubit_v}: {self.package_graph.edges[(phy_qubit_u, phy_qubit_v)]["type"]}")
+            raise ValueError(f"Invalid edge type between {phy_qubit_u} and {phy_qubit_v}: {self.package_graph.edges[(phy_qubit_u, phy_qubit_v)]['type']}")
 
     def draw_qubits(self, 
         marginrate: float = 0.2, 
