@@ -197,8 +197,9 @@ class Router:
             Circuit: The physical quantum circuit after routing.
         """
         self.map_qubits()
-        self.compile_blocks_and_actions()
-        self.schedule_actions_to_circuit()
+        # self.compile_blocks_and_actions()
+        # self.schedule_actions_to_circuit()
+        self.compile_blocks_and_schedule_actions()
         return self.circuit
 
     def map_qubits(self):
@@ -227,7 +228,7 @@ class Router:
             logging.warning(f"Failed to draw qubit mapping: {e}")
 
     # Functions for compiling compute blocks and actions
-    def compile_blocks_and_actions(self, schedule: bool = False):
+    def compile_blocks_and_actions(self):
         """
         Compile control gates into compute blocks, either TeleBlock or MoveBlock. Transform the compute blocks into circuit actions.
 
@@ -236,9 +237,6 @@ class Router:
         2) TeleBlock: collect following gates having the same control qubit with the first gate, if #gate > 2, then form a TeleBlock.
         3) MoveBlock: collect following gates, if #gate > #qubits*(#qubits-1)//4 and #gate < max(chiplet_capacity). If #gate > 2, then form a MoveBlock.
         4) Otherwise, form a TeleBlock.
-
-        Args:
-            schedule (bool): If True, schedule the actions immediately after constructing the block. Default is False.
         """
         self.block_depend_graph = nx.DiGraph()
         self.block_depend_graph.add_node(-1, block=None)
@@ -269,10 +267,7 @@ class Router:
                 self.local_gate_freq[gate.control_qubit] += 1
                 self.local_gate_freq[gate.target_qubit] += 1
                 local_block = self.construct_local_block(gate, module)
-                if schedule:
-                    self.schedule_local_block(local_block)
-                else:
-                    self.transform_local_block(local_block)
+                self.transform_local_block(local_block)
             else:
                 tele_gates = [gate]
                 ctrl_qubit = gate.control_qubit
@@ -319,13 +314,10 @@ class Router:
                                 self.gate_depend_graph.nodes[succ_gate]["pred"].add(restore_gate.id)
                                 no_depend_gate_ids.discard(succ_gate)
                 if block_type == "tele":
-                    self.compile_tele_gates_no_contention(tele_gates, schedule)
+                    self.compile_tele_gates_no_contention(tele_gates)
                 else:
                     move_block = self.construct_move_block(move_gates)
-                    if schedule:
-                        self.schedule_move_block(move_block)
-                    else:
-                        self.transform_move_block(move_block)
+                    self.transform_move_block(move_block)
 
         assert nx.is_directed_acyclic_graph(self.block_depend_graph), "Block dependency graph is not a DAG."
         assert nx.is_directed_acyclic_graph(self.action_depend_graph), "Action dependency graph is not a DAG."
@@ -442,61 +434,12 @@ class Router:
         except Exception as e:
             logging.warning(f"Failed to draw qubit mapping block: {e}")
     
-    def schedule_local_block(self, local_block: LocalBlock):
-        """
-        Transform local block into circuit actions and schedule actions immediately.
-        1) route qubits together -> SwapGate;
-        2) execute logic gate -> DirectGate.
-
-        Action dependency: SwapGate -> DirectGate.
-        """
-        self.block_depend_graph.nodes[local_block.id]["actions"] = []
-        local_gate = local_block.ctrl_gate
-        self.gate_actions[local_gate.id] = []
-        compute_module = local_block.module
-        swap_path = compute_module.get_swap_path(self.curr_l2p_map[local_gate.control_qubit], self.curr_l2p_map[local_gate.target_qubit])
-        for i in range(len(swap_path)-1):
-            if i < len(swap_path)-2:
-                phy_qubit_u, phy_qubit_v = swap_path[i], swap_path[i+1]
-                assert self.curr_p2l_map[phy_qubit_u] == local_gate.control_qubit, f"phy_qubit_u: {phy_qubit_u}, local_gate.control_qubit: {local_gate.control_qubit}"
-                swapped_qubit = self.curr_p2l_map[phy_qubit_v]
-                swap_gate_act = SwapGate(local_gate.control_qubit, phy_qubit_u, phy_qubit_v)
-                self.circuit.add_action_into_earliest_stage(swap_gate_act)
-                self.gate_actions[local_gate.id].append(swap_gate_act.id)
-                self.block_depend_graph.nodes[local_block.id]["actions"].append(swap_gate_act.id)
-                self.action_depend_graph.add_node(swap_gate_act.id, action=swap_gate_act)
-                self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[local_gate.control_qubit], swap_gate_act.id)
-                self.recent_logic_qubit_action_dict[local_gate.control_qubit] = swap_gate_act.id
-                self.curr_l2p_map[local_gate.control_qubit] = phy_qubit_v
-                self.curr_p2l_map[phy_qubit_v] = local_gate.control_qubit
-                if swapped_qubit != -1:
-                    self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[swapped_qubit], swap_gate_act.id)
-                    self.recent_logic_qubit_action_dict[swapped_qubit] = swap_gate_act.id
-                    self.curr_l2p_map[swapped_qubit] = phy_qubit_u
-                else:
-                    self.action_depend_graph.add_edge(self.recent_physical_qubit_action_dict[phy_qubit_v], swap_gate_act.id)
-                    self.recent_physical_qubit_action_dict[phy_qubit_u] = swap_gate_act.id
-                self.curr_p2l_map[phy_qubit_u] = swapped_qubit
-            else:
-                assert self.curr_p2l_map[swap_path[i]] == local_gate.control_qubit, f"phy_qubit_u: {swap_path[i]}, local_gate.control_qubit: {local_gate.control_qubit}"
-                assert self.curr_p2l_map[swap_path[i+1]] == local_gate.target_qubit, f"phy_qubit_v: {swap_path[i+1]}, local_gate.target_qubit: {local_gate.target_qubit}"
-                direct_gate_act = DirectGate(local_gate, swap_path[i], swap_path[i+1])
-                self.circuit.add_action_into_earliest_stage(direct_gate_act)
-                self.gate_actions[local_gate.id].append(direct_gate_act.id)
-                self.block_depend_graph.nodes[local_block.id]["actions"].append(direct_gate_act.id)
-                self.action_depend_graph.add_node(direct_gate_act.id, action=direct_gate_act)
-                self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[local_gate.control_qubit], direct_gate_act.id)
-                self.recent_logic_qubit_action_dict[local_gate.control_qubit] = direct_gate_act.id
-                self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[local_gate.target_qubit], direct_gate_act.id)
-                self.recent_logic_qubit_action_dict[local_gate.target_qubit] = direct_gate_act.id
-
-    def compile_tele_gates_no_contention(self, tele_gates: list[Control], schedule: bool = False):
+    def compile_tele_gates_no_contention(self, tele_gates: list[Control]):
         """
         Schedule tele gates into TeleBlocks without platform contention.
 
         Args:
             tele_gates (list[Control]): The list of control gates to be scheduled into TeleBlocks.
-            schedule (bool): If True, schedule the actions immediately after constructing the block. Default is False.
         """
         ctrl_qubit = tele_gates[0].control_qubit
         ctrl_module = self.package.get_node_area(self.curr_l2p_map[ctrl_qubit])
@@ -533,10 +476,7 @@ class Router:
                     scheduled_tele_gates.append(tele_gate)
             assert len(scheduled_tele_gates) > 0, "No scheduled tele gates found."
             tele_block = self.construct_tele_block(scheduled_tele_gates, nearest_platforms)
-            if schedule:
-                self.schedule_tele_block(tele_block)
-            else:
-                self.transform_tele_block(tele_block)
+            self.transform_tele_block(tele_block)
             for tele_gate in scheduled_tele_gates:
                 tele_gates.remove(tele_gate)
 
@@ -804,116 +744,6 @@ class Router:
         except Exception as e:
             logging.warning(f"Failed to draw qubit mapping block: {e}")
     
-    def schedule_tele_block(self, tele_block: TeleBlock):
-        """
-        Transform tele block into circuit actions and schedule actions immediately.
-        1) route nearest platform for all involved qubits -> SwapGate;
-        2) allocate GHZ resource -> GhzPreparation;
-        3) route on transfer chiplets -> TransferChipletRoute.
-        4) ancilla qubits get off chiplet -> Alight;
-        5) teleport qubits -> Teleport.
-
-        Action dependency: GhzPreparation -> TransferChipletRoute & SwapGate -> Alight -> Teleport.
-        """
-        self.block_depend_graph.nodes[tele_block.id]["actions"] = []
-        involved_qubits = [tele_block.control_qubit] + tele_block.target_qubits
-        platforms = [tele_block.nearest_platforms[qubit] for qubit in involved_qubits]
-        ghz_action = self.locate_ghz_state(involved_qubits, platforms, [tele_gate.id for tele_gate in tele_block.tele_gates])
-        self.circuit.add_action_into_earliest_stage(ghz_action)
-        for tele_gate in tele_block.tele_gates:
-            self.gate_actions[tele_gate.id] = [ghz_action.id]
-        self.block_depend_graph.nodes[tele_block.id]["actions"].append(ghz_action.id)
-        self.action_depend_graph.add_node(ghz_action.id, action=ghz_action)
-        self.action_depend_graph.add_edge(self.last_ghz_action_id, ghz_action.id)
-        self.last_ghz_action_id = ghz_action.id
-        for data_qubit, ancilla_qubit, source_physical_qubit in zip(involved_qubits, ghz_action.ancilla_qubits, ghz_action.source_physical_qubits):
-            self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[data_qubit], ghz_action.id)
-            self.curr_l2p_map[ancilla_qubit] = source_physical_qubit
-            self.curr_p2l_map[source_physical_qubit] = ancilla_qubit
-
-        try:
-            fig = self.draw_qubit_mapping_block(involved_qubits, ancilla_qubits=list(zip(ghz_action.source_physical_qubits, ghz_action.ancilla_qubits)), title=f"Transform TeleBlock {tele_block.id}")
-            self.block_history.append(fig)
-        except Exception as e:
-            logging.warning(f"Failed to draw qubit mapping block: {e}")
-
-        for i in range(len(involved_qubits)):
-            data_qubit = involved_qubits[i]
-            qubit_actions = []
-            route_source_phy_qubit = self.curr_l2p_map[data_qubit]
-            route_target_phy_qubit = platforms[i]
-            module = self.package.get_node_area(route_source_phy_qubit)
-            assert isinstance(module, ComputeModule)
-            swap_path = module.get_swap_path(route_source_phy_qubit, route_target_phy_qubit)
-            for j in range(len(swap_path)-2):
-                phy_qubit_u, phy_qubit_v = swap_path[j], swap_path[j+1]
-                assert self.curr_p2l_map[phy_qubit_u] == data_qubit, f"phy_qubit_u: {phy_qubit_u}, logic_qubit: {data_qubit}"
-                swapped_qubit = self.curr_p2l_map[phy_qubit_v]
-                swap_gate_act = SwapGate(data_qubit, phy_qubit_u, phy_qubit_v)
-                qubit_actions.append(swap_gate_act.id)
-                self.action_depend_graph.add_node(swap_gate_act.id, action=swap_gate_act)
-                self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[data_qubit], swap_gate_act.id)
-                self.recent_logic_qubit_action_dict[data_qubit] = swap_gate_act.id
-                self.curr_l2p_map[data_qubit] = phy_qubit_v
-                self.curr_p2l_map[phy_qubit_v] = data_qubit
-                if swapped_qubit != -1:
-                    self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[swapped_qubit], swap_gate_act.id)
-                    self.recent_logic_qubit_action_dict[swapped_qubit] = swap_gate_act.id
-                    self.curr_l2p_map[swapped_qubit] = phy_qubit_u
-                else:
-                    self.action_depend_graph.add_edge(self.recent_physical_qubit_action_dict[phy_qubit_v], swap_gate_act.id)
-                    self.recent_physical_qubit_action_dict[phy_qubit_u] = swap_gate_act.id
-                self.curr_p2l_map[phy_qubit_u] = swapped_qubit
-            
-            ancilla_qubit = ghz_action.ancilla_qubits[i]
-            tele_source_phy_qubit = ghz_action.source_physical_qubits[i]
-            tele_target_phy_qubit = ghz_action.target_physical_qubits[i]
-            ancilla_nodes = [tele_source_phy_qubit]
-            transfer_on_metro_acts = self.route_on_transfer_chiplets(ancilla_qubit, tele_source_phy_qubit, tele_target_phy_qubit)
-            for j in range(len(transfer_on_metro_acts)):
-                qubit_actions.append(transfer_on_metro_acts[j].id)
-                self.action_depend_graph.add_node(transfer_on_metro_acts[j].id, action=transfer_on_metro_acts[j])
-                if j == 0:
-                    self.action_depend_graph.add_edge(ghz_action.id, transfer_on_metro_acts[j].id)
-                else:
-                    self.action_depend_graph.add_edge(transfer_on_metro_acts[j-1].id, transfer_on_metro_acts[j].id)
-                if isinstance(transfer_on_metro_acts[j], Transport):
-                    ancilla_nodes.append(transfer_on_metro_acts[j].target_physical_qubit)
-                elif isinstance(transfer_on_metro_acts[j], Interchange):
-                    ancilla_nodes.append(transfer_on_metro_acts[j].interchange[1])
-            alight_act = Alight(ancilla_qubit, tele_target_phy_qubit, route_target_phy_qubit)
-            qubit_actions.append(alight_act.id)
-            self.action_depend_graph.add_node(alight_act.id, action=alight_act)
-            if len(transfer_on_metro_acts) == 0:
-                self.action_depend_graph.add_edge(ghz_action.id, alight_act.id)
-            else:
-                self.action_depend_graph.add_edge(transfer_on_metro_acts[-1].id, alight_act.id)
-            ancilla_nodes.append(route_target_phy_qubit)
-            ghz_action.record_ancilla_qubit_nodes(ancilla_qubit, ancilla_nodes)
-            teleport_act = Teleport(ancilla_qubit, data_qubit, route_target_phy_qubit, swap_path[-2], data_qubit==tele_block.control_qubit)
-            qubit_actions.append(teleport_act.id)
-            self.action_depend_graph.add_node(teleport_act.id, action=teleport_act)
-            self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[data_qubit], teleport_act.id)
-            self.recent_logic_qubit_action_dict[data_qubit] = teleport_act.id
-            self.action_depend_graph.add_edge(alight_act.id, teleport_act.id)
-            self.curr_l2p_map.pop(ancilla_qubit)
-            self.curr_p2l_map[tele_source_phy_qubit] = -1
-            if i == 0:
-                for tele_gate in tele_block.tele_gates:
-                    self.gate_actions[tele_gate.id].extend(qubit_actions)
-                tele_ctrl_act_id = teleport_act.id
-            else:
-                assert tele_block.tele_gates[i-1].target_qubit == data_qubit
-                self.gate_actions[tele_block.tele_gates[i-1].id].extend(qubit_actions)
-                self.action_depend_graph.add_edge(tele_ctrl_act_id, teleport_act.id)
-            self.block_depend_graph.nodes[tele_block.id]["actions"].extend(qubit_actions)
-        
-        try:
-            fig = self.draw_qubit_mapping_block(involved_qubits, ancilla_qubits=list(zip(platforms, ghz_action.ancilla_qubits)), title=f"Transform TeleBlock {tele_block.id}")
-            self.block_history.append(fig)
-        except Exception as e:
-            logging.warning(f"Failed to draw qubit mapping block: {e}")
-        
     def check_move_gate(self, gate: Control, move_gates: list[Control]) -> bool:
         """
         Check if the gate can be inserted into the move gates.
@@ -1010,230 +840,6 @@ class Router:
     def transform_move_block(self, move_block: MoveBlock):
         """
         Transform move block into circuit actions.
-        1) route nearest platform for all involved qubits -> SwapGate & Enter;
-        2) data qubits get on chiplet -> Board;
-        3) route on transfer chiplets -> TransferChipletRoute;
-        4) data qubits get off chiplet -> Alight;
-        5) route involved qubits to vacant physical qubits -> Exit & SwapGate;
-        6) route local gates -> SwapGate & DirectGate.
-
-        Action dependency: SwapGate -> Enter -> Board -> TransferChipletRoute -> Alight -> Exit -> SwapGate -> DirectGate.
-        """
-        self.block_depend_graph.nodes[move_block.id]["actions"] = []
-        involved_qubits = move_block.get_involved_qubits()
-        immigate_qubits: list[int] = []
-        native_qubits: list[int] = []
-        for qubit in involved_qubits:
-            if self.package_graph.nodes[self.curr_l2p_map[qubit]]["qubit"].chiplet != move_block.chiplet:
-                immigate_qubits.append(qubit)
-            else:
-                native_qubits.append(qubit)
-        while len(immigate_qubits) > 0:
-            immigate_qubit = immigate_qubits.pop()
-            qubit_actions = []
-            depart_node = self.curr_l2p_map[immigate_qubit]
-            depart_module = self.package.get_node_area(depart_node)
-            assert isinstance(depart_module, ComputeModule)
-            depart_platform = self.find_nearest_platform(depart_node)
-            depart_swap_path = depart_module.get_swap_path(depart_node, depart_platform)
-            depart_station = self.package.platform_stations_dict[depart_platform][0]
-
-            arrive_node = self.find_node_for_immigation(move_block.chiplet, native_qubits)
-            expelled_qubit = self.curr_p2l_map[arrive_node]
-            arrive_module = self.package.get_node_area(arrive_node)
-            assert isinstance(arrive_module, ComputeModule)
-            arrive_platform = self.find_nearest_platform(arrive_node)
-            arrive_swap_path = arrive_module.get_swap_path(arrive_node, arrive_platform)
-            arrive_station = self.package.platform_stations_dict[arrive_platform][0]
-
-            # Swap the immigate_qubit from depart_node to depart_platform
-            for j in range(len(depart_swap_path)-2):
-                assert self.curr_p2l_map[depart_swap_path[j]] == immigate_qubit, f"qubit_u: {depart_swap_path[j]}, immigate_qubit: {immigate_qubit}"
-                swapped_qubit = self.curr_p2l_map[depart_swap_path[j+1]]
-                swap_gate_act = SwapGate(immigate_qubit, depart_swap_path[j], depart_swap_path[j+1])
-                qubit_actions.append(swap_gate_act.id)
-                self.action_depend_graph.add_node(swap_gate_act.id, action=swap_gate_act)
-                self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[immigate_qubit], swap_gate_act.id)
-                self.recent_logic_qubit_action_dict[immigate_qubit] = swap_gate_act.id
-                self.curr_l2p_map[immigate_qubit] = depart_swap_path[j+1]
-                self.curr_p2l_map[depart_swap_path[j+1]] = immigate_qubit
-                if swapped_qubit != -1:
-                    self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[swapped_qubit], swap_gate_act.id)
-                    self.recent_logic_qubit_action_dict[swapped_qubit] = swap_gate_act.id
-                    self.curr_l2p_map[swapped_qubit] = depart_swap_path[j]
-                else:
-                    self.action_depend_graph.add_edge(self.recent_physical_qubit_action_dict[depart_swap_path[j+1]], swap_gate_act.id)
-                    self.recent_physical_qubit_action_dict[depart_swap_path[j]] = swap_gate_act.id
-                self.curr_p2l_map[depart_swap_path[j]] = swapped_qubit
-            immigate_enter_act = Enter(immigate_qubit, depart_platform, depart_swap_path[-2])
-            qubit_actions.append(immigate_enter_act.id)
-            self.action_depend_graph.add_node(immigate_enter_act.id, action=immigate_enter_act)
-            self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[immigate_qubit], immigate_enter_act.id)
-            self.recent_logic_qubit_action_dict[immigate_qubit] = immigate_enter_act.id
-            self.curr_l2p_map[immigate_qubit] = depart_platform
-            self.curr_p2l_map[depart_platform] = immigate_qubit
-            self.recent_physical_qubit_action_dict[depart_swap_path[-2]] = immigate_enter_act.id
-            self.curr_p2l_map[depart_swap_path[-2]] = -1
-
-            # Swap the expelled_qubit from arrive_node to arrive_platform
-            for j in range(len(arrive_swap_path)-2):
-                assert self.curr_p2l_map[arrive_swap_path[j]] == expelled_qubit, f"qubit_u: {arrive_swap_path[j]}, expelled_qubit: {expelled_qubit}"
-                swapped_qubit = self.curr_p2l_map[arrive_swap_path[j+1]]
-                if expelled_qubit == -1 and swapped_qubit == -1:
-                    continue
-                swap_gate_act = SwapGate(expelled_qubit, arrive_swap_path[j], arrive_swap_path[j+1])
-                qubit_actions.append(swap_gate_act.id)
-                self.action_depend_graph.add_node(swap_gate_act.id, action=swap_gate_act)
-                if expelled_qubit != -1:
-                    self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[expelled_qubit], swap_gate_act.id)
-                    self.recent_logic_qubit_action_dict[expelled_qubit] = swap_gate_act.id
-                    self.curr_l2p_map[expelled_qubit] = arrive_swap_path[j+1]
-                else:
-                    self.action_depend_graph.add_edge(self.recent_physical_qubit_action_dict[arrive_swap_path[j]], swap_gate_act.id)
-                    self.recent_physical_qubit_action_dict[arrive_swap_path[j+1]] = swap_gate_act.id
-                self.curr_p2l_map[arrive_swap_path[j+1]] = expelled_qubit
-                if swapped_qubit != -1:
-                    self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[swapped_qubit], swap_gate_act.id)
-                    self.recent_logic_qubit_action_dict[swapped_qubit] = swap_gate_act.id
-                    self.curr_l2p_map[swapped_qubit] = arrive_swap_path[j]
-                else:
-                    self.action_depend_graph.add_edge(self.recent_physical_qubit_action_dict[arrive_swap_path[j+1]], swap_gate_act.id)
-                    self.recent_physical_qubit_action_dict[arrive_swap_path[j]] = swap_gate_act.id
-                self.curr_p2l_map[arrive_swap_path[j]] = swapped_qubit
-            if expelled_qubit != -1:
-                expelled_enter_act = Enter(expelled_qubit, arrive_platform, arrive_swap_path[-2])
-                qubit_actions.append(expelled_enter_act.id)
-                self.action_depend_graph.add_node(expelled_enter_act.id, action=expelled_enter_act)
-                self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[expelled_qubit], expelled_enter_act.id)
-                self.recent_logic_qubit_action_dict[expelled_qubit] = expelled_enter_act.id
-                self.curr_l2p_map[expelled_qubit] = arrive_platform
-                self.curr_p2l_map[arrive_platform] = expelled_qubit
-                self.recent_physical_qubit_action_dict[arrive_swap_path[-2]] = expelled_enter_act.id
-                self.curr_p2l_map[arrive_swap_path[-2]] = -1
-
-            # Transfer the immigate_qubit from depart_platform to arrive_platform
-            immigate_board_act = Board(immigate_qubit, depart_station, depart_platform)
-            qubit_actions.append(immigate_board_act.id)
-            self.action_depend_graph.add_node(immigate_board_act.id, action=immigate_board_act)
-            self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[immigate_qubit], immigate_board_act.id)
-            self.recent_logic_qubit_action_dict[immigate_qubit] = immigate_board_act.id
-            immigate_transfer_acts = self.route_on_transfer_chiplets(immigate_qubit, depart_station, arrive_station)
-            for i in range(len(immigate_transfer_acts)):
-                qubit_actions.append(immigate_transfer_acts[i].id)
-                self.action_depend_graph.add_node(immigate_transfer_acts[i].id, action=immigate_transfer_acts[i])
-                self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[immigate_qubit], immigate_transfer_acts[i].id)
-                self.recent_logic_qubit_action_dict[immigate_qubit] = immigate_transfer_acts[i].id
-            immigate_alight_act = Alight(immigate_qubit, arrive_station, arrive_platform)
-            qubit_actions.append(immigate_alight_act.id)
-            self.action_depend_graph.add_node(immigate_alight_act.id, action=immigate_alight_act)
-            self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[immigate_qubit], immigate_alight_act.id)
-            self.recent_logic_qubit_action_dict[immigate_qubit] = immigate_alight_act.id
-            
-            if expelled_qubit != -1:
-                # Transfer the expelled_qubit from arrive_platform to depart_platform
-                expelled_board_act = Board(expelled_qubit, arrive_station, arrive_platform)
-                qubit_actions.append(expelled_board_act.id)
-                self.action_depend_graph.add_node(expelled_board_act.id, action=expelled_board_act)
-                self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[expelled_qubit], expelled_board_act.id)
-                self.recent_logic_qubit_action_dict[expelled_qubit] = expelled_board_act.id
-                expelled_transfer_acts = self.route_on_transfer_chiplets(expelled_qubit, arrive_station, depart_station)
-                for i in range(len(expelled_transfer_acts)):
-                    qubit_actions.append(expelled_transfer_acts[i].id)
-                    self.action_depend_graph.add_node(expelled_transfer_acts[i].id, action=expelled_transfer_acts[i])
-                    self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[expelled_qubit], expelled_transfer_acts[i].id)
-                    self.recent_logic_qubit_action_dict[expelled_qubit] = expelled_transfer_acts[i].id
-                expelled_alight_act = Alight(expelled_qubit, depart_station, depart_platform)
-                qubit_actions.append(expelled_alight_act.id)
-                self.action_depend_graph.add_node(expelled_alight_act.id, action=expelled_alight_act)
-                self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[expelled_qubit], expelled_alight_act.id)
-                self.recent_logic_qubit_action_dict[expelled_qubit] = expelled_alight_act.id
-
-                # self.action_depend_graph.add_edge(expelled_board_act.id, immigate_alight_act.id)
-                # self.action_depend_graph.add_edge(immigate_board_act.id, expelled_alight_act.id)
-
-            self.curr_l2p_map[immigate_qubit] = arrive_platform
-            self.curr_p2l_map[arrive_platform] = immigate_qubit
-            if expelled_qubit != -1:
-                self.curr_l2p_map[expelled_qubit] = depart_platform
-            self.curr_p2l_map[depart_platform] = expelled_qubit
-
-            immigate_exit_act = Exit(immigate_qubit, arrive_platform, arrive_swap_path[len(arrive_swap_path)-2])
-            qubit_actions.append(immigate_exit_act.id)
-            self.action_depend_graph.add_node(immigate_exit_act.id, action=immigate_exit_act)
-            self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[immigate_qubit], immigate_exit_act.id)
-            self.recent_logic_qubit_action_dict[immigate_qubit] = immigate_exit_act.id
-            self.curr_l2p_map[immigate_qubit] = arrive_swap_path[len(arrive_swap_path)-2]
-            self.curr_p2l_map[arrive_swap_path[len(arrive_swap_path)-2]] = immigate_qubit
-            # self.action_depend_graph.add_edge(self.recent_physical_qubit_action_dict[arrive_swap_path[len(arrive_swap_path)-2]], immigate_exit_act.id)
-            self.curr_p2l_map[arrive_platform] = -1
-            if expelled_qubit != -1:
-                expelled_exit_act = Exit(expelled_qubit, depart_platform, depart_swap_path[len(depart_swap_path)-2])
-                qubit_actions.append(expelled_exit_act.id)
-                self.action_depend_graph.add_node(expelled_exit_act.id, action=expelled_exit_act)
-                self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[expelled_qubit], expelled_exit_act.id)
-                self.recent_logic_qubit_action_dict[expelled_qubit] = expelled_exit_act.id
-                self.curr_l2p_map[expelled_qubit] = depart_swap_path[len(depart_swap_path)-2]
-                self.curr_p2l_map[depart_swap_path[len(depart_swap_path)-2]] = expelled_qubit
-                # self.action_depend_graph.add_edge(self.recent_physical_qubit_action_dict[depart_swap_path[len(depart_swap_path)-2]], expelled_exit_act.id)
-                self.curr_p2l_map[depart_platform] = -1
-            
-            for ctrl_gate in move_block.ctrl_gates:
-                if ctrl_gate.control_qubit == immigate_qubit or ctrl_gate.target_qubit == immigate_qubit:
-                    if ctrl_gate.id not in self.gate_actions:
-                        self.gate_actions[ctrl_gate.id] = []
-                    self.gate_actions[ctrl_gate.id].extend(qubit_actions)
-            self.block_depend_graph.nodes[move_block.id]["actions"].extend(qubit_actions)
-            native_qubits.append(immigate_qubit)
-
-        # Route the local gates in the move block
-        compute_module = self.package.get_node_area(move_block.chiplet.get_nodes()[0])
-        assert isinstance(compute_module, ComputeModule)
-        for local_gate in move_block.ctrl_gates:
-            if local_gate.id not in self.gate_actions:
-                self.gate_actions[local_gate.id] = []
-            swap_path = compute_module.get_swap_path(self.curr_l2p_map[local_gate.control_qubit], self.curr_l2p_map[local_gate.target_qubit])
-            for i in range(len(swap_path)-1):
-                if i < len(swap_path)-2:
-                    phy_qubit_u, phy_qubit_v = swap_path[i], swap_path[i+1]
-                    assert self.curr_p2l_map[phy_qubit_u] == local_gate.control_qubit, f"phy_qubit_u: {phy_qubit_u}, local_gate.control_qubit: {local_gate.control_qubit}"
-                    swapped_qubit = self.curr_p2l_map[phy_qubit_v]
-                    swap_gate_act = SwapGate(local_gate.control_qubit, phy_qubit_u, phy_qubit_v)
-                    self.gate_actions[local_gate.id].append(swap_gate_act.id)
-                    self.block_depend_graph.nodes[move_block.id]["actions"].append(swap_gate_act.id)
-                    self.action_depend_graph.add_node(swap_gate_act.id, action=swap_gate_act)
-                    self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[local_gate.control_qubit], swap_gate_act.id)
-                    self.recent_logic_qubit_action_dict[local_gate.control_qubit] = swap_gate_act.id
-                    self.curr_l2p_map[local_gate.control_qubit] = phy_qubit_v
-                    self.curr_p2l_map[phy_qubit_v] = local_gate.control_qubit
-                    if swapped_qubit != -1:
-                        self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[swapped_qubit], swap_gate_act.id)
-                        self.recent_logic_qubit_action_dict[swapped_qubit] = swap_gate_act.id
-                        self.curr_l2p_map[swapped_qubit] = phy_qubit_u
-                    else:
-                        self.action_depend_graph.add_edge(self.recent_physical_qubit_action_dict[phy_qubit_v], swap_gate_act.id)
-                        self.recent_physical_qubit_action_dict[phy_qubit_u] = swap_gate_act.id
-                    self.curr_p2l_map[phy_qubit_u] = swapped_qubit
-                else:
-                    assert self.curr_p2l_map[swap_path[i]] == local_gate.control_qubit, f"phy_qubit_u: {swap_path[i]}, local_gate.control_qubit: {local_gate.control_qubit}"
-                    assert self.curr_p2l_map[swap_path[i+1]] == local_gate.target_qubit, f"phy_qubit_v: {swap_path[i+1]}, local_gate.target_qubit: {local_gate.target_qubit}"
-                    direct_gate_act = DirectGate(local_gate, swap_path[i], swap_path[i+1])
-                    self.gate_actions[local_gate.id].append(direct_gate_act.id)
-                    self.block_depend_graph.nodes[move_block.id]["actions"].append(direct_gate_act.id)
-                    self.action_depend_graph.add_node(direct_gate_act.id, action=direct_gate_act)
-                    self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[local_gate.control_qubit], direct_gate_act.id)
-                    self.recent_logic_qubit_action_dict[local_gate.control_qubit] = direct_gate_act.id
-                    self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[local_gate.target_qubit], direct_gate_act.id)
-                    self.recent_logic_qubit_action_dict[local_gate.target_qubit] = direct_gate_act.id
-        
-        try:
-            fig = self.draw_qubit_mapping_block(involved_qubits, title=f"Transform MoveBlock {move_block.id}")
-            self.block_history.append(fig)
-        except Exception as e:
-            logging.warning(f"Failed to draw qubit mapping block: {e}")
-
-    def schedule_move_block(self, move_block: MoveBlock):
-        """
-        Transform move block into circuit actions and schedule actions immediately.
         1) route nearest platform for all involved qubits -> SwapGate & Enter;
         2) data qubits get on chiplet -> Board;
         3) route on transfer chiplets -> TransferChipletRoute;
@@ -1634,6 +1240,530 @@ class Router:
         if config.debug_action:
             logging.info(f"Updated no depend actions: {no_depend_action_ids}.")
         return no_depend_action_ids
+
+    # Fuctions for compiling compute blocks and scheduling actions to circuit
+    def compile_blocks_and_schedule_actions(self):
+        """
+        Compile the compute blocks and schedule actions to the circuit.
+        
+        Compute criteria: sequentially check no dependency gates
+        1) LocalBlock: collect a single gate whose control qubit and target qubit are in the same compute area and can realize with higher fidelity without transfer line.
+        2) TeleBlock: collect following gates having the same control qubit with the first gate, if #gate > 2, then form a TeleBlock.
+        3) MoveBlock: collect following gates, if #gate > #qubits*(#qubits-1)//4 and #gate < max(chiplet_capacity). If #gate > 2, then form a MoveBlock.
+        4) Otherwise, form a TeleBlock.
+        """
+        self.block_depend_graph = nx.DiGraph()
+        self.block_depend_graph.add_node(-1, block=None)
+        self.gate_depend_graph.nodes[-1]["block"] = -1
+        self.action_depend_graph = nx.DiGraph()
+        self.action_depend_graph.add_node(-1, action=None)
+        self.circuit = Circuit(self.program.data_qubit_num, self.init_l2p_map, self.init_p2l_map, self.action_depend_graph, self.package.op_config)
+        self.local_gate_freq = {logic_qubit: 0 for logic_qubit in range(self.program.data_qubit_num)}
+        self.recent_logic_qubit_action_dict = {logic_qubit: -1 for logic_qubit in range(self.program.data_qubit_num)}
+        self.recent_physical_qubit_action_dict = {phy_qubit: -1 for phy_qubit in self.package.compute_nodes} # queried for dependency when try to use a vacant physical qubit
+        # self.last_ghz_action_id = -1
+
+        for gate_id in self.gate_depend_graph.nodes:
+            self.gate_depend_graph.nodes[gate_id]["pred"] = set(self.gate_depend_graph.predecessors(gate_id))
+        no_depend_gate_ids: set[int] = set()
+        for gate_id in self.gate_depend_graph.nodes:
+            if len(self.gate_depend_graph.nodes[gate_id]["pred"]) == 0:
+                no_depend_gate_ids.add(gate_id)
+        no_depend_gate_ids.remove(-1)
+        self.update_no_depend_gate_ids(no_depend_gate_ids, -1)
+        
+        while len(no_depend_gate_ids) > 0:
+            gate_id = no_depend_gate_ids.pop()
+            self.update_no_depend_gate_ids(no_depend_gate_ids, gate_id)
+            gate = self.gate_depend_graph.nodes[gate_id]["gate"]
+            assert isinstance(gate, Control)
+            module = self.check_local_gate(gate)
+            if module:
+                self.local_gate_freq[gate.control_qubit] += 1
+                self.local_gate_freq[gate.target_qubit] += 1
+                local_block = self.construct_local_block(gate, module)
+                self.schedule_local_block(local_block)
+            else:
+                tele_gates = [gate]
+                ctrl_qubit = gate.control_qubit
+                while True:
+                    add_gate = None
+                    for cand_gate_id in no_depend_gate_ids:
+                        cand_gate = self.gate_depend_graph.nodes[cand_gate_id]["gate"]
+                        assert isinstance(cand_gate, Control)
+                        if cand_gate.control_qubit == ctrl_qubit:
+                            add_gate = cand_gate
+                            break
+                    if add_gate:
+                        tele_gates.append(add_gate)
+                        no_depend_gate_ids.remove(add_gate.id)
+                        self.update_no_depend_gate_ids(no_depend_gate_ids, add_gate.id)
+                    else:
+                        break
+                if len(tele_gates) > 2:
+                    block_type = "tele"
+                else:
+                    move_gates = tele_gates.copy()
+                    while True:
+                        add_gate = None
+                        for cand_gate_id in no_depend_gate_ids:
+                            cand_gate = self.gate_depend_graph.nodes[cand_gate_id]["gate"]
+                            assert isinstance(cand_gate, Control)
+                            if self.check_move_gate(cand_gate, move_gates):
+                                add_gate = cand_gate
+                                break
+                        if add_gate:
+                            move_gates.append(add_gate)
+                            no_depend_gate_ids.remove(add_gate.id)
+                            self.update_no_depend_gate_ids(no_depend_gate_ids, add_gate.id)
+                        else:
+                            break
+                    if len(move_gates) > 2:
+                        block_type = "move"
+                    else:
+                        block_type = "tele"
+                        if len(move_gates) == 2 and len(tele_gates) == 1:
+                            restore_gate = move_gates[1]
+                            no_depend_gate_ids.add(move_gates[1].id)
+                            for succ_gate in self.gate_depend_graph.successors(restore_gate.id):
+                                self.gate_depend_graph.nodes[succ_gate]["pred"].add(restore_gate.id)
+                                no_depend_gate_ids.discard(succ_gate)
+                if block_type == "tele":
+                    self.schedule_tele_gates_no_contention(tele_gates)
+                else:
+                    move_block = self.construct_move_block(move_gates)
+                    self.schedule_move_block(move_block)
+
+        assert nx.is_directed_acyclic_graph(self.block_depend_graph), "Block dependency graph is not a DAG."
+        assert nx.is_directed_acyclic_graph(self.action_depend_graph), "Action dependency graph is not a DAG."
+
+    def schedule_local_block(self, local_block: LocalBlock):
+        """
+        Transform local block into circuit actions and schedule actions immediately.
+        1) route qubits together -> SwapGate;
+        2) execute logic gate -> DirectGate.
+
+        Action dependency: SwapGate -> DirectGate.
+        """
+        self.block_depend_graph.nodes[local_block.id]["actions"] = []
+        local_gate = local_block.ctrl_gate
+        self.gate_actions[local_gate.id] = []
+        compute_module = local_block.module
+        swap_path = compute_module.get_swap_path(self.curr_l2p_map[local_gate.control_qubit], self.curr_l2p_map[local_gate.target_qubit])
+        for i in range(len(swap_path)-1):
+            if i < len(swap_path)-2:
+                phy_qubit_u, phy_qubit_v = swap_path[i], swap_path[i+1]
+                assert self.curr_p2l_map[phy_qubit_u] == local_gate.control_qubit, f"phy_qubit_u: {phy_qubit_u}, local_gate.control_qubit: {local_gate.control_qubit}"
+                swapped_qubit = self.curr_p2l_map[phy_qubit_v]
+                swap_gate_act = SwapGate(local_gate.control_qubit, phy_qubit_u, phy_qubit_v)
+                self.circuit.add_action_into_earliest_stage(swap_gate_act)
+                self.gate_actions[local_gate.id].append(swap_gate_act.id)
+                self.block_depend_graph.nodes[local_block.id]["actions"].append(swap_gate_act.id)
+                self.action_depend_graph.add_node(swap_gate_act.id, action=swap_gate_act)
+                self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[local_gate.control_qubit], swap_gate_act.id)
+                self.recent_logic_qubit_action_dict[local_gate.control_qubit] = swap_gate_act.id
+                self.curr_l2p_map[local_gate.control_qubit] = phy_qubit_v
+                self.curr_p2l_map[phy_qubit_v] = local_gate.control_qubit
+                if swapped_qubit != -1:
+                    self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[swapped_qubit], swap_gate_act.id)
+                    self.recent_logic_qubit_action_dict[swapped_qubit] = swap_gate_act.id
+                    self.curr_l2p_map[swapped_qubit] = phy_qubit_u
+                else:
+                    self.action_depend_graph.add_edge(self.recent_physical_qubit_action_dict[phy_qubit_v], swap_gate_act.id)
+                    self.recent_physical_qubit_action_dict[phy_qubit_u] = swap_gate_act.id
+                self.curr_p2l_map[phy_qubit_u] = swapped_qubit
+            else:
+                assert self.curr_p2l_map[swap_path[i]] == local_gate.control_qubit, f"phy_qubit_u: {swap_path[i]}, local_gate.control_qubit: {local_gate.control_qubit}"
+                assert self.curr_p2l_map[swap_path[i+1]] == local_gate.target_qubit, f"phy_qubit_v: {swap_path[i+1]}, local_gate.target_qubit: {local_gate.target_qubit}"
+                direct_gate_act = DirectGate(local_gate, swap_path[i], swap_path[i+1])
+                self.circuit.add_action_into_earliest_stage(direct_gate_act)
+                self.gate_actions[local_gate.id].append(direct_gate_act.id)
+                self.block_depend_graph.nodes[local_block.id]["actions"].append(direct_gate_act.id)
+                self.action_depend_graph.add_node(direct_gate_act.id, action=direct_gate_act)
+                self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[local_gate.control_qubit], direct_gate_act.id)
+                self.recent_logic_qubit_action_dict[local_gate.control_qubit] = direct_gate_act.id
+                self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[local_gate.target_qubit], direct_gate_act.id)
+                self.recent_logic_qubit_action_dict[local_gate.target_qubit] = direct_gate_act.id
+
+    def schedule_tele_gates_no_contention(self, tele_gates: list[Control]):
+        """
+        Schedule tele gates into TeleBlocks without platform contention.
+
+        Args:
+            tele_gates (list[Control]): The list of control gates to be scheduled into TeleBlocks.
+        """
+        ctrl_qubit = tele_gates[0].control_qubit
+        ctrl_module = self.package.get_node_area(self.curr_l2p_map[ctrl_qubit])
+        assert isinstance(ctrl_module, ComputeModule)
+        nearest_ctrl_platform = None
+        highest_ctrl_fide = 0
+        for platform in ctrl_module.get_platforms():
+            _, fide = self.package.get_shortest_no_transfer_path(self.curr_l2p_map[ctrl_qubit], platform)
+            if nearest_ctrl_platform is None or fide > highest_ctrl_fide:
+                nearest_ctrl_platform = platform
+                highest_ctrl_fide = fide
+        
+        while len(tele_gates) > 0:
+            nearest_platforms = {ctrl_qubit: nearest_ctrl_platform}
+            scheduled_tele_gates = []
+            for tele_gate in tele_gates:
+                targ_qubit = tele_gate.target_qubit
+                if targ_qubit in nearest_platforms:
+                    scheduled_tele_gates.append(tele_gate)
+                    continue
+                compute_module = self.package.get_node_area(self.curr_l2p_map[targ_qubit])
+                assert isinstance(compute_module, ComputeModule)
+                nearest_platform = None
+                highest_fide = 0
+                for platform in compute_module.get_platforms():
+                    if platform in nearest_platforms.values():
+                        continue
+                    _, fide = self.package.get_shortest_no_transfer_path(self.curr_l2p_map[targ_qubit], platform)
+                    if nearest_platform is None or fide > highest_fide:
+                        nearest_platform = platform
+                        highest_fide = fide
+                if nearest_platform:
+                    nearest_platforms[targ_qubit] = nearest_platform
+                    scheduled_tele_gates.append(tele_gate)
+            assert len(scheduled_tele_gates) > 0, "No scheduled tele gates found."
+            tele_block = self.construct_tele_block(scheduled_tele_gates, nearest_platforms)
+            self.schedule_tele_block(tele_block)
+            for tele_gate in scheduled_tele_gates:
+                tele_gates.remove(tele_gate)
+
+    def schedule_tele_block(self, tele_block: TeleBlock):
+        """
+        Transform tele block into circuit actions and schedule actions immediately.
+        1) route nearest platform for all involved qubits -> SwapGate;
+        2) allocate GHZ resource -> GhzPreparation;
+        3) route on transfer chiplets -> TransferChipletRoute.
+        4) ancilla qubits get off chiplet -> Alight;
+        5) teleport qubits -> Teleport.
+
+        Action dependency: GhzPreparation -> TransferChipletRoute & SwapGate -> Alight -> Teleport.
+        """
+        self.block_depend_graph.nodes[tele_block.id]["actions"] = []
+        involved_qubits = [tele_block.control_qubit] + tele_block.target_qubits
+        platforms = [tele_block.nearest_platforms[qubit] for qubit in involved_qubits]
+        ghz_action = self.locate_ghz_state(involved_qubits, platforms, [tele_gate.id for tele_gate in tele_block.tele_gates])
+        self.circuit.add_action_into_earliest_stage(ghz_action)
+        for tele_gate in tele_block.tele_gates:
+            self.gate_actions[tele_gate.id] = [ghz_action.id]
+        self.block_depend_graph.nodes[tele_block.id]["actions"].append(ghz_action.id)
+        self.action_depend_graph.add_node(ghz_action.id, action=ghz_action)
+        self.action_depend_graph.add_edge(self.last_ghz_action_id, ghz_action.id)
+        self.last_ghz_action_id = ghz_action.id
+        for data_qubit, ancilla_qubit, source_physical_qubit in zip(involved_qubits, ghz_action.ancilla_qubits, ghz_action.source_physical_qubits):
+            self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[data_qubit], ghz_action.id)
+            self.curr_l2p_map[ancilla_qubit] = source_physical_qubit
+            self.curr_p2l_map[source_physical_qubit] = ancilla_qubit
+
+        try:
+            fig = self.draw_qubit_mapping_block(involved_qubits, ancilla_qubits=list(zip(ghz_action.source_physical_qubits, ghz_action.ancilla_qubits)), title=f"Transform TeleBlock {tele_block.id}")
+            self.block_history.append(fig)
+        except Exception as e:
+            logging.warning(f"Failed to draw qubit mapping block: {e}")
+
+        for i in range(len(involved_qubits)):
+            data_qubit = involved_qubits[i]
+            qubit_actions = []
+            route_source_phy_qubit = self.curr_l2p_map[data_qubit]
+            route_target_phy_qubit = platforms[i]
+            module = self.package.get_node_area(route_source_phy_qubit)
+            assert isinstance(module, ComputeModule)
+            swap_path = module.get_swap_path(route_source_phy_qubit, route_target_phy_qubit)
+            for j in range(len(swap_path)-2):
+                phy_qubit_u, phy_qubit_v = swap_path[j], swap_path[j+1]
+                assert self.curr_p2l_map[phy_qubit_u] == data_qubit, f"phy_qubit_u: {phy_qubit_u}, logic_qubit: {data_qubit}"
+                swapped_qubit = self.curr_p2l_map[phy_qubit_v]
+                swap_gate_act = SwapGate(data_qubit, phy_qubit_u, phy_qubit_v)
+                qubit_actions.append(swap_gate_act.id)
+                self.action_depend_graph.add_node(swap_gate_act.id, action=swap_gate_act)
+                self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[data_qubit], swap_gate_act.id)
+                self.recent_logic_qubit_action_dict[data_qubit] = swap_gate_act.id
+                self.curr_l2p_map[data_qubit] = phy_qubit_v
+                self.curr_p2l_map[phy_qubit_v] = data_qubit
+                if swapped_qubit != -1:
+                    self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[swapped_qubit], swap_gate_act.id)
+                    self.recent_logic_qubit_action_dict[swapped_qubit] = swap_gate_act.id
+                    self.curr_l2p_map[swapped_qubit] = phy_qubit_u
+                else:
+                    self.action_depend_graph.add_edge(self.recent_physical_qubit_action_dict[phy_qubit_v], swap_gate_act.id)
+                    self.recent_physical_qubit_action_dict[phy_qubit_u] = swap_gate_act.id
+                self.curr_p2l_map[phy_qubit_u] = swapped_qubit
+            
+            ancilla_qubit = ghz_action.ancilla_qubits[i]
+            tele_source_phy_qubit = ghz_action.source_physical_qubits[i]
+            tele_target_phy_qubit = ghz_action.target_physical_qubits[i]
+            ancilla_nodes = [tele_source_phy_qubit]
+            transfer_on_metro_acts = self.route_on_transfer_chiplets(ancilla_qubit, tele_source_phy_qubit, tele_target_phy_qubit)
+            for j in range(len(transfer_on_metro_acts)):
+                qubit_actions.append(transfer_on_metro_acts[j].id)
+                self.action_depend_graph.add_node(transfer_on_metro_acts[j].id, action=transfer_on_metro_acts[j])
+                if j == 0:
+                    self.action_depend_graph.add_edge(ghz_action.id, transfer_on_metro_acts[j].id)
+                else:
+                    self.action_depend_graph.add_edge(transfer_on_metro_acts[j-1].id, transfer_on_metro_acts[j].id)
+                if isinstance(transfer_on_metro_acts[j], Transport):
+                    ancilla_nodes.append(transfer_on_metro_acts[j].target_physical_qubit)
+                elif isinstance(transfer_on_metro_acts[j], Interchange):
+                    ancilla_nodes.append(transfer_on_metro_acts[j].interchange[1])
+            alight_act = Alight(ancilla_qubit, tele_target_phy_qubit, route_target_phy_qubit)
+            qubit_actions.append(alight_act.id)
+            self.action_depend_graph.add_node(alight_act.id, action=alight_act)
+            if len(transfer_on_metro_acts) == 0:
+                self.action_depend_graph.add_edge(ghz_action.id, alight_act.id)
+            else:
+                self.action_depend_graph.add_edge(transfer_on_metro_acts[-1].id, alight_act.id)
+            ancilla_nodes.append(route_target_phy_qubit)
+            ghz_action.record_ancilla_qubit_nodes(ancilla_qubit, ancilla_nodes)
+            teleport_act = Teleport(ancilla_qubit, data_qubit, route_target_phy_qubit, swap_path[-2], data_qubit==tele_block.control_qubit)
+            qubit_actions.append(teleport_act.id)
+            self.action_depend_graph.add_node(teleport_act.id, action=teleport_act)
+            self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[data_qubit], teleport_act.id)
+            self.recent_logic_qubit_action_dict[data_qubit] = teleport_act.id
+            self.action_depend_graph.add_edge(alight_act.id, teleport_act.id)
+            self.curr_l2p_map.pop(ancilla_qubit)
+            self.curr_p2l_map[tele_source_phy_qubit] = -1
+            if i == 0:
+                for tele_gate in tele_block.tele_gates:
+                    self.gate_actions[tele_gate.id].extend(qubit_actions)
+                tele_ctrl_act_id = teleport_act.id
+            else:
+                assert tele_block.tele_gates[i-1].target_qubit == data_qubit
+                self.gate_actions[tele_block.tele_gates[i-1].id].extend(qubit_actions)
+                self.action_depend_graph.add_edge(tele_ctrl_act_id, teleport_act.id)
+            self.block_depend_graph.nodes[tele_block.id]["actions"].extend(qubit_actions)
+        
+        try:
+            fig = self.draw_qubit_mapping_block(involved_qubits, ancilla_qubits=list(zip(platforms, ghz_action.ancilla_qubits)), title=f"Transform TeleBlock {tele_block.id}")
+            self.block_history.append(fig)
+        except Exception as e:
+            logging.warning(f"Failed to draw qubit mapping block: {e}")
+
+    def schedule_move_block(self, move_block: MoveBlock):
+        """
+        Transform move block into circuit actions and schedule actions immediately.
+        1) route nearest platform for all involved qubits -> SwapGate & Enter;
+        2) data qubits get on chiplet -> Board;
+        3) route on transfer chiplets -> TransferChipletRoute;
+        4) data qubits get off chiplet -> Alight;
+        5) route involved qubits to vacant physical qubits -> Exit & SwapGate;
+        6) route local gates -> SwapGate & DirectGate.
+
+        Action dependency: SwapGate -> Enter -> Board -> TransferChipletRoute -> Alight -> Exit -> SwapGate -> DirectGate.
+        """
+        self.block_depend_graph.nodes[move_block.id]["actions"] = []
+        involved_qubits = move_block.get_involved_qubits()
+        immigate_qubits: list[int] = []
+        native_qubits: list[int] = []
+        for qubit in involved_qubits:
+            if self.package_graph.nodes[self.curr_l2p_map[qubit]]["qubit"].chiplet != move_block.chiplet:
+                immigate_qubits.append(qubit)
+            else:
+                native_qubits.append(qubit)
+        while len(immigate_qubits) > 0:
+            immigate_qubit = immigate_qubits.pop()
+            qubit_actions = []
+            depart_node = self.curr_l2p_map[immigate_qubit]
+            depart_module = self.package.get_node_area(depart_node)
+            assert isinstance(depart_module, ComputeModule)
+            depart_platform = self.find_nearest_platform(depart_node)
+            depart_swap_path = depart_module.get_swap_path(depart_node, depart_platform)
+            depart_station = self.package.platform_stations_dict[depart_platform][0]
+
+            arrive_node = self.find_node_for_immigation(move_block.chiplet, native_qubits)
+            expelled_qubit = self.curr_p2l_map[arrive_node]
+            arrive_module = self.package.get_node_area(arrive_node)
+            assert isinstance(arrive_module, ComputeModule)
+            arrive_platform = self.find_nearest_platform(arrive_node)
+            arrive_swap_path = arrive_module.get_swap_path(arrive_node, arrive_platform)
+            arrive_station = self.package.platform_stations_dict[arrive_platform][0]
+
+            # Swap the immigate_qubit from depart_node to depart_platform
+            for j in range(len(depart_swap_path)-2):
+                assert self.curr_p2l_map[depart_swap_path[j]] == immigate_qubit, f"qubit_u: {depart_swap_path[j]}, immigate_qubit: {immigate_qubit}"
+                swapped_qubit = self.curr_p2l_map[depart_swap_path[j+1]]
+                swap_gate_act = SwapGate(immigate_qubit, depart_swap_path[j], depart_swap_path[j+1])
+                qubit_actions.append(swap_gate_act.id)
+                self.action_depend_graph.add_node(swap_gate_act.id, action=swap_gate_act)
+                self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[immigate_qubit], swap_gate_act.id)
+                self.recent_logic_qubit_action_dict[immigate_qubit] = swap_gate_act.id
+                self.curr_l2p_map[immigate_qubit] = depart_swap_path[j+1]
+                self.curr_p2l_map[depart_swap_path[j+1]] = immigate_qubit
+                if swapped_qubit != -1:
+                    self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[swapped_qubit], swap_gate_act.id)
+                    self.recent_logic_qubit_action_dict[swapped_qubit] = swap_gate_act.id
+                    self.curr_l2p_map[swapped_qubit] = depart_swap_path[j]
+                else:
+                    self.action_depend_graph.add_edge(self.recent_physical_qubit_action_dict[depart_swap_path[j+1]], swap_gate_act.id)
+                    self.recent_physical_qubit_action_dict[depart_swap_path[j]] = swap_gate_act.id
+                self.curr_p2l_map[depart_swap_path[j]] = swapped_qubit
+            immigate_enter_act = Enter(immigate_qubit, depart_platform, depart_swap_path[-2])
+            qubit_actions.append(immigate_enter_act.id)
+            self.action_depend_graph.add_node(immigate_enter_act.id, action=immigate_enter_act)
+            self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[immigate_qubit], immigate_enter_act.id)
+            self.recent_logic_qubit_action_dict[immigate_qubit] = immigate_enter_act.id
+            self.curr_l2p_map[immigate_qubit] = depart_platform
+            self.curr_p2l_map[depart_platform] = immigate_qubit
+            self.recent_physical_qubit_action_dict[depart_swap_path[-2]] = immigate_enter_act.id
+            self.curr_p2l_map[depart_swap_path[-2]] = -1
+
+            # Swap the expelled_qubit from arrive_node to arrive_platform
+            for j in range(len(arrive_swap_path)-2):
+                assert self.curr_p2l_map[arrive_swap_path[j]] == expelled_qubit, f"qubit_u: {arrive_swap_path[j]}, expelled_qubit: {expelled_qubit}"
+                swapped_qubit = self.curr_p2l_map[arrive_swap_path[j+1]]
+                if expelled_qubit == -1 and swapped_qubit == -1:
+                    continue
+                swap_gate_act = SwapGate(expelled_qubit, arrive_swap_path[j], arrive_swap_path[j+1])
+                qubit_actions.append(swap_gate_act.id)
+                self.action_depend_graph.add_node(swap_gate_act.id, action=swap_gate_act)
+                if expelled_qubit != -1:
+                    self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[expelled_qubit], swap_gate_act.id)
+                    self.recent_logic_qubit_action_dict[expelled_qubit] = swap_gate_act.id
+                    self.curr_l2p_map[expelled_qubit] = arrive_swap_path[j+1]
+                else:
+                    self.action_depend_graph.add_edge(self.recent_physical_qubit_action_dict[arrive_swap_path[j]], swap_gate_act.id)
+                    self.recent_physical_qubit_action_dict[arrive_swap_path[j+1]] = swap_gate_act.id
+                self.curr_p2l_map[arrive_swap_path[j+1]] = expelled_qubit
+                if swapped_qubit != -1:
+                    self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[swapped_qubit], swap_gate_act.id)
+                    self.recent_logic_qubit_action_dict[swapped_qubit] = swap_gate_act.id
+                    self.curr_l2p_map[swapped_qubit] = arrive_swap_path[j]
+                else:
+                    self.action_depend_graph.add_edge(self.recent_physical_qubit_action_dict[arrive_swap_path[j+1]], swap_gate_act.id)
+                    self.recent_physical_qubit_action_dict[arrive_swap_path[j]] = swap_gate_act.id
+                self.curr_p2l_map[arrive_swap_path[j]] = swapped_qubit
+            if expelled_qubit != -1:
+                expelled_enter_act = Enter(expelled_qubit, arrive_platform, arrive_swap_path[-2])
+                qubit_actions.append(expelled_enter_act.id)
+                self.action_depend_graph.add_node(expelled_enter_act.id, action=expelled_enter_act)
+                self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[expelled_qubit], expelled_enter_act.id)
+                self.recent_logic_qubit_action_dict[expelled_qubit] = expelled_enter_act.id
+                self.curr_l2p_map[expelled_qubit] = arrive_platform
+                self.curr_p2l_map[arrive_platform] = expelled_qubit
+                self.recent_physical_qubit_action_dict[arrive_swap_path[-2]] = expelled_enter_act.id
+                self.curr_p2l_map[arrive_swap_path[-2]] = -1
+
+            # Transfer the immigate_qubit from depart_platform to arrive_platform
+            immigate_board_act = Board(immigate_qubit, depart_station, depart_platform)
+            qubit_actions.append(immigate_board_act.id)
+            self.action_depend_graph.add_node(immigate_board_act.id, action=immigate_board_act)
+            self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[immigate_qubit], immigate_board_act.id)
+            self.recent_logic_qubit_action_dict[immigate_qubit] = immigate_board_act.id
+            immigate_transfer_acts = self.route_on_transfer_chiplets(immigate_qubit, depart_station, arrive_station)
+            for i in range(len(immigate_transfer_acts)):
+                qubit_actions.append(immigate_transfer_acts[i].id)
+                self.action_depend_graph.add_node(immigate_transfer_acts[i].id, action=immigate_transfer_acts[i])
+                self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[immigate_qubit], immigate_transfer_acts[i].id)
+                self.recent_logic_qubit_action_dict[immigate_qubit] = immigate_transfer_acts[i].id
+            immigate_alight_act = Alight(immigate_qubit, arrive_station, arrive_platform)
+            qubit_actions.append(immigate_alight_act.id)
+            self.action_depend_graph.add_node(immigate_alight_act.id, action=immigate_alight_act)
+            self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[immigate_qubit], immigate_alight_act.id)
+            self.recent_logic_qubit_action_dict[immigate_qubit] = immigate_alight_act.id
+            
+            if expelled_qubit != -1:
+                # Transfer the expelled_qubit from arrive_platform to depart_platform
+                expelled_board_act = Board(expelled_qubit, arrive_station, arrive_platform)
+                qubit_actions.append(expelled_board_act.id)
+                self.action_depend_graph.add_node(expelled_board_act.id, action=expelled_board_act)
+                self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[expelled_qubit], expelled_board_act.id)
+                self.recent_logic_qubit_action_dict[expelled_qubit] = expelled_board_act.id
+                expelled_transfer_acts = self.route_on_transfer_chiplets(expelled_qubit, arrive_station, depart_station)
+                for i in range(len(expelled_transfer_acts)):
+                    qubit_actions.append(expelled_transfer_acts[i].id)
+                    self.action_depend_graph.add_node(expelled_transfer_acts[i].id, action=expelled_transfer_acts[i])
+                    self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[expelled_qubit], expelled_transfer_acts[i].id)
+                    self.recent_logic_qubit_action_dict[expelled_qubit] = expelled_transfer_acts[i].id
+                expelled_alight_act = Alight(expelled_qubit, depart_station, depart_platform)
+                qubit_actions.append(expelled_alight_act.id)
+                self.action_depend_graph.add_node(expelled_alight_act.id, action=expelled_alight_act)
+                self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[expelled_qubit], expelled_alight_act.id)
+                self.recent_logic_qubit_action_dict[expelled_qubit] = expelled_alight_act.id
+
+                # self.action_depend_graph.add_edge(expelled_board_act.id, immigate_alight_act.id)
+                # self.action_depend_graph.add_edge(immigate_board_act.id, expelled_alight_act.id)
+
+            self.curr_l2p_map[immigate_qubit] = arrive_platform
+            self.curr_p2l_map[arrive_platform] = immigate_qubit
+            if expelled_qubit != -1:
+                self.curr_l2p_map[expelled_qubit] = depart_platform
+            self.curr_p2l_map[depart_platform] = expelled_qubit
+
+            immigate_exit_act = Exit(immigate_qubit, arrive_platform, arrive_swap_path[len(arrive_swap_path)-2])
+            qubit_actions.append(immigate_exit_act.id)
+            self.action_depend_graph.add_node(immigate_exit_act.id, action=immigate_exit_act)
+            self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[immigate_qubit], immigate_exit_act.id)
+            self.recent_logic_qubit_action_dict[immigate_qubit] = immigate_exit_act.id
+            self.curr_l2p_map[immigate_qubit] = arrive_swap_path[len(arrive_swap_path)-2]
+            self.curr_p2l_map[arrive_swap_path[len(arrive_swap_path)-2]] = immigate_qubit
+            # self.action_depend_graph.add_edge(self.recent_physical_qubit_action_dict[arrive_swap_path[len(arrive_swap_path)-2]], immigate_exit_act.id)
+            self.curr_p2l_map[arrive_platform] = -1
+            if expelled_qubit != -1:
+                expelled_exit_act = Exit(expelled_qubit, depart_platform, depart_swap_path[len(depart_swap_path)-2])
+                qubit_actions.append(expelled_exit_act.id)
+                self.action_depend_graph.add_node(expelled_exit_act.id, action=expelled_exit_act)
+                self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[expelled_qubit], expelled_exit_act.id)
+                self.recent_logic_qubit_action_dict[expelled_qubit] = expelled_exit_act.id
+                self.curr_l2p_map[expelled_qubit] = depart_swap_path[len(depart_swap_path)-2]
+                self.curr_p2l_map[depart_swap_path[len(depart_swap_path)-2]] = expelled_qubit
+                # self.action_depend_graph.add_edge(self.recent_physical_qubit_action_dict[depart_swap_path[len(depart_swap_path)-2]], expelled_exit_act.id)
+                self.curr_p2l_map[depart_platform] = -1
+            
+            for ctrl_gate in move_block.ctrl_gates:
+                if ctrl_gate.control_qubit == immigate_qubit or ctrl_gate.target_qubit == immigate_qubit:
+                    if ctrl_gate.id not in self.gate_actions:
+                        self.gate_actions[ctrl_gate.id] = []
+                    self.gate_actions[ctrl_gate.id].extend(qubit_actions)
+            self.block_depend_graph.nodes[move_block.id]["actions"].extend(qubit_actions)
+            native_qubits.append(immigate_qubit)
+
+        # Route the local gates in the move block
+        compute_module = self.package.get_node_area(move_block.chiplet.get_nodes()[0])
+        assert isinstance(compute_module, ComputeModule)
+        for local_gate in move_block.ctrl_gates:
+            if local_gate.id not in self.gate_actions:
+                self.gate_actions[local_gate.id] = []
+            swap_path = compute_module.get_swap_path(self.curr_l2p_map[local_gate.control_qubit], self.curr_l2p_map[local_gate.target_qubit])
+            for i in range(len(swap_path)-1):
+                if i < len(swap_path)-2:
+                    phy_qubit_u, phy_qubit_v = swap_path[i], swap_path[i+1]
+                    assert self.curr_p2l_map[phy_qubit_u] == local_gate.control_qubit, f"phy_qubit_u: {phy_qubit_u}, local_gate.control_qubit: {local_gate.control_qubit}"
+                    swapped_qubit = self.curr_p2l_map[phy_qubit_v]
+                    swap_gate_act = SwapGate(local_gate.control_qubit, phy_qubit_u, phy_qubit_v)
+                    self.gate_actions[local_gate.id].append(swap_gate_act.id)
+                    self.block_depend_graph.nodes[move_block.id]["actions"].append(swap_gate_act.id)
+                    self.action_depend_graph.add_node(swap_gate_act.id, action=swap_gate_act)
+                    self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[local_gate.control_qubit], swap_gate_act.id)
+                    self.recent_logic_qubit_action_dict[local_gate.control_qubit] = swap_gate_act.id
+                    self.curr_l2p_map[local_gate.control_qubit] = phy_qubit_v
+                    self.curr_p2l_map[phy_qubit_v] = local_gate.control_qubit
+                    if swapped_qubit != -1:
+                        self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[swapped_qubit], swap_gate_act.id)
+                        self.recent_logic_qubit_action_dict[swapped_qubit] = swap_gate_act.id
+                        self.curr_l2p_map[swapped_qubit] = phy_qubit_u
+                    else:
+                        self.action_depend_graph.add_edge(self.recent_physical_qubit_action_dict[phy_qubit_v], swap_gate_act.id)
+                        self.recent_physical_qubit_action_dict[phy_qubit_u] = swap_gate_act.id
+                    self.curr_p2l_map[phy_qubit_u] = swapped_qubit
+                else:
+                    assert self.curr_p2l_map[swap_path[i]] == local_gate.control_qubit, f"phy_qubit_u: {swap_path[i]}, local_gate.control_qubit: {local_gate.control_qubit}"
+                    assert self.curr_p2l_map[swap_path[i+1]] == local_gate.target_qubit, f"phy_qubit_v: {swap_path[i+1]}, local_gate.target_qubit: {local_gate.target_qubit}"
+                    direct_gate_act = DirectGate(local_gate, swap_path[i], swap_path[i+1])
+                    self.gate_actions[local_gate.id].append(direct_gate_act.id)
+                    self.block_depend_graph.nodes[move_block.id]["actions"].append(direct_gate_act.id)
+                    self.action_depend_graph.add_node(direct_gate_act.id, action=direct_gate_act)
+                    self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[local_gate.control_qubit], direct_gate_act.id)
+                    self.recent_logic_qubit_action_dict[local_gate.control_qubit] = direct_gate_act.id
+                    self.action_depend_graph.add_edge(self.recent_logic_qubit_action_dict[local_gate.target_qubit], direct_gate_act.id)
+                    self.recent_logic_qubit_action_dict[local_gate.target_qubit] = direct_gate_act.id
+        
+        try:
+            fig = self.draw_qubit_mapping_block(involved_qubits, title=f"Transform MoveBlock {move_block.id}")
+            self.block_history.append(fig)
+        except Exception as e:
+            logging.warning(f"Failed to draw qubit mapping block: {e}")
 
     def schedule_actions_to_circuit_in_order(self):
         """

@@ -456,7 +456,7 @@ class CircuitStage:
         """
         raise NotImplementedError("This method should be implemented in subclasses.")
     
-    def add_action(self, action: CircuitAction) -> bool:
+    def add_action_immediate(self, action: CircuitAction) -> bool:
         """
         Try to add action into the stage.
 
@@ -519,17 +519,17 @@ class BoardingStage(CircuitStage):
     def get_action_num(self) -> int:
         return len(self.boarding_actions)
 
-    def add_action(self, action: CircuitAction) -> bool:
+    def add_action_immediate(self, action: CircuitAction) -> bool:
         if isinstance(action, RidingAction):
             return False
         elif isinstance(action, GhzPreparation):
-            return self.add_ghz_action(action)
+            return self.add_ghz_action_immediate(action)
         elif isinstance(action, Board):
-            return self.add_board_action(action)
+            return self.add_board_action_immediate(action)
         elif isinstance(action, Alight):
-            return self.add_alight_action(action)
+            return self.add_alight_action_immediate(action)
         elif isinstance(action, Interchange):
-            return self.add_interchange_action(action)
+            return self.add_interchange_action_immediate(action)
 
     def add_ghz_action(self, action: GhzPreparation) -> bool:
         """
@@ -596,7 +596,7 @@ class BoardingStage(CircuitStage):
         self.boarding_actions.append(action)
         self.add_action_logging(action)
         return True
-    
+
     def add_alight_action(self, action: Alight) -> bool:
         """
         Add an Alight to the boarding stage.
@@ -631,7 +631,7 @@ class BoardingStage(CircuitStage):
         self.boarding_actions.append(action)
         self.add_action_logging(action)
         return True
-    
+
     def add_interchange_action(self, action: Interchange) -> bool:
         """
         Add an Interchange to the boarding stage.
@@ -666,7 +666,116 @@ class BoardingStage(CircuitStage):
         self.boarding_actions.append(action)
         self.add_action_logging(action)
         return True
-    
+
+    def add_ghz_action_immediate(self, action: GhzPreparation) -> bool:
+        """
+        Add a GhzPreparation to the boarding stage.
+
+        Note: The action is added to the end of the boarding actions list.
+
+        Args:
+            action (GhzPreparation): The GHZ preparation action to add.
+
+        Returns:
+            bool: Whether the action is successfully added.
+        """
+        assert isinstance(action, GhzPreparation), "Action should be GhzPreparation"
+
+        for physical_qubit in action.source_physical_qubits:
+            if self.curr_p2l_map[physical_qubit] != -1:
+                return False
+        active_ancilla_nodes = set().union(*self.active_ancilla_qubit_nodes.values())
+        ancilla_nodes = set().union(*action.get_ancilla_qubit_nodes().values())
+        if active_ancilla_nodes.intersection(ancilla_nodes):
+            return False
+        self.occupied_balises.update(action.source_physical_qubits)
+        for ancilla_qubit, physical_qubit in zip(action.ancilla_qubits, action.source_physical_qubits):
+            self.curr_l2p_map[ancilla_qubit] = physical_qubit
+            self.curr_p2l_map[physical_qubit] = ancilla_qubit
+        self.active_ancilla_qubit_nodes.update(action.get_ancilla_qubit_nodes())
+
+        self.boarding_actions.append(action)
+        self.add_action_logging(action)
+        return True
+
+    def add_board_action_immediate(self, action: Board) -> bool:
+        """
+        Add a Board to the boarding stage.
+
+        Note: The action is added to the end of the boarding actions list.
+
+        Args:
+            action (Board): The boarding action to add.
+        
+        Returns:
+            bool: Whether the action is successfully added.
+        """
+        assert isinstance(action, Board), "Action should be Board"
+        assert self.curr_p2l_map[action.platform] == action.logic_qubit, f"In action {action.id}, data qubit {action.logic_qubit} to board should be in platform {action.platform}."
+
+        alight_qubit = self.curr_p2l_map[action.station]
+        self.curr_l2p_map[action.logic_qubit] = action.station
+        self.curr_p2l_map[action.station] = action.logic_qubit
+        if alight_qubit != -1:
+            self.curr_l2p_map[alight_qubit] = action.platform
+        self.curr_p2l_map[action.platform] = alight_qubit
+
+        self.boarding_actions.append(action)
+        self.add_action_logging(action)
+        return True
+
+    def add_alight_action_immediate(self, action: Alight) -> bool:
+        """
+        Add an Alight to the boarding stage.
+
+        Note: The action is added to the end of the boarding actions list.
+
+        Args:
+            action (Alight): The alighting action to add.
+
+        Returns:
+            bool: Whether the action is successfully added.
+        """
+        assert isinstance(action, Alight), "Action should be Alight"
+        assert self.curr_p2l_map[action.station] == action.logic_qubit, f"In action {action.id}, data qubit {action.logic_qubit} to alight should be in station {action.station}."
+
+        board_qubit = self.curr_p2l_map[action.platform]
+        self.curr_l2p_map[action.logic_qubit] = action.platform
+        self.curr_p2l_map[action.platform] = action.logic_qubit
+        if board_qubit != -1:
+            self.curr_l2p_map[board_qubit] = action.station
+        self.curr_p2l_map[action.station] = board_qubit
+
+        self.boarding_actions.append(action)
+        self.add_action_logging(action)
+        return True
+
+    def add_interchange_action_immediate(self, action: Interchange) -> bool:
+        """
+        Add an Interchange to the boarding stage.
+
+        Note: The action is added to the end of the boarding actions list.
+
+        Args:
+            action (Interchange): The interchange action to add.
+
+        Returns:
+            bool: Whether the action is successfully added.
+        """
+        assert isinstance(action, Interchange), "Action should be Interchange"
+        assert self.curr_p2l_map[action.interchange[0]] == action.logic_qubit, f"In action {action.id}, data qubit {action.logic_qubit} to interchange should be in source interchange {action.interchange[0]}."
+
+        interchanged_qubit = self.curr_p2l_map[action.interchange[1]]
+        self.curr_l2p_map[action.logic_qubit] = action.interchange[1]
+        self.curr_p2l_map[action.interchange[1]] = action.logic_qubit
+        if interchanged_qubit != -1:
+            self.curr_l2p_map[interchanged_qubit] = action.interchange[0]
+        self.curr_p2l_map[action.interchange[0]] = interchanged_qubit
+
+        self.boarding_actions.append(action)
+        self.add_action_logging(action)
+        return True
+
 class RidingStage(CircuitStage):
     """
     Represents the riding stage in the quantum circuit.
@@ -709,24 +818,26 @@ class RidingStage(CircuitStage):
         self.potential_free_registers = dict()
         self.paired_registers_to_free = set()
 
+        self.locked_balises: set[tuple[int, int]] = set()
+
     def get_action_num(self) -> int:
         return len(self.riding_actions)
 
-    def add_action(self, action: CircuitAction) -> bool:
+    def add_action_immediate(self, action: CircuitAction) -> bool:
         if isinstance(action, BoardingAction):
             return False
         elif isinstance(action, Transport):
-            return self.add_transport_action(action)
+            return self.add_transport_action_immediate(action)
         elif isinstance(action, Teleport):
-            return self.add_teleport_action(action)
+            return self.add_teleport_action_immediate(action)
         elif isinstance(action, Enter):
-            return self.add_enter_action(action)
+            return self.add_enter_action_immediate(action)
         elif isinstance(action, Exit):
-            return self.add_exit_action(action)
+            return self.add_exit_action_immediate(action)
         elif isinstance(action, SwapGate):
-            return self.add_swap_action(action)
+            return self.add_swap_action_immediate(action)
         elif isinstance(action, DirectGate):
-            return self.add_direct_action(action)
+            return self.add_direct_action_immediate(action)
 
     def add_transport_action(self, action: Transport) -> bool:
         """
@@ -764,7 +875,7 @@ class RidingStage(CircuitStage):
         self.riding_actions.append(action)
         self.add_action_logging(action)
         return True
-    
+
     def add_teleport_action(self, action: Teleport) -> bool:
         """
         Add a Teleport to the operating stage.
@@ -823,7 +934,7 @@ class RidingStage(CircuitStage):
         self.riding_actions.append(action)
         self.add_action_logging(action)
         return True
-    
+
     def add_exit_action(self, action: Exit) -> bool:
         """
         Add an Exit to the operating stage.
@@ -857,7 +968,7 @@ class RidingStage(CircuitStage):
         self.riding_actions.append(action)
         self.add_action_logging(action)
         return True
-    
+
     def add_swap_action(self, action: SwapGate) -> bool:
         """
         Add a SwapGate to the operating stage.
@@ -887,6 +998,167 @@ class RidingStage(CircuitStage):
         return True
 
     def add_direct_action(self, action: DirectGate) -> bool:
+        """
+        Add a LocalGate to the operating stage.
+
+        Note: The action is added to the end of the operating actions list.
+
+        Args:
+            action (LocalGate): The local gate action to add.
+
+        Returns:
+            bool: Whether the action is successfully added.
+        """
+        assert isinstance(action, DirectGate), "Action should be LocalGate"
+        assert self.curr_p2l_map[action.phy_ctrl_qubit] == action.logic_gate.control_qubit, \
+            f"In action {action.id}, control qubit {action.logic_gate.control_qubit} should be in physical qubit {action.phy_ctrl_qubit}."
+        assert self.curr_p2l_map[action.phy_targ_qubit] == action.logic_gate.target_qubit, \
+            f"In action {action.id}, target qubit {action.logic_gate.target_qubit} should be in physical qubit {action.phy_targ_qubit}."
+
+        physical_qubit_control = self.curr_l2p_map[action.logic_gate.control_qubit]
+        physical_qubit_target = self.curr_l2p_map[action.logic_gate.target_qubit]
+        assert (physical_qubit_control[0] == physical_qubit_target[0] and abs(physical_qubit_control[1] - physical_qubit_target[1]) == 1) or \
+               (physical_qubit_control[1] == physical_qubit_target[1] and abs(physical_qubit_control[0] - physical_qubit_target[0]) == 1), \
+               f"In action {action.id}, control and target qubits {action.logic_gate.control_qubit} and {action.logic_gate.target_qubit} should be adjacent on the compute module."
+
+        self.riding_actions.append(action)
+        self.add_action_logging(action)
+        return True
+
+    def add_transport_action_immediate(self, action: Transport) -> bool:
+        """
+        Add a Transport to the operating stage.
+
+        Note: The action is added to the end of the operating actions list.
+
+        Args:
+            action (Transport): The transport action to add.
+
+        Returns:
+            bool: Whether the action is successfully added.
+        """
+        assert isinstance(action, Transport), "Action should be Transport"
+        assert action.source_physical_qubit in self.occupied_balises, f"In action {action.id}, data qubit {action.logic_qubit} to transport should be in source balise {action.source_physical_qubit}."
+
+        if action.target_physical_qubit in self.locked_balises:
+            return False
+        exchanged_qubit = self.curr_p2l_map[action.target_physical_qubit]
+        self.curr_l2p_map[action.logic_qubit] = action.target_physical_qubit
+        self.curr_p2l_map[action.target_physical_qubit] = action.logic_qubit
+        if exchanged_qubit != -1:
+            self.curr_l2p_map[exchanged_qubit] = action.source_physical_qubit
+        self.curr_p2l_map[action.source_physical_qubit] = exchanged_qubit
+        self.locked_balises.add(action.target_physical_qubit)
+        
+        self.riding_actions.append(action)
+        self.add_action_logging(action)
+        return True
+
+    def add_teleport_action_immediate(self, action: Teleport) -> bool:
+        """
+        Add a Teleport to the operating stage.
+
+        Note: The action is added to the end of the operating actions list.
+
+        Args:
+            action (Teleport): The teleportation action to add.
+
+        Returns:
+            bool: Whether the action is successfully added.
+        """
+        assert isinstance(action, Teleport), "Action should be Teleport"
+        assert self.curr_p2l_map[action.platform] == action.ancilla_qubit, f"In action {action.id}, ancilla qubit {action.ancilla_qubit} for teleportation should be in platform {action.platform}."
+        assert self.curr_p2l_map[action.register] == action.data_qubit, f"In action {action.id}, data qubit {action.data_qubit} to teleport should be in register {action.register}."
+
+        self.curr_l2p_map.pop(action.ancilla_qubit)
+        self.curr_p2l_map[action.platform] = -1
+        self.active_ancilla_qubit_nodes.pop(action.ancilla_qubit)
+
+        self.riding_actions.append(action)
+        self.add_action_logging(action)
+        return True
+
+    def add_enter_action_immediate(self, action: Enter) -> bool:
+        """
+        Add an Enter to the operating stage.
+
+        Note: The action is added to the end of the operating actions list.
+
+        Args:
+            action (Enter): The enter action to add.
+
+        Returns:
+            bool: Whether the action is successfully added.
+        """
+        assert isinstance(action, Enter), "Action should be Enter"
+        assert self.curr_p2l_map[action.register] == action.logic_qubit, f"In action {action.id}, data qubit {action.logic_qubit} to enter should be in register {action.register}."
+
+        exit_qubit = self.curr_p2l_map[action.platform]
+        self.curr_l2p_map[action.logic_qubit] = action.platform
+        self.curr_p2l_map[action.platform] = action.logic_qubit
+        if exit_qubit != -1:
+            self.curr_l2p_map[exit_qubit] = action.register
+        self.curr_p2l_map[action.register] = exit_qubit
+        
+        self.riding_actions.append(action)
+        self.add_action_logging(action)
+        return True
+
+    def add_exit_action_immediate(self, action: Exit) -> bool:
+        """
+        Add an Exit to the operating stage.
+
+        Note: The action is added to the end of the operating actions list.
+
+        Args:
+            action (Exit): The exit action to add.
+
+        Returns:
+            bool: Whether the action is successfully added.
+        """
+        assert isinstance(action, Exit), "Action should be Exit"
+        assert action.platform in self.occupied_platforms, f"In action {action.id}, data qubit {action.logic_qubit} to exit should be in platform {action.platform}."
+
+        enter_qubit = self.curr_p2l_map[action.register]
+        self.curr_l2p_map[action.logic_qubit] = action.register
+        self.curr_p2l_map[action.register] = action.logic_qubit
+        if enter_qubit != -1:
+            self.curr_l2p_map[enter_qubit] = action.platform
+        self.curr_p2l_map[action.platform] = enter_qubit
+
+        self.riding_actions.append(action)
+        self.add_action_logging(action)
+        return True
+
+    def add_swap_action_immediate(self, action: SwapGate) -> bool:
+        """
+        Add a SwapGate to the operating stage.
+
+        Note: The action is added to the end of the operating actions list.
+
+        Args:
+            action (SwapGate): The routing action to add.
+
+        Returns:
+            bool: Whether the action is successfully added.
+        """
+        assert isinstance(action, SwapGate), "Action should be SwapGate"
+        assert self.curr_p2l_map[action.qubit_u] == action.logic_qubit, f"In action {action.id}, logic qubit {action.logic_qubit} should can be routed by the swap gate."
+
+        logic_qubit_u = self.curr_p2l_map[action.qubit_u]
+        logic_qubit_v = self.curr_p2l_map[action.qubit_v]
+        if logic_qubit_u != -1:
+            self.curr_l2p_map[logic_qubit_u] = action.qubit_v
+        self.curr_p2l_map[action.qubit_u] = logic_qubit_v
+        if logic_qubit_v != -1:
+            self.curr_l2p_map[logic_qubit_v] = action.qubit_u
+        self.curr_p2l_map[action.qubit_v] = logic_qubit_u
+
+        self.riding_actions.append(action)
+        self.add_action_logging(action)
+        return True
+
+    def add_direct_action_immediate(self, action: DirectGate) -> bool:
         """
         Add a LocalGate to the operating stage.
 
@@ -1029,7 +1301,7 @@ class Circuit:
                 stage = self.stages[earliest_stage_id]
             else:
                 stage = self.extend_stage(bool(len(self.stages) % 2 == 0))
-            if stage.add_action(action):
+            if stage.add_action_immediate(action):
                 return earliest_stage_id
             else:
                 earliest_stage_id += 1
