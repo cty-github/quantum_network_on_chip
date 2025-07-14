@@ -1100,7 +1100,8 @@ class ComputeModule(FuncArea):
         path = [source]
         append_path = []
         if source == target:
-            return path.extend(append_path)
+            path.extend(append_path)
+            return path
         if source[0] == self.left[0]:
             if source[1] == self.top[0]:
                 if (source[0] + 1, source[1]) not in self.get_platforms():
@@ -1253,23 +1254,39 @@ class ComputeModule(FuncArea):
                     path.append((target[0], i))
         else:
             # find the x-line index has inter-chiplet coupler
-            if source[0] < target[0]:
-                inter_coupler_x = self.left[0] + ((source[0] - self.left[0]) // FuncArea.fab_model.inter_sparsity + 1) * FuncArea.fab_model.inter_sparsity
+            if source_chiplet.in_module_coord[1] == target_chiplet.in_module_coord[1]:
+                inter_coupler_x = source[0]
+            elif source[0] < target[0]:
+                inter_coupler_x = self.left[0] + ((source[0] - self.left[0] - 1) // FuncArea.fab_model.inter_sparsity + 1) * FuncArea.fab_model.inter_sparsity
                 if inter_coupler_x >= self.right[0]:
+                    inter_coupler_x -= FuncArea.fab_model.inter_sparsity
+                x_chiplet = self.get_node_chiplet((inter_coupler_x, source[1]))
+                if x_chiplet.in_module_coord[0] > source_chiplet.in_module_coord[0]:
                     inter_coupler_x -= FuncArea.fab_model.inter_sparsity
             else:
                 inter_coupler_x = self.left[0] + (source[0] - self.left[0]) // FuncArea.fab_model.inter_sparsity * FuncArea.fab_model.inter_sparsity
                 if inter_coupler_x == self.left[0]:
                     inter_coupler_x += FuncArea.fab_model.inter_sparsity
+                x_chiplet = self.get_node_chiplet((inter_coupler_x, source[1]))
+                if x_chiplet.in_module_coord[0] < source_chiplet.in_module_coord[0]:
+                    inter_coupler_x += FuncArea.fab_model.inter_sparsity
             # find the y-line index has inter-chiplet coupler
-            if source[1] < target[1]:
-                inter_coupler_y = self.top[0] + ((source[1] - self.top[0]) // FuncArea.fab_model.inter_sparsity + 1) * FuncArea.fab_model.inter_sparsity
-                if inter_coupler_y >= self.bottom[0]:
-                    inter_coupler_y -= FuncArea.fab_model.inter_sparsity
-            else:
-                inter_coupler_y = self.top[0] + (source[1] - self.top[0]) // FuncArea.fab_model.inter_sparsity * FuncArea.fab_model.inter_sparsity
+            if source_chiplet.in_module_coord[0] == target_chiplet.in_module_coord[0]:
+                inter_coupler_y = target[1]
+            elif source[1] < target[1]:
+                inter_coupler_y = self.top[0] + (target[1] - self.top[0]) // FuncArea.fab_model.inter_sparsity * FuncArea.fab_model.inter_sparsity
                 if inter_coupler_y == self.top[0]:
                     inter_coupler_y += FuncArea.fab_model.inter_sparsity
+                y_chiplet = self.get_node_chiplet((target[0], inter_coupler_y))
+                if y_chiplet.in_module_coord[1] < target_chiplet.in_module_coord[1]:
+                    inter_coupler_y += FuncArea.fab_model.inter_sparsity
+            else:
+                inter_coupler_y = self.top[0] + ((target[1] - self.top[0] - 1) // FuncArea.fab_model.inter_sparsity + 1) * FuncArea.fab_model.inter_sparsity
+                if inter_coupler_y >= self.bottom[0]:
+                    inter_coupler_y -= FuncArea.fab_model.inter_sparsity
+                y_chiplet = self.get_node_chiplet((target[0], inter_coupler_y))
+                if y_chiplet.in_module_coord[1] > target_chiplet.in_module_coord[1]:
+                    inter_coupler_y -= FuncArea.fab_model.inter_sparsity
                     
             if source[0] < inter_coupler_x:
                 for i in range(source[0] + 1, inter_coupler_x + 1):
@@ -1289,6 +1306,12 @@ class ComputeModule(FuncArea):
             elif inter_coupler_x > target[0]:
                 for i in range(inter_coupler_x - 1, target[0] - 1, -1):
                     path.append((i, inter_coupler_y))
+            if inter_coupler_y < target[1]:
+                for i in range(inter_coupler_y + 1, target[1] + 1):
+                    path.append((target[0], i))
+            elif inter_coupler_y > target[1]:
+                for i in range(inter_coupler_y - 1, target[1] - 1, -1):
+                    path.append((target[0], i))
 
         path.extend(append_path)
         return path

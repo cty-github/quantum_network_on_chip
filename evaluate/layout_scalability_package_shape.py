@@ -42,37 +42,37 @@ if __name__ == "__main__":
 logging.info(f"Design strategies to test: {design_strategy_to_test}")
 logging.info(f"Package x size to test: {package_x_size_to_test}")
 for design_strategy, package_x_size in product(design_strategy_to_test, package_x_size_to_test):
-        package_y_size = 10000 // package_x_size
-        logging.info(f"Testing package shape: ({package_x_size}, {package_y_size}), design strategy: {design_strategy}")
-        result_dir = os.path.join(exp_dir, f"{package_x_size}_{package_y_size}_{design_strategy}")
-        os.makedirs(result_dir, exist_ok=True)
-        package_size = (package_x_size, package_y_size)
+    package_y_size = 10000 // package_x_size
+    logging.info(f"Testing package shape: ({package_x_size}, {package_y_size}), design strategy: {design_strategy}")
+    result_dir = os.path.join(exp_dir, f"{package_x_size}_{package_y_size}_{design_strategy}")
+    os.makedirs(result_dir, exist_ok=True)
+    package_size = (package_x_size, package_y_size)
 
-        if design_strategy == "baseline":
-            package = Package(package_size, design_strategy="rl", result_dir=result_dir)
-        elif design_strategy == "greedy":
-            package = Package(package_size, design_strategy="greedy", result_dir=result_dir)
-        elif design_strategy == "rl":
-            env = QuNoCEnv(package_size, patience=5, result_dir=result_dir)
-            if os.path.exists(os.path.join(result_dir, "layout_agent.pth")):
-                agent = LayoutAgent(env, pre_trained_model_path=os.path.join(result_dir, "layout_agent.pth"))
-            else:
-                agent = LayoutAgent(env, result_dir=result_dir)
-                agent.train(total_timesteps=100*package_size[0]*package_size[1])
-            package = agent.design()
-        
-        score = package.estimate_score()
-        fidelity = package.estimate_transfer()[0]
-        with open(output_path, mode='a', newline='') as file:
-            writer = csv.writer(file)
-            writer.writerow([package_x_size, design_strategy, score, fidelity])
-        logging.info(f"Tested score: {score}, fidelity: {fidelity}")
+    if design_strategy == "baseline":
+        package = Package(package_size, design_strategy="rl", result_dir=result_dir)
+    elif design_strategy == "greedy":
+        package = Package(package_size, design_strategy="greedy", result_dir=result_dir)
+    elif design_strategy == "rl":
+        env = QuNoCEnv(package_size, patience=5, result_dir=result_dir)
+        if os.path.exists(os.path.join(result_dir, "layout_agent.pth")):
+            agent = LayoutAgent(env, pre_trained_model_path=os.path.join(result_dir, "layout_agent.pth"))
+        else:
+            agent = LayoutAgent(env, result_dir=result_dir)
+            agent.train(total_timesteps=100*package_size[0]*package_size[1])
+        package = agent.design()
+    
+    score = package.estimate_score()
+    fidelity = package.estimate_transfer()[0]
+    with open(output_path, mode='a', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow([package_x_size, design_strategy, score, fidelity])
+    logging.info(f"Tested score: {score}, fidelity: {fidelity}")
 
-        package.save()
-        # package.save_design_history()
-        try:
-            fig, _ = package.draw_qubits(axis_off=False)
-            fig.savefig(os.path.join(result_dir, "package.png"))
-            logging.info(f"Saved package visualizing results")
-        except Exception as e:
-            logging.warning(f"Failed to draw qubits: {e}")
+    package.save()
+    # package.save_design_history()
+    try:
+        fig, _ = package.draw_qubits(axis_off=False)
+        fig.savefig(os.path.join(result_dir, "package.png"))
+        logging.info(f"Saved package visualizing results")
+    except Exception as e:
+        logging.warning(f"Failed to draw qubits: {e}")
