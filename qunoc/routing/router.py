@@ -1557,69 +1557,6 @@ class Router:
         except Exception as e:
             logging.warning(f"Failed to draw qubit mapping block: {e}")
 
-    # def schedule_actions_to_circuit_in_order(self):
-    #     """
-    #     Schedule the actions to circuit in order.
-    #     """
-    #     self.circuit = Circuit(self.program.data_qubit_num, self.package.package_size, self.init_l2p_map, self.init_p2l_map, self.action_depend_graph, self.package.op_config)
-
-    #     for action_id in self.action_depend_graph.nodes:
-    #         self.action_depend_graph.nodes[action_id]["pred"] = set(self.action_depend_graph.predecessors(action_id))
-    #     no_depend_action_ids: set[int] = set()
-    #     for action_id in self.action_depend_graph.nodes:
-    #         if len(self.action_depend_graph.nodes[action_id]["pred"]) == 0:
-    #             no_depend_action_ids.add(action_id)
-    #     self.update_no_depend_action_ids(no_depend_action_ids, -1)
-    #     self.action_depend_graph.nodes[-1]["stage"] = 0
-
-    #     for action_id in self.action_depend_graph.nodes:
-    #         if action_id == -1:
-    #             continue
-    #         else:
-    #             assert action_id in no_depend_action_ids
-    #         action = self.action_depend_graph.nodes[action_id]["action"]
-    #         stage_id = self.circuit.add_action_into_earliest_stage(action)
-    #         self.update_no_depend_action_ids(no_depend_action_ids, action_id)
-    #         self.action_depend_graph.nodes[action_id]["stage"] = stage_id
-
-    # def estimate_gate_fides(self) -> dict[int, float]:
-    #     """
-    #     Estimate the fidelity for each gate in the circuit.
-
-    #     Returns:
-    #         dict[int, float]: A dictionary mapping gate ids to their estimated fidelities.
-    #     """
-    #     if not hasattr(self, "gate_fides"):
-    #         self.gate_fides: dict[int, float] = dict()
-    #         for gate_id, action_ids in self.gate_actions.items():
-    #             self.gate_fides[gate_id] = 1.0
-    #             for action_id in action_ids:
-    #                 action = self.action_depend_graph.nodes[action_id]["action"]
-    #                 if isinstance(action, GhzPreparation):
-    #                     ghz_edge = action.ghz_balise_graph[action.tele_gate_ids.index(gate_id) + 1]
-    #                     self.gate_fides[gate_id] *= self.package.get_coupler_fide(*ghz_edge)
-    #                 elif isinstance(action, (Board, Alight, Interchange)):
-    #                     self.gate_fides[gate_id] *= self.package.fab_model.inter_fide ** 3
-    #                 elif isinstance(action, Transport):
-    #                     qst_dist = abs(action.source_physical_qubit[0] - action.target_physical_qubit[0]) + abs(action.source_physical_qubit[1] - action.target_physical_qubit[1])
-    #                     self.gate_fides[gate_id] *= self.package.fab_model.enhanced_fide ** qst_dist
-    #                 elif isinstance(action, Teleport):
-    #                     phy_qubit_u = action.platform
-    #                     phy_qubit_v = action.register
-    #                     self.gate_fides[gate_id] *= self.package.get_coupler_fide(phy_qubit_u, phy_qubit_v)
-    #                 elif isinstance(action, (Enter, Exit, SwapGate, DirectGate)):
-    #                     if isinstance(action, (Enter, Exit)):
-    #                         phy_qubit_u = action.platform
-    #                         phy_qubit_v = action.register
-    #                     elif isinstance(action, SwapGate):
-    #                         phy_qubit_u = action.qubit_u
-    #                         phy_qubit_v = action.qubit_v
-    #                     elif isinstance(action, DirectGate):
-    #                         phy_qubit_u = action.phy_ctrl_qubit
-    #                         phy_qubit_v = action.phy_targ_qubit
-    #                     self.gate_fides[gate_id] *= self.package.get_coupler_fide(phy_qubit_u, phy_qubit_v) ** 3
-    #     return self.gate_fides
-
     def statistic_op_num_fide(self) -> tuple[int, int, int, int, float]:
         """
         Statistic the number of intra and inter gates, the distance of quantum state transfer, and the total fidelity of the circuit.
