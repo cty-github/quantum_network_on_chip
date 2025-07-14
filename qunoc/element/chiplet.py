@@ -170,7 +170,7 @@ class OperationConfig:
             single_time: float = 34, 
             intra_time: float = 25, 
             inter_time: float = float(np.mean([152, 148, 164, 128, 176, 116, 284, 108, 468, 116])),
-            qst_time_constant: float = 25, 
+            qst_time_constant: float = 125 / (5 ** 0.5), 
             measure_time: float = 2280, 
             reset_time: float = 400
         ):

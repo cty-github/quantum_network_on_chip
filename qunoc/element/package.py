@@ -1170,6 +1170,18 @@ class Package:
             self.register_num = len(self.get_registers())
         return self.register_num
 
+    def get_chiplet_register_num(self, chiplet: Chiplet) -> int:
+        """
+        Get the number of register qubits in the chiplet.
+
+        Args:
+            chiplet (Chiplet): The chiplet to count the register qubits.
+
+        Returns:
+            int: The number of register qubits in the chiplet.
+        """
+        return sum(1 for node in chiplet.get_nodes() if self.package_graph.nodes[node]["qubit"].role == QubitRole.Register)
+
     def get_node_chiplet(self, node: tuple[int, int]) -> Chiplet:
         """
         Get the chiplet that contains the node.

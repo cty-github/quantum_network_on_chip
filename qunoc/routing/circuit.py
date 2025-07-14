@@ -31,6 +31,15 @@ class CircuitAction:
         """
         if config.debug_block:
             logging.info(f"Transformed {self}")
+    
+    def get_involved_nodes(self) -> set[tuple[int, int]]:
+        """
+        Get the physical qubits involved in the action.
+
+        Returns:
+            set[tuple[int, int]]: The set of physical qubits involved in the action.
+        """
+        raise NotImplementedError("This method should be implemented in subclasses.")
 
 class BoardingAction(CircuitAction):
     """
@@ -103,6 +112,9 @@ class GhzPreparation(BoardingAction):
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Prepare {self.qubit_num}-GHZ state for logic qubits {self.data_qubits} on physical qubits {self.source_physical_qubits}."
     
+    def get_involved_nodes(self):
+        return set(self.source_physical_qubits)
+
     def record_ancilla_qubit_nodes(self, ancilla_qubit: int, ancilla_nodes: list[tuple[int, int]]):
         """
         Record the ancilla nodes used for the GHZ state.
@@ -169,6 +181,9 @@ class Board(BoardingAction):
 
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Board logic qubit {self.logic_qubit} from physical qubit {self.platform} to physical qubit {self.station}."
+    
+    def get_involved_nodes(self) -> set[tuple[int, int]]:
+        return {self.station, self.platform}
 
 class Alight(BoardingAction):
     """
@@ -197,6 +212,9 @@ class Alight(BoardingAction):
 
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Alight logic qubit {self.logic_qubit} from physical qubit {self.station} to physical qubit {self.platform}."
+    
+    def get_involved_nodes(self) -> set[tuple[int, int]]:
+        return {self.station, self.platform}
 
 class Interchange(BoardingAction):
     """
@@ -222,6 +240,9 @@ class Interchange(BoardingAction):
 
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Interchange logic qubit {self.logic_qubit} between physical qubits {self.interchange}."
+    
+    def get_involved_nodes(self) -> set[tuple[int, int]]:
+        return {self.interchange[0], self.interchange[1]}
 
 class Transport(RidingAction):
     """
@@ -250,7 +271,10 @@ class Transport(RidingAction):
 
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Transport logic qubit {self.logic_qubit} from physical qubit {self.source_physical_qubit} to physical qubit {self.target_physical_qubit}."
-    
+
+    def get_involved_nodes(self) -> set[tuple[int, int]]:
+        return {self.source_physical_qubit, self.target_physical_qubit}
+
     def get_distance(self) -> int:
         """
         Get the distance of QST.
@@ -270,9 +294,10 @@ class Teleport(RidingAction):
         platform (tuple[int, int]): The physical qubit on compute chiplet where the ancilla qubit is located.
         register (tuple[int, int]): The physical qubit on compute chiplet where the data qubit is located.
         control_flag (bool): The flag marking if the data qubit is the control qubit.
+        inter_flag (bool): The flag marking if the action is performed on inter coupler.
     """
 
-    def __init__(self, ancilla_qubit: int, data_qubit: int, platform: tuple[int, int], register: tuple[int, int], control_flag: bool):
+    def __init__(self, ancilla_qubit: int, data_qubit: int, platform: tuple[int, int], register: tuple[int, int], control_flag: bool, inter_flag: bool):
         """
         Initialize the teleportation action.
 
@@ -282,6 +307,7 @@ class Teleport(RidingAction):
             platform (tuple[int, int]): The physical qubit on compute chiplet where the ancilla qubit is located.
             register (tuple[int, int]): The physical qubit on compute chiplet where the data qubit is located.
             control_flag (bool): The flag marking if the data qubit is the control qubit.
+            inter_flag (bool): The flag marking if the action is performed on inter coupler.
         """
         super().__init__()
         self.ancilla_qubit = ancilla_qubit
@@ -289,10 +315,14 @@ class Teleport(RidingAction):
         self.platform = platform
         self.register = register
         self.control_flag = control_flag
+        self.inter_flag = inter_flag
         self.init_logging()
 
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Teleport data qubit {self.data_qubit} with ancilla qubit {self.ancilla_qubit} on physical qubit {self.platform}."
+    
+    def get_involved_nodes(self) -> set[tuple[int, int]]:
+        return {self.platform, self.register}
 
 class Enter(RidingAction):
     """
@@ -302,9 +332,10 @@ class Enter(RidingAction):
         logic_qubit (int): The logic qubit to enter.
         platform (tuple[int, int]): The physical qubit on compute chiplet where the logic qubit is entering.
         register (tuple[int, int]): The physical qubit on compute chiplet where the logic qubit is exiting.
+        inter_flag (bool): The flag marking if the action is performed on inter coupler.
     """
 
-    def __init__(self, logic_qubit: int, platform: tuple[int, int], register: tuple[int, int]):
+    def __init__(self, logic_qubit: int, platform: tuple[int, int], register: tuple[int, int], inter_flag: bool):
         """
         Initialize the enter action.
 
@@ -312,15 +343,20 @@ class Enter(RidingAction):
             logic_qubit (int): The logic qubit to enter.
             platform (tuple[int, int]): The physical qubit on compute chiplet where the logic qubit is entering.
             register (tuple[int, int]): The physical qubit on compute chiplet where the logic qubit is exiting.
+            inter_flag (bool): The flag marking if the action is performed on inter coupler.
         """
         super().__init__()
         self.logic_qubit = logic_qubit
         self.platform = platform
         self.register = register
+        self.inter_flag = inter_flag
         self.init_logging()
 
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Enter logic qubit {self.logic_qubit} to physical qubit {self.platform} from physical qubit {self.register}."
+    
+    def get_involved_nodes(self) -> set[tuple[int, int]]:
+        return {self.platform, self.register}
     
 class Exit(RidingAction):
     """
@@ -330,9 +366,10 @@ class Exit(RidingAction):
         logic_qubit (int): The logic qubit to exit.
         platform (tuple[int, int]): The physical qubit on compute chiplet where the logic qubit is exiting.
         register (tuple[int, int]): The physical qubit on compute chiplet where the logic qubit is entering.
+        inter_flag (bool): The flag marking if the action is performed on inter coupler.
     """
 
-    def __init__(self, logic_qubit: int, platform: tuple[int, int], register: tuple[int, int]):
+    def __init__(self, logic_qubit: int, platform: tuple[int, int], register: tuple[int, int], inter_flag: bool):
         """
         Initialize the exit action.
 
@@ -340,15 +377,20 @@ class Exit(RidingAction):
             logic_qubit (int): The logic qubit to exit.
             platform (tuple[int, int]): The physical qubit on compute chiplet where the logic qubit is exiting.
             register (tuple[int, int]): The physical qubit on compute chiplet where the logic qubit is entering.
+            inter_flag (bool): The flag marking if the action is performed on inter coupler.
         """
         super().__init__()
         self.logic_qubit = logic_qubit
         self.platform = platform
         self.register = register
+        self.inter_flag = inter_flag
         self.init_logging()
 
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Exit logic qubit {self.logic_qubit} from physical qubit {self.platform} to physical qubit {self.register}."
+
+    def get_involved_nodes(self) -> set[tuple[int, int]]:
+        return {self.platform, self.register}
 
 class SwapGate(RidingAction):
     """
@@ -358,9 +400,10 @@ class SwapGate(RidingAction):
         logic_qubit (int): The logic qubit routed by the swap gate.
         qubit_u (tuple[int, int]): The first qubit of the swap gate.
         qubit_v (tuple[int, int]): The second qubit of the swap gate.
+        inter_flag (bool): The flag marking if the action is performed on inter coupler.
     """
     
-    def __init__(self, logic_qubit: int, qubit_u: tuple[int, int], qubit_v: tuple[int, int]):
+    def __init__(self, logic_qubit: int, qubit_u: tuple[int, int], qubit_v: tuple[int, int], inter_flag: bool):
         """
         Initialize the swap gate action.
 
@@ -368,15 +411,20 @@ class SwapGate(RidingAction):
             logic_qubit (int): The logic qubit routed by the swap gate.
             qubit_u (tuple[int, int]): The first qubit of the swap gate.
             qubit_v (tuple[int, int]): The second qubit of the swap gate.
+            inter_flag (bool): The flag marking if the action is performed on inter coupler.
         """
         super().__init__()
         self.logic_qubit = logic_qubit
         self.qubit_u = qubit_u
         self.qubit_v = qubit_v
+        self.inter_flag = inter_flag
         self.init_logging()
 
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Route logic qubit {self.logic_qubit} with swap gate between physical qubits {self.qubit_u} and {self.qubit_v}."
+
+    def get_involved_nodes(self) -> set[tuple[int, int]]:
+        return {self.qubit_u, self.qubit_v}
 
 class DirectGate(RidingAction):
     """
@@ -386,9 +434,10 @@ class DirectGate(RidingAction):
         logic_gate (Control): The logical control gate.
         phy_ctrl_qubit (tuple[int, int]): The physical qubit where the control qubit is located.
         phy_targ_qubit (tuple[int, int]): The physical qubit where the target qubit is located.
+        inter_flag (bool): The flag marking if the action is performed on inter coupler.
     """
     
-    def __init__(self, logic_gate: Control, phy_ctrl_qubit: tuple[int, int], phy_targ_qubit: tuple[int, int]):
+    def __init__(self, logic_gate: Control, phy_ctrl_qubit: tuple[int, int], phy_targ_qubit: tuple[int, int], inter_flag: bool):
         """
         Initialize the local gate action.
         
@@ -396,15 +445,20 @@ class DirectGate(RidingAction):
             logic_gate (Control): The logical control gate.
             phy_ctrl_qubit (tuple[int, int]): The physical qubit where the control qubit is located.
             phy_targ_qubit (tuple[int, int]): The physical qubit where the target qubit is located.
+            inter_flag (bool): The flag marking if the action is performed on inter coupler.
         """
         super().__init__()
         self.logic_gate = logic_gate
         self.phy_ctrl_qubit = phy_ctrl_qubit
         self.phy_targ_qubit = phy_targ_qubit
+        self.inter_flag = inter_flag
         self.init_logging()
 
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: {self.logic_gate}."
+
+    def get_involved_nodes(self) -> set[tuple[int, int]]:
+        return {self.phy_ctrl_qubit, self.phy_targ_qubit}
 
 
 class CircuitStage:
@@ -417,7 +471,9 @@ class CircuitStage:
         curr_p2l_map (dict[tuple[int, int], int]): Recording the current mapping from physical qubits to logical qubits.
         occupied_balises (set[tuple[int, int]]): Recording the occupied balises.
         occupied_platforms (set[tuple[int, int]]): Recording the occupied platforms.
-        holding_ancilla_plats (set[tuple[int, int]]): Recording the platforms holding ancilla qubits.
+        active_ancilla_qubit_nodes (dict[int, list[tuple[int, int]]]): Recording the active ancilla qubit and nodes it will occupy.
+
+        node_action_dict (dict[tuple[int, int], list[tuple[int, int]]]): Recording the actions and its time for each node.
     """
     _counter = 0
 
@@ -447,6 +503,9 @@ class CircuitStage:
         self.occupied_platforms = occupied_platforms
         self.active_ancilla_qubit_nodes = active_ancilla_qubit_nodes
 
+        self.circuit_actions: list[CircuitAction] = []
+        self.node_action_ids: dict[tuple[int, int], list[int]] = {}
+
     def get_action_num(self) -> int:
         """
         Get the number of actions in the stage.
@@ -454,7 +513,22 @@ class CircuitStage:
         Returns:
             int: The number of actions in the stage.
         """
-        raise NotImplementedError("This method should be implemented in subclasses.")
+        return len(self.circuit_actions)
+    
+    def get_action_depend_graph(self) -> nx.DiGraph:
+        """
+        Get the action dependency graph of the stage.
+
+        Returns:
+            nx.DiGraph: The directed graph representing the dependencies between actions.
+        """
+        action_depend_graph = nx.DiGraph()
+        for action in self.circuit_actions:
+            action_depend_graph.add_node(action.id, action=action)
+        for node, action_ids in self.node_action_ids.items():
+            for i in range(len(action_ids) - 1):
+                action_depend_graph.add_edge(action_ids[i], action_ids[i + 1])
+        return action_depend_graph
     
     def add_action_immediate(self, action: CircuitAction) -> bool:
         """
@@ -476,7 +550,7 @@ class CircuitStage:
             action (CircuitAction): The action to log.
         """
         if config.debug_action:
-            logging.info(f"Added {action.__class__.__name__} {action.id}.")
+            logging.info(f"Added {action.__class__.__name__} {action.id} to stage {self.id}.")
 
 class BoardingStage(CircuitStage):
     """
@@ -509,15 +583,11 @@ class BoardingStage(CircuitStage):
         """
         super().__init__(curr_l2p_map, curr_p2l_map, occupied_balises, occupied_platforms, active_ancilla_qubit_nodes)
         assert self.id % 2 == 0, "Boarding stage id should be even"
-        self.boarding_actions: list[BoardingAction] = []
 
         self.potential_free_balises = dict()
         self.paired_balises_to_free = set()
         self.potential_free_platforms = dict()
         self.paired_platforms_to_free = set()
-
-    def get_action_num(self) -> int:
-        return len(self.boarding_actions)
 
     def add_action_immediate(self, action: CircuitAction) -> bool:
         if isinstance(action, RidingAction):
@@ -558,7 +628,7 @@ class BoardingStage(CircuitStage):
             self.curr_p2l_map[physical_qubit] = ancilla_qubit
         self.active_ancilla_qubit_nodes.update(action.get_ancilla_qubit_nodes())
 
-        self.boarding_actions.append(action)
+        self.circuit_actions.append(action)
         self.add_action_logging(action)
         return True
 
@@ -593,7 +663,7 @@ class BoardingStage(CircuitStage):
         self.curr_l2p_map[action.logic_qubit] = action.station
         self.curr_p2l_map[action.station] = action.logic_qubit
 
-        self.boarding_actions.append(action)
+        self.circuit_actions.append(action)
         self.add_action_logging(action)
         return True
 
@@ -628,7 +698,7 @@ class BoardingStage(CircuitStage):
         self.curr_l2p_map[action.logic_qubit] = action.platform
         self.curr_p2l_map[action.platform] = action.logic_qubit
 
-        self.boarding_actions.append(action)
+        self.circuit_actions.append(action)
         self.add_action_logging(action)
         return True
 
@@ -663,7 +733,7 @@ class BoardingStage(CircuitStage):
         self.curr_l2p_map[action.logic_qubit] = action.interchange[1]
         self.curr_p2l_map[action.interchange[1]] = action.logic_qubit
 
-        self.boarding_actions.append(action)
+        self.circuit_actions.append(action)
         self.add_action_logging(action)
         return True
 
@@ -680,21 +750,15 @@ class BoardingStage(CircuitStage):
             bool: Whether the action is successfully added.
         """
         assert isinstance(action, GhzPreparation), "Action should be GhzPreparation"
-
         for physical_qubit in action.source_physical_qubits:
-            if self.curr_p2l_map[physical_qubit] != -1:
-                return False
-        active_ancilla_nodes = set().union(*self.active_ancilla_qubit_nodes.values())
-        ancilla_nodes = set().union(*action.get_ancilla_qubit_nodes().values())
-        if active_ancilla_nodes.intersection(ancilla_nodes):
-            return False
-        self.occupied_balises.update(action.source_physical_qubits)
+            assert self.curr_p2l_map[physical_qubit] == -1, f"In action {action.id}, physical qubit {physical_qubit} should be free for GHZ preparation."
+        
         for ancilla_qubit, physical_qubit in zip(action.ancilla_qubits, action.source_physical_qubits):
             self.curr_l2p_map[ancilla_qubit] = physical_qubit
             self.curr_p2l_map[physical_qubit] = ancilla_qubit
-        self.active_ancilla_qubit_nodes.update(action.get_ancilla_qubit_nodes())
+            self.node_action_ids.setdefault(physical_qubit, []).append(action.id)
 
-        self.boarding_actions.append(action)
+        self.circuit_actions.append(action)
         self.add_action_logging(action)
         return True
 
@@ -711,7 +775,7 @@ class BoardingStage(CircuitStage):
             bool: Whether the action is successfully added.
         """
         assert isinstance(action, Board), "Action should be Board"
-        assert self.curr_p2l_map[action.platform] == action.logic_qubit, f"In action {action.id}, data qubit {action.logic_qubit} to board should be in platform {action.platform}."
+        assert self.curr_p2l_map[action.platform] == action.logic_qubit, f"In action {action.id}, logic qubit {action.logic_qubit} to board should be in platform {action.platform}."
 
         alight_qubit = self.curr_p2l_map[action.station]
         self.curr_l2p_map[action.logic_qubit] = action.station
@@ -719,8 +783,10 @@ class BoardingStage(CircuitStage):
         if alight_qubit != -1:
             self.curr_l2p_map[alight_qubit] = action.platform
         self.curr_p2l_map[action.platform] = alight_qubit
+        self.node_action_ids.setdefault(action.station, []).append(action.id)
+        self.node_action_ids.setdefault(action.platform, []).append(action.id)
 
-        self.boarding_actions.append(action)
+        self.circuit_actions.append(action)
         self.add_action_logging(action)
         return True
 
@@ -737,7 +803,7 @@ class BoardingStage(CircuitStage):
             bool: Whether the action is successfully added.
         """
         assert isinstance(action, Alight), "Action should be Alight"
-        assert self.curr_p2l_map[action.station] == action.logic_qubit, f"In action {action.id}, data qubit {action.logic_qubit} to alight should be in station {action.station}."
+        assert self.curr_p2l_map[action.station] == action.logic_qubit, f"In action {action.id}, logic qubit {action.logic_qubit} to alight should be in station {action.station}."
 
         board_qubit = self.curr_p2l_map[action.platform]
         self.curr_l2p_map[action.logic_qubit] = action.platform
@@ -745,8 +811,10 @@ class BoardingStage(CircuitStage):
         if board_qubit != -1:
             self.curr_l2p_map[board_qubit] = action.station
         self.curr_p2l_map[action.station] = board_qubit
+        self.node_action_ids.setdefault(action.station, []).append(action.id)
+        self.node_action_ids.setdefault(action.platform, []).append(action.id)
 
-        self.boarding_actions.append(action)
+        self.circuit_actions.append(action)
         self.add_action_logging(action)
         return True
 
@@ -771,8 +839,10 @@ class BoardingStage(CircuitStage):
         if interchanged_qubit != -1:
             self.curr_l2p_map[interchanged_qubit] = action.interchange[0]
         self.curr_p2l_map[action.interchange[0]] = interchanged_qubit
+        self.node_action_ids.setdefault(action.interchange[0], []).append(action.id)
+        self.node_action_ids.setdefault(action.interchange[1], []).append(action.id)
 
-        self.boarding_actions.append(action)
+        self.circuit_actions.append(action)
         self.add_action_logging(action)
         return True
 
@@ -809,7 +879,6 @@ class RidingStage(CircuitStage):
         """
         super().__init__(curr_l2p_map, curr_p2l_map, occupied_balises, occupied_platforms, active_ancilla_qubit_nodes)
         assert self.id % 2 == 1, "Operating stage id should be odd"
-        self.riding_actions: list[RidingAction] = []
 
         self.potential_free_balises = dict()
         self.paired_balises_to_free = set()
@@ -819,9 +888,6 @@ class RidingStage(CircuitStage):
         self.paired_registers_to_free = set()
 
         self.locked_balises: set[tuple[int, int]] = set()
-
-    def get_action_num(self) -> int:
-        return len(self.riding_actions)
 
     def add_action_immediate(self, action: CircuitAction) -> bool:
         if isinstance(action, BoardingAction):
@@ -872,7 +938,7 @@ class RidingStage(CircuitStage):
         self.curr_l2p_map[action.logic_qubit] = action.target_physical_qubit
         self.curr_p2l_map[action.target_physical_qubit] = action.logic_qubit
         
-        self.riding_actions.append(action)
+        self.circuit_actions.append(action)
         self.add_action_logging(action)
         return True
 
@@ -897,7 +963,7 @@ class RidingStage(CircuitStage):
         self.curr_p2l_map[action.platform] = -1
         self.active_ancilla_qubit_nodes.pop(action.ancilla_qubit)
 
-        self.riding_actions.append(action)
+        self.circuit_actions.append(action)
         self.add_action_logging(action)
         return True
 
@@ -931,7 +997,7 @@ class RidingStage(CircuitStage):
         self.curr_l2p_map[action.logic_qubit] = action.platform
         self.curr_p2l_map[action.platform] = action.logic_qubit
         
-        self.riding_actions.append(action)
+        self.circuit_actions.append(action)
         self.add_action_logging(action)
         return True
 
@@ -965,7 +1031,7 @@ class RidingStage(CircuitStage):
         self.curr_l2p_map[action.logic_qubit] = action.register
         self.curr_p2l_map[action.register] = action.logic_qubit
 
-        self.riding_actions.append(action)
+        self.circuit_actions.append(action)
         self.add_action_logging(action)
         return True
 
@@ -993,7 +1059,7 @@ class RidingStage(CircuitStage):
         if logic_qubit_v != -1:
             self.curr_l2p_map[logic_qubit_v] = action.qubit_u
 
-        self.riding_actions.append(action)
+        self.circuit_actions.append(action)
         self.add_action_logging(action)
         return True
 
@@ -1021,7 +1087,7 @@ class RidingStage(CircuitStage):
                (physical_qubit_control[1] == physical_qubit_target[1] and abs(physical_qubit_control[0] - physical_qubit_target[0]) == 1), \
                f"In action {action.id}, control and target qubits {action.logic_gate.control_qubit} and {action.logic_gate.target_qubit} should be adjacent on the compute module."
 
-        self.riding_actions.append(action)
+        self.circuit_actions.append(action)
         self.add_action_logging(action)
         return True
 
@@ -1038,7 +1104,7 @@ class RidingStage(CircuitStage):
             bool: Whether the action is successfully added.
         """
         assert isinstance(action, Transport), "Action should be Transport"
-        assert action.source_physical_qubit in self.occupied_balises, f"In action {action.id}, data qubit {action.logic_qubit} to transport should be in source balise {action.source_physical_qubit}."
+        assert self.curr_p2l_map[action.source_physical_qubit] == action.logic_qubit, f"In action {action.id}, logic qubit {action.logic_qubit} to transport should be in source balise {action.source_physical_qubit}."
 
         if action.target_physical_qubit in self.locked_balises:
             return False
@@ -1050,7 +1116,7 @@ class RidingStage(CircuitStage):
         self.curr_p2l_map[action.source_physical_qubit] = exchanged_qubit
         self.locked_balises.add(action.target_physical_qubit)
         
-        self.riding_actions.append(action)
+        self.circuit_actions.append(action)
         self.add_action_logging(action)
         return True
 
@@ -1072,9 +1138,10 @@ class RidingStage(CircuitStage):
 
         self.curr_l2p_map.pop(action.ancilla_qubit)
         self.curr_p2l_map[action.platform] = -1
-        self.active_ancilla_qubit_nodes.pop(action.ancilla_qubit)
+        self.node_action_ids.setdefault(action.platform, []).append(action.id)
+        self.node_action_ids.setdefault(action.register, []).append(action.id)
 
-        self.riding_actions.append(action)
+        self.circuit_actions.append(action)
         self.add_action_logging(action)
         return True
 
@@ -1091,7 +1158,7 @@ class RidingStage(CircuitStage):
             bool: Whether the action is successfully added.
         """
         assert isinstance(action, Enter), "Action should be Enter"
-        assert self.curr_p2l_map[action.register] == action.logic_qubit, f"In action {action.id}, data qubit {action.logic_qubit} to enter should be in register {action.register}."
+        assert self.curr_p2l_map[action.register] == action.logic_qubit, f"In action {action.id}, logic qubit {action.logic_qubit} to enter should be in register {action.register}."
 
         exit_qubit = self.curr_p2l_map[action.platform]
         self.curr_l2p_map[action.logic_qubit] = action.platform
@@ -1099,8 +1166,10 @@ class RidingStage(CircuitStage):
         if exit_qubit != -1:
             self.curr_l2p_map[exit_qubit] = action.register
         self.curr_p2l_map[action.register] = exit_qubit
+        self.node_action_ids.setdefault(action.platform, []).append(action.id)
+        self.node_action_ids.setdefault(action.register, []).append(action.id)
         
-        self.riding_actions.append(action)
+        self.circuit_actions.append(action)
         self.add_action_logging(action)
         return True
 
@@ -1117,7 +1186,7 @@ class RidingStage(CircuitStage):
             bool: Whether the action is successfully added.
         """
         assert isinstance(action, Exit), "Action should be Exit"
-        assert action.platform in self.occupied_platforms, f"In action {action.id}, data qubit {action.logic_qubit} to exit should be in platform {action.platform}."
+        assert self.curr_p2l_map[action.platform] == action.logic_qubit, f"In action {action.id}, logic qubit {action.logic_qubit} to exit should be in platform {action.platform}."
 
         enter_qubit = self.curr_p2l_map[action.register]
         self.curr_l2p_map[action.logic_qubit] = action.register
@@ -1125,8 +1194,10 @@ class RidingStage(CircuitStage):
         if enter_qubit != -1:
             self.curr_l2p_map[enter_qubit] = action.platform
         self.curr_p2l_map[action.platform] = enter_qubit
+        self.node_action_ids.setdefault(action.platform, []).append(action.id)
+        self.node_action_ids.setdefault(action.register, []).append(action.id)
 
-        self.riding_actions.append(action)
+        self.circuit_actions.append(action)
         self.add_action_logging(action)
         return True
 
@@ -1143,7 +1214,8 @@ class RidingStage(CircuitStage):
             bool: Whether the action is successfully added.
         """
         assert isinstance(action, SwapGate), "Action should be SwapGate"
-        assert self.curr_p2l_map[action.qubit_u] == action.logic_qubit, f"In action {action.id}, logic qubit {action.logic_qubit} should can be routed by the swap gate."
+        assert self.curr_p2l_map[action.qubit_u] == action.logic_qubit, \
+            f"In action {action.id}, logic qubit {action.logic_qubit} should can be routed by the swap gate between {action.qubit_u} and {action.qubit_v}."
 
         logic_qubit_u = self.curr_p2l_map[action.qubit_u]
         logic_qubit_v = self.curr_p2l_map[action.qubit_v]
@@ -1153,8 +1225,10 @@ class RidingStage(CircuitStage):
         if logic_qubit_v != -1:
             self.curr_l2p_map[logic_qubit_v] = action.qubit_u
         self.curr_p2l_map[action.qubit_v] = logic_qubit_u
+        self.node_action_ids.setdefault(action.qubit_u, []).append(action.id)
+        self.node_action_ids.setdefault(action.qubit_v, []).append(action.id)
 
-        self.riding_actions.append(action)
+        self.circuit_actions.append(action)
         self.add_action_logging(action)
         return True
 
@@ -1176,13 +1250,10 @@ class RidingStage(CircuitStage):
         assert self.curr_p2l_map[action.phy_targ_qubit] == action.logic_gate.target_qubit, \
             f"In action {action.id}, target qubit {action.logic_gate.target_qubit} should be in physical qubit {action.phy_targ_qubit}."
 
-        physical_qubit_control = self.curr_l2p_map[action.logic_gate.control_qubit]
-        physical_qubit_target = self.curr_l2p_map[action.logic_gate.target_qubit]
-        assert (physical_qubit_control[0] == physical_qubit_target[0] and abs(physical_qubit_control[1] - physical_qubit_target[1]) == 1) or \
-               (physical_qubit_control[1] == physical_qubit_target[1] and abs(physical_qubit_control[0] - physical_qubit_target[0]) == 1), \
-               f"In action {action.id}, control and target qubits {action.logic_gate.control_qubit} and {action.logic_gate.target_qubit} should be adjacent on the compute module."
+        self.node_action_ids.setdefault(action.phy_ctrl_qubit, []).append(action.id)
+        self.node_action_ids.setdefault(action.phy_targ_qubit, []).append(action.id)
 
-        self.riding_actions.append(action)
+        self.circuit_actions.append(action)
         self.add_action_logging(action)
         return True
 
@@ -1210,18 +1281,20 @@ class Circuit:
         hold_ancilla_plats (set): The set of platforms holding ancilla qubits.
     """
 
-    def __init__(self, logic_qubit_num: int, init_l2p_map: dict[int, tuple[int, int]], init_p2l_map: dict[tuple[int, int], int], action_depend_graph: nx.DiGraph, op_config: OperationConfig):
+    def __init__(self, logic_qubit_num: int, package_shape: tuple[int, int], init_l2p_map: dict[int, tuple[int, int]], init_p2l_map: dict[tuple[int, int], int], action_depend_graph: nx.DiGraph, op_config: OperationConfig):
         """
         Initialize the circuit.
 
         Args:
             logic_qubit_num (int): The number of logic qubits in the circuit.
+            package_shape (tuple[int, int]): The shape of the package, representing the number of rows and columns of physical qubits.
             init_l2p_map (dict[int, tuple[int, int]]): The initial mapping from logical qubits to physical qubits.
             init_p2l_map (dict[tuple[int, int], int]): The initial mapping from physical qubits to logical qubits.
             action_depend_graph (nx.DiGraph): The directed acyclic graph representing dependencies between actions.
             op_config (OperationConfig): The configuration for operations, including time constants for different operations.
         """
         self.logic_qubit_num = logic_qubit_num
+        self.package_shape = package_shape
         self.init_l2p_map = init_l2p_map
         self.init_p2l_map = init_p2l_map
         self.action_depend_graph = action_depend_graph
@@ -1235,6 +1308,7 @@ class Circuit:
         self.occupied_balises = set()
         self.occupied_platforms = set()
         self.active_ancilla_qubit_nodes = dict()
+        self.recent_node_active_stage = {(x, y): 0 for x in range(self.package_shape[0]) for y in range(self.package_shape[1])}
         if config.debug_action:
             logging.info("-" * 80)
             logging.info(f"Initialized circuit with {self.logic_qubit_num} logic qubits.")
@@ -1246,10 +1320,10 @@ class Circuit:
             for stage in self.stages:
                 self.string_repr += "=" * 20 + str(stage.__class__.__name__) + "=" * 20 + "\n"
                 if isinstance(stage, BoardingStage):
-                    for action in stage.boarding_actions:
+                    for action in stage.circuit_actions:
                         self.string_repr += str(action) + "\n"
                 elif isinstance(stage, RidingStage):
-                    for action in stage.riding_actions:
+                    for action in stage.circuit_actions:
                         self.string_repr += str(action) + "\n"
         return self.string_repr
 
@@ -1294,59 +1368,60 @@ class Circuit:
             int: The stage id the action added to.
         """
         earliest_stage_id = 0
-        for pred_action in self.action_depend_graph.predecessors(action.id):
-            earliest_stage_id = max(earliest_stage_id, self.action_depend_graph.nodes[pred_action]["stage"])
+        for node in action.get_involved_nodes():
+            earliest_stage_id = max(earliest_stage_id, self.recent_node_active_stage[node])
         while True:
             if earliest_stage_id < len(self.stages):
                 stage = self.stages[earliest_stage_id]
             else:
                 stage = self.extend_stage(bool(len(self.stages) % 2 == 0))
             if stage.add_action_immediate(action):
+                for node in action.get_involved_nodes():
+                    self.recent_node_active_stage[node] = earliest_stage_id
                 return earliest_stage_id
             else:
                 earliest_stage_id += 1
     
-    def estimate_depth(self) -> int:
+    def get_action_depth(self, action: CircuitAction) -> float:
+        """
+        Get the depth of the action in the circuit.
+
+        Args:
+            action (CircuitAction): The action to get the depth for.
+
+        Returns:
+            float: The depth of the action.
+        """
+        if isinstance(action, GhzPreparation):
+            return action.get_depth() * self.op_config.inter_time
+        elif isinstance(action, (Board, Alight, Interchange)):
+            return self.op_config.inter_time * 3
+        elif isinstance(action, Transport):
+            return action.get_distance() ** 0.5 * self.op_config.qst_time_constant
+        elif isinstance(action, (Teleport, DirectGate)):
+            return self.op_config.inter_time if action.inter_flag else self.op_config.intra_time
+        elif isinstance(action, (SwapGate, Enter, Exit)):
+            return (self.op_config.inter_time if action.inter_flag else self.op_config.intra_time) * 3
+
+    def estimate_depth(self) -> float:
         """
         Estimate the depth of the circuit.
 
         Returns:
-            int: The estimated depth of the circuit.
+            float: The estimated depth of the circuit.
         """
         depth = 0
         for stage in self.stages:
-            if isinstance(stage, BoardingStage):
-                inter_actions: list[BoardingAction] = []
-                ghz_actions: list[GhzPreparation] = []
-                for action in stage.boarding_actions:
-                    if isinstance(action, Board) or isinstance(action, Alight) or isinstance(action, Interchange):
-                        inter_actions.append(action)
-                    elif isinstance(action, GhzPreparation):
-                        ghz_actions.append(action)
-                inter_action_graph = self.action_depend_graph.subgraph([action.id for action in inter_actions])
-                inter_depth = nx.dag_longest_path_length(inter_action_graph) * 2 * self.op_config.inter_time
-                ghz_depth = 0
-                for ghz_action in ghz_actions:
-                    ghz_depth = max(ghz_depth, ghz_action.get_depth())
-                ghz_depth = ghz_depth * self.op_config.inter_time
-                stage_depth = max(inter_depth, ghz_depth)
-            elif isinstance(stage, RidingStage):
-                transport_actions: list[Transport] = []
-                compute_actions: list[RidingAction] = []
-                for action in stage.riding_actions:
-                    if isinstance(action, Transport):
-                        transport_actions.append(action)
-                    else:
-                        assert isinstance(action, (Teleport, SwapGate, DirectGate, Enter, Exit)), "Action should be Teleport, SwapGate, DirectGate, Enter or Exit"
-                        compute_actions.append(action)
-                transport_depth = 0
-                for transport_action in transport_actions:
-                    transport_depth = max(transport_depth, transport_action.get_distance())
-                transfer_depth = math.sqrt(transfer_depth) * self.op_config.qst_time_constant
-                compute_action_graph = self.action_depend_graph.subgraph([action.id for action in compute_actions])
-                computer_depth = nx.dag_longest_path_length(compute_action_graph) * self.op_config.intra_time
-                stage_depth = max(transfer_depth, computer_depth)
-            depth += stage_depth
+            if self.action_depend_graph is not None:
+                stage_action_depend_graph = self.action_depend_graph.subgraph([action.id for action in stage.circuit_actions])
+            else:
+                stage_action_depend_graph = stage.get_action_depend_graph()
+            stage_action_depth = {action_id: self.get_action_depth(stage_action_depend_graph.nodes[action_id]["action"]) for action_id in stage_action_depend_graph.nodes}
+            for action_id in nx.topological_sort(stage_action_depend_graph):
+                for succ_action_id in stage_action_depend_graph.successors(action_id):
+                    if stage_action_depth[succ_action_id] < stage_action_depth[action_id] + self.get_action_depth(stage_action_depend_graph.nodes[succ_action_id]["action"]):
+                        stage_action_depth[succ_action_id] = stage_action_depth[action_id] + self.get_action_depth(stage_action_depend_graph.nodes[succ_action_id]["action"])
+            depth += max(stage_action_depth.values())
         return depth
 
     def to_pickle(self, filepath: str):

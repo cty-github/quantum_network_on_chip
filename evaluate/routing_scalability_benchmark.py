@@ -77,9 +77,9 @@ for baseline, algorithm, package_length in product(baseline_to_test, algorithm_t
         circuit_depth = get_mech_circuit_depth(exp_result)
         gate_fidelity = get_mech_gate_fidelity(exp_result, (10, 10))
     elif baseline == "qunoc":
-        package = Package(pre_designed_package_path=os.path.join("./result/layout_scalability/package_size", f"{package_length}_{package_length}_greedy/package_layout.pkl"))
+        package = Package(pre_designed_package_path=os.path.join("./result/layout_scalability/package_size", f"{package_length}_{package_length}_greedy/package.pkl"))
         program = get_program(algorithm, data_qubit_num)
-        router = Router(package, program, result_dir)
+        router = Router(package, program, result_dir=result_dir)
         circuit = router.route_program_on_package()
         intra_gate_num, inter_gate_num, qst_dist, meas_num, total_fide = router.statistic_op_num_fide()
         circuit_depth = router.estimate_depth()
