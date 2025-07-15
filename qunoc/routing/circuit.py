@@ -1412,6 +1412,8 @@ class Circuit:
         """
         depth = 0
         for stage in self.stages:
+            if len(stage.circuit_actions) == 0:
+                continue
             if self.action_depend_graph is not None:
                 stage_action_depend_graph = self.action_depend_graph.subgraph([action.id for action in stage.circuit_actions])
             else:

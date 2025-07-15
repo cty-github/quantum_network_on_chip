@@ -81,6 +81,7 @@ for baseline, algorithm, package_length in product(baseline_to_test, algorithm_t
         program = get_program(algorithm, data_qubit_num)
         router = Router(package, program, result_dir=result_dir)
         circuit = router.route_program_on_package()
+        circuit.to_pickle(os.path.join(result_dir, f"qunoc_circuit.pkl"))
         intra_gate_num, inter_gate_num, qst_dist, meas_num, total_fide = router.statistic_op_num_fide()
         circuit_depth = router.estimate_depth()
         gate_fidelity = router.estimate_average_gate_fide()
