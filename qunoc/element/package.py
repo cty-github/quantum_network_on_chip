@@ -1,16 +1,13 @@
 import os
 import random
-import logging
-from itertools import product
-from collections import defaultdict
-
 import pickle
-import networkx as nx
+import logging
 from anytree import Node
+from itertools import product
 import matplotlib.pyplot as plt
 
-from ..utils.utils import color_pool, delete_files_with_prefix_and_suffix, make_save_gif_file, make_save_gif_figure
 from .chiplet import *
+from ..utils.utils import color_pool, delete_files_with_prefix_and_suffix, make_save_gif_file, make_save_gif_figure
 
 
 class DesignTemplate(Enum):

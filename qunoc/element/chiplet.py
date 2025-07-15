@@ -1,7 +1,7 @@
 import math
 import numpy as np
-from enum import Enum, auto
 import networkx as nx
+from enum import Enum, auto
 from scipy.optimize import curve_fit
 
 from ..utils.utils import log_decay, get_full_space_tuple

@@ -1,11 +1,5 @@
-import logging
-import statistics
-from copy import deepcopy
-
-from ..utils.config import config
-from ..element.package import *
-from ..element.benchmark import *
 from .circuit import *
+from ..element.package import *
 
 
 class ComputeBlock:
