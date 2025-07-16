@@ -780,7 +780,7 @@ class Router:
             chiplet: ComputeChiplet = self.package_graph.nodes[physical_qubit]["qubit"].chiplet
             max_chiplet_capacity = max(max_chiplet_capacity, self.package.get_chiplet_register_num(chiplet))
 
-        if len(move_gates)+1 < len(involved_qubits) * (len(involved_qubits) - 1) // 3:
+        if len(move_gates) + 1 <= len(involved_qubits) * (len(involved_qubits) - 1) // 2:
             return False
         if len(involved_qubits) > max_chiplet_capacity:
             return False
@@ -1551,7 +1551,8 @@ class Router:
         except Exception as e:
             logging.warning(f"Failed to draw qubit mapping block: {e}")
 
-    def statistic_op_num_fide(self) -> tuple[int, int, int, int, float]:
+    # Functions for statistics and estimation
+    def statistic_route_results(self) -> tuple[int, int, int, int, float]:
         """
         Statistic the number of intra and inter gates, the distance of quantum state transfer, and the total fidelity of the circuit.
 
@@ -1580,15 +1581,19 @@ class Router:
                     qst_distance += action.get_distance()
                     total_fidelity *= self.package.fab_model.enhanced_fide ** action.get_distance()
                 elif isinstance(action, Teleport):
+                    if action.inter_flag:
+                        inter_gate_num += 1
+                    else:
+                        intra_gate_num += 1
+                    meas_num += 1
                     phy_qubit_u = action.platform
                     phy_qubit_v = action.register
-                    if self.package_graph.edges[phy_qubit_u, phy_qubit_v]["type"] == EdgeType.Intra:
-                        intra_gate_num += 1
-                    else:
-                        inter_gate_num += 1
-                    meas_num += 1
                     total_fidelity *= self.package.get_coupler_fide(phy_qubit_u, phy_qubit_v)
                 elif isinstance(action, (Enter, Exit, SwapGate, DirectGate)):
+                    if action.inter_flag:
+                        inter_gate_num += 1
+                    else:
+                        intra_gate_num += 1
                     if isinstance(action, (Enter, Exit)):
                         phy_qubit_u = action.platform
                         phy_qubit_v = action.register
@@ -1598,10 +1603,6 @@ class Router:
                     elif isinstance(action, DirectGate):
                         phy_qubit_u = action.phy_ctrl_qubit
                         phy_qubit_v = action.phy_targ_qubit
-                    if self.package_graph.edges[phy_qubit_u, phy_qubit_v]["type"] == EdgeType.Intra:
-                        intra_gate_num += 3
-                    else:
-                        inter_gate_num += 3
                     total_fidelity *= self.package.get_coupler_fide(phy_qubit_u, phy_qubit_v) ** 3
         return intra_gate_num, inter_gate_num, qst_distance, meas_num, total_fidelity
 
@@ -1612,27 +1613,27 @@ class Router:
         Return:
             float, the estimated fidelity of the circuit.
         """
-        _, _, _, _, total_fidelity = self.statistic_op_num_fide()
+        _, _, _, _, total_fidelity = self.statistic_route_results()
         return total_fidelity
 
-    def estimate_average_gate_fide(self) -> float:
+    def estimate_qunoc_logic_gate_fide(self) -> float:
         """
         Estimate the average fidelity of each quantum gate in the circuit.
 
         Returns:
             float: The estimated average fidelity of quantum gate operations.
         """
-        _, _, _, _, total_fidelity = self.statistic_op_num_fide()
-        return total_fidelity ** (1 / self.program.gate_depend_graph.number_of_nodes())
+        _, _, _, _, total_fidelity = self.statistic_route_results()
+        return total_fidelity ** (1 / (self.program.get_gate_depend_graph().number_of_nodes() - 1))
     
-    def estimate_depth(self) -> int:
+    def estimate_qunoc_circuit_duration(self) -> float:
         """
-        Estimate the depth of the circuit.
+        Estimate the duration of the circuit.
 
         Return:
-            int, the estimated depth of the circuit.
+            float, the estimated duration of the circuit in nanoseconds.
         """
-        return self.circuit.estimate_depth()
+        return self.circuit.estimate_duration()
 
     def draw_qubit_mapping(self, 
         title: str = "",
@@ -1787,10 +1788,13 @@ class Router:
             for i, fig in enumerate(self.block_history):
                 fig.savefig(os.path.join(self.result_dir, "block_history", f"block_history_{i}.png"), bbox_inches="tight")
         if save_gif:
-            if save_png:
-                make_save_gif_file(os.path.join(self.result_dir, "block_history"), "block_history_", ".png", os.path.join(self.result_dir, "block_history.gif"), duration=duration)
-            else:
-                make_save_gif_figure(self.block_history, os.path.join(self.result_dir, "block_history.gif"), duration=duration)
+            try:
+                if save_png:
+                    make_save_gif_file(os.path.join(self.result_dir, "block_history"), "block_history_", ".png", os.path.join(self.result_dir, "block_history.gif"), duration=duration)
+                else:
+                    make_save_gif_figure(self.block_history, os.path.join(self.result_dir, "block_history.gif"), duration=duration)
+            except Exception as e:
+                logging.warning(f"Failed to save block history as GIF: {e}")
 
     def save_action_history(self, save_png: bool = True, save_gif: bool = True, duration: int = 1000):
         """
@@ -1809,10 +1813,13 @@ class Router:
             for i, fig in enumerate(self.action_history):
                 fig.savefig(os.path.join(self.result_dir, "action_history", f"action_history_{i}.png"), bbox_inches="tight")
         if save_gif:
-            if save_png:
-                make_save_gif_file(os.path.join(self.result_dir, "action_history"), "action_history_", ".png", os.path.join(self.result_dir, "action_history.gif"), duration=duration)
-            else:
-                make_save_gif_figure(self.action_history, os.path.join(self.result_dir, "action_history.gif"), duration=duration)
+            try:
+                if save_png:
+                    make_save_gif_file(os.path.join(self.result_dir, "action_history"), "action_history_", ".png", os.path.join(self.result_dir, "action_history.gif"), duration=duration)
+                else:
+                    make_save_gif_figure(self.action_history, os.path.join(self.result_dir, "action_history.gif"), duration=duration)
+            except Exception as e:
+                logging.warning(f"Failed to save action history as GIF: {e}")
 
     def get_block_depth(self) -> int:
         """

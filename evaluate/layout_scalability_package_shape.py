@@ -25,13 +25,13 @@ if not os.path.exists(output_path):
         writer = csv.writer(file)
         writer.writerow(["PackageXSize", "DesignStrategy", "Score", "Fidelity"])
 
-design_strategy_to_test = ["baseline", "greedy", "rl"]
+design_strategy_to_test = ["baseline", "heuristic", "greedy", "rl"]
 package_x_size_to_test = [10, 20, 40, 50, 80, 100]
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="")
-    parser.add_argument("--strategy", type=str, default=None, help="Design strategy: baseline, greedy, or rl")
+    parser.add_argument("--strategy", type=str, default=None, help="Design strategy: baseline, heuristic, greedy, or rl")
     parser.add_argument("--x_size", type=int, default=None, help="Package x size: 10, 20, 40, 50, 80, 100")
     args = parser.parse_args()
     if args.strategy:
@@ -49,7 +49,9 @@ for design_strategy, package_x_size in product(design_strategy_to_test, package_
     package_size = (package_x_size, package_y_size)
 
     if design_strategy == "baseline":
-        package = Package(package_size, design_strategy="rl", result_dir=result_dir)
+        package = Package(package_size, design_strategy="manual", result_dir=result_dir)
+    elif design_strategy == "heuristic":
+        package = Package(package_size, design_strategy="heuristic", result_dir=result_dir)
     elif design_strategy == "greedy":
         package = Package(package_size, design_strategy="greedy", result_dir=result_dir)
     elif design_strategy == "rl":
@@ -69,7 +71,7 @@ for design_strategy, package_x_size in product(design_strategy_to_test, package_
     logging.info(f"Tested score: {score}, fidelity: {fidelity}")
 
     package.save()
-    # package.save_design_history()
+    package.save_design_history()
     try:
         fig, _ = package.draw_qubits(axis_off=False)
         fig.savefig(os.path.join(result_dir, "package.png"))

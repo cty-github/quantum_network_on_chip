@@ -25,13 +25,13 @@ if not os.path.exists(output_path):
         writer = csv.writer(file)
         writer.writerow(["PackageSize", "DesignStrategy", "Score", "Fidelity"])
 
-design_strategy_to_test = ["baseline", "greedy", "rl"]
+design_strategy_to_test = ["baseline", "heuristic", "greedy", "rl"]
 package_length_to_test = list(range(40, 220, 20))
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="")
-    parser.add_argument("--strategy", type=str, default=None, help="Design strategy: baseline, greedy, or rl")
+    parser.add_argument("--strategy", type=str, default=None, help="Design strategy: baseline, heuristic, greedy, or rl")
     parser.add_argument("--length", type=int, default=None, help="Package length: 40, 60, 80, ...")
     args = parser.parse_args()
     if args.strategy:
@@ -48,7 +48,9 @@ for design_strategy, package_length in product(design_strategy_to_test, package_
     package_size = (package_length, package_length)
 
     if design_strategy == "baseline":
-        package = Package(package_size, design_strategy="rl", result_dir=result_dir)
+        package = Package(package_size, design_strategy="manual", result_dir=result_dir)
+    elif design_strategy == "heuristic":
+        package = Package(package_size, design_strategy="heuristic", result_dir=result_dir)
     elif design_strategy == "greedy":
         package = Package(package_size, design_strategy="greedy", result_dir=result_dir)
     elif design_strategy == "rl":

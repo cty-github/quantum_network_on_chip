@@ -74,7 +74,7 @@ class FabricateModel:
 
     def __init__(self, 
         max_capacity: int = 100, 
-        max_length: int = 50, 
+        max_length: int = 80, 
         compute_geometry: str = "square", 
         inter_sparsity: int = 3, 
         single_fide: float = 0.999, 

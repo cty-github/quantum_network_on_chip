@@ -1380,35 +1380,37 @@ class Circuit:
             else:
                 earliest_stage_id += 1
     
-    def get_action_depth(self, action: CircuitAction) -> float:
+    def get_action_duration(self, action: CircuitAction) -> float:
         """
-        Get the depth of the action in the circuit.
+        Get the duration of the action in the circuit.
 
         Args:
-            action (CircuitAction): The action to get the depth for.
+            action (CircuitAction): The action to get the duration for.
 
         Returns:
-            float: The depth of the action.
+            float: The duration of the action in nanoseconds.
         """
         if isinstance(action, GhzPreparation):
-            return action.get_depth() * self.op_config.inter_time
+            return self.op_config.reset_time + action.get_depth() * self.op_config.inter_time
         elif isinstance(action, (Board, Alight, Interchange)):
             return self.op_config.inter_time * 3
         elif isinstance(action, Transport):
             return action.get_distance() ** 0.5 * self.op_config.qst_time_constant
-        elif isinstance(action, (Teleport, DirectGate)):
+        elif isinstance(action, Teleport):
+            return (self.op_config.inter_time if action.inter_flag else self.op_config.intra_time) + self.op_config.measure_time
+        elif isinstance(action, DirectGate):
             return self.op_config.inter_time if action.inter_flag else self.op_config.intra_time
         elif isinstance(action, (SwapGate, Enter, Exit)):
             return (self.op_config.inter_time if action.inter_flag else self.op_config.intra_time) * 3
 
-    def estimate_depth(self) -> float:
+    def estimate_duration(self) -> float:
         """
-        Estimate the depth of the circuit.
+        Estimate the duration of the circuit.
 
         Returns:
-            float: The estimated depth of the circuit.
+            float: The estimated duration of the circuit in nanoseconds.
         """
-        depth = 0
+        duration = 0
         for stage in self.stages:
             if len(stage.circuit_actions) == 0:
                 continue
@@ -1416,13 +1418,13 @@ class Circuit:
                 stage_action_depend_graph = self.action_depend_graph.subgraph([action.id for action in stage.circuit_actions])
             else:
                 stage_action_depend_graph = stage.get_action_depend_graph()
-            stage_action_depth = {action_id: self.get_action_depth(stage_action_depend_graph.nodes[action_id]["action"]) for action_id in stage_action_depend_graph.nodes}
+            stage_action_depth = {action_id: self.get_action_duration(stage_action_depend_graph.nodes[action_id]["action"]) for action_id in stage_action_depend_graph.nodes}
             for action_id in nx.topological_sort(stage_action_depend_graph):
                 for succ_action_id in stage_action_depend_graph.successors(action_id):
-                    if stage_action_depth[succ_action_id] < stage_action_depth[action_id] + self.get_action_depth(stage_action_depend_graph.nodes[succ_action_id]["action"]):
-                        stage_action_depth[succ_action_id] = stage_action_depth[action_id] + self.get_action_depth(stage_action_depend_graph.nodes[succ_action_id]["action"])
-            depth += max(stage_action_depth.values())
-        return depth
+                    if stage_action_depth[succ_action_id] < stage_action_depth[action_id] + self.get_action_duration(stage_action_depend_graph.nodes[succ_action_id]["action"]):
+                        stage_action_depth[succ_action_id] = stage_action_depth[action_id] + self.get_action_duration(stage_action_depend_graph.nodes[succ_action_id]["action"])
+            duration += max(stage_action_depth.values())
+        return duration
 
     def to_pickle(self, filepath: str):
         """

@@ -17,22 +17,22 @@ def VQE(data_qubit_num):
 def QFT(data_qubit_num):
     program = []
     for i in range(data_qubit_num-1):
-        control_block = ControlBlock(i, Counter(list(range(i+1, data_qubit_num))*2))
-        program.append(control_block)
+        for j in range(i+1, data_qubit_num):
+            control_block = ControlBlock(j, Counter([i]))
+            program.append(control_block)
     return program
 
 def QAOA(data_qubit_num, percentage=0.5):
     all_possible_gates = [(i,j) for i in range(data_qubit_num) for j in range(i+1, data_qubit_num)]
     gates = list(sample(all_possible_gates, k=int(len(all_possible_gates) * percentage)))
     gates.sort()
-    print('{}/{} gates are selected: {}...{}'.format(len(gates), len(all_possible_gates), gates[:10], gates[-10:]))
 
     program = []
     control_target_dict = defaultdict(list)
     for control, target in gates:
         control_target_dict[control].append(target)
     for control, target_list in control_target_dict.items():
-        control_block = ControlBlock(control, Counter(target_list*2))
+        control_block = ControlBlock(control, Counter(target_list))
         program.append(control_block)
     return program
 
@@ -84,12 +84,12 @@ def MECH_experiments(structure, chiplet_array_dim, chiplet_size, custom_highway_
                 highway_idx += 1
         router = Router(G, initial_v2p=initial_v2p, prep_period=prep_period, meas_period=meas_period)
 
-        gate_num = 0
+        logic_gate_num = 0
         for i, control_block in enumerate(program):
             if i%10 == 0:
                 print('{}/{}'.format(i, len(program)))
             router.execute_control_multi_target_block(control_block, cross_chip_gate_weight, cross_chip_overhead = 3)
-            gate_num += int(sum(list(control_block.target_counter.values())))
+            logic_gate_num += int(sum(list(control_block.target_counter.values())))
 
         for shuttle_idx in range(len(router.highway_manager.shuttle_stack)):
             for idx in range(router.highway_manager.get_shuttle_prep_start_time(shuttle_idx), router.highway_manager.get_shuttle_exec_start_time(shuttle_idx)):
@@ -123,17 +123,17 @@ def MECH_experiments(structure, chiplet_array_dim, chiplet_size, custom_highway_
 
         eff_gate_num = on_chip_gate_num + cross_chip_gate_num * cross_chip_gate_weight + meas_num * meas_weight
         result[b] = {
+            'data_qubit_num': data_qubit_num,
+            'logic_gate_num': logic_gate_num, 
             'depth': router.circuit.depth, 
             'eff_gate_num': eff_gate_num, 
             'on_chip': on_chip_gate_num, 
             'cross_chip': cross_chip_gate_num, 
             'meas_num': meas_num, 
-            'weight':(cross_chip_gate_weight, meas_weight), 
-            'periods':(prep_period, meas_period), 
+            'weight': (cross_chip_gate_weight, meas_weight), 
+            'periods': (prep_period, meas_period), 
             'shuttle_num': len(router.highway_manager.shuttle_stack), 
-            'sparsity':cross_link_sparsity, 
-            'data_qubit_num': data_qubit_num,
-            'gate_num': gate_num
+            'sparsity': cross_link_sparsity, 
         }
 
     return result

@@ -10,7 +10,7 @@ from qunoc.element.benchmark import get_program
 from qunoc.element.package import *
 from qunoc.routing.router import *
 from baseline.MECH.MECHBenchmarks import MECH_experiments
-from baseline.utils.utils import get_mech_data_qubit_num, get_mech_circuit_depth, get_mech_gate_fidelity
+from baseline.utils.utils import get_mech_circuit_duration, get_mech_logic_gate_fide
 
 exp_dir = "./result/routing_scalability/benchmark"
 os.makedirs(exp_dir, exist_ok=True)
@@ -26,7 +26,7 @@ output_path = os.path.join(exp_dir, "output.csv")
 if not os.path.exists(output_path):
     with open(output_path, mode='w', newline='') as file:
         writer = csv.writer(file)
-        writer.writerow(["Algorithm", "#DataQubit", "Baseline", "CircuitDepth", "GateFidelity"])
+        writer.writerow(["Algorithm", "#DataQubit", "#LogicGate", "Baseline", "CircuitDuration", "GateFidelity"])
 
 baseline_to_test = ["mech", "qunoc"]
 algorithm_to_test = ["vqe", "qft", "qaoa", "bv"]
@@ -72,32 +72,33 @@ for baseline, algorithm, package_length in product(baseline_to_test, algorithm_t
             chiplet_size = (20, 20)
         exp_result_dict = MECH_experiments(structure="square", chiplet_array_dim=chiplet_array_dim, chiplet_size=chiplet_size, benchmarks=[algorithm], data_qubit_num=data_qubit_num)
         exp_result = exp_result_dict[algorithm]
-        with open(os.path.join(result_dir, "exp_result.json"), 'w') as json_file:
-            json.dump(exp_result, json_file)
-        circuit_depth = get_mech_circuit_depth(exp_result)
-        gate_fidelity = get_mech_gate_fidelity(exp_result, (10, 10))
+        circuit_duration = get_mech_circuit_duration(exp_result)
+        logic_gate_fide = get_mech_logic_gate_fide(exp_result, (10, 10))
     elif baseline == "qunoc":
         package = Package(pre_designed_package_path=os.path.join("./result/layout_scalability/package_size", f"{package_length}_{package_length}_greedy/package.pkl"))
         program = get_program(algorithm, data_qubit_num)
         router = Router(package, program, result_dir=result_dir)
         circuit = router.route_program_on_package()
         circuit.to_pickle(os.path.join(result_dir, f"qunoc_circuit.pkl"))
-        intra_gate_num, inter_gate_num, qst_dist, meas_num, total_fide = router.statistic_op_num_fide()
-        circuit_depth = router.estimate_depth()
-        gate_fidelity = router.estimate_average_gate_fide()
+        intra_gate_num, inter_gate_num, qst_dist, meas_num, total_fide = router.statistic_route_results()
+        circuit_duration = router.estimate_qunoc_circuit_duration()
+        logic_gate_fide = router.estimate_qunoc_logic_gate_fide()
         exp_result = {
-            "circuit_depth": circuit_depth,
+            "data_qubit_num": data_qubit_num,
+            "logic_gate_num": program.get_gate_depend_graph().number_of_nodes() - 1, 
+            "duration": circuit_duration,
+            "fidelity": logic_gate_fide,
             "intra_gate": intra_gate_num,
             "inter_gate": inter_gate_num, 
-            'meas_num': meas_num, 
-            'sparsity': FabricateModel().inter_sparsity, 
-            'data_qubit_num': data_qubit_num,
-            'gate_num': len(program.logic_gates)
+            "qst_dist": qst_dist, 
+            "meas_num": meas_num, 
+            "sparsity": FabricateModel().inter_sparsity, 
         }
-        with open(os.path.join(result_dir, "exp_result.json"), 'w') as json_file:
-            json.dump(exp_result, json_file)
+    
+    with open(os.path.join(result_dir, "exp_result.json"), 'w') as json_file:
+        json.dump(exp_result, json_file)
     
     with open(output_path, mode='a', newline='') as file:
         writer = csv.writer(file)
-        writer.writerow([algorithm, data_qubit_num, baseline, circuit_depth, gate_fidelity])
-    logging.info(f"Tested circuit depth: {circuit_depth}, gate fidelity: {gate_fidelity}")
+        writer.writerow([algorithm, data_qubit_num, exp_result["logic_gate_num"], baseline, circuit_duration, logic_gate_fide])
+    logging.info(f"Tested circuit depth: {circuit_duration}, gate fidelity: {logic_gate_fide}")

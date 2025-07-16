@@ -290,57 +290,17 @@ class Package:
                 logging.warning(f"Failed to draw qubits: {e}")
             if self.design_strategy == "heuristic":
                 old_compute_module = self.compute_modules[0]
-                length_width_ratio = max(self.package_size) / min(self.package_size)
-                if length_width_ratio > 1:
-                    if self.package_size[0] > self.package_size[1]:
-                        self.design_module_top_down(
-                            old_compute_module,
-                            DesignTemplate.Strip,
-                            DesignOrientation.Y,
-                            min(self.package_size[1] - 1, (self.package_size[0] + 1) // 2 - 1),
-                        )
-                    else:
-                        self.design_module_top_down(
-                            old_compute_module,
-                            DesignTemplate.Strip,
-                            DesignOrientation.X,
-                            min(self.package_size[0] - 1, (self.package_size[1] + 1) // 2 - 1),
-                        )
-                    old_compute_module = self.compute_modules[len(self.compute_modules) // 2]
-                grid_round = len(self.compute_modules) - 1
                 radial_round = (
                     min(self.package_size) - 2 * self.fab_model.max_square_size
-                ) // (4 * self.fab_model.max_square_size)
-                for i in range(radial_round):
+                ) // (4 * self.fab_model.max_square_size + 2)
+                for _ in range(radial_round):
                     self.design_module_top_down(
                         old_compute_module,
                         DesignTemplate.Radial,
                         DesignOrientation.X,
-                        2 * self.fab_model.max_square_size - 1,
+                        2 * self.fab_model.max_square_size,
                     )
                     old_compute_module = self.compute_modules[-1]
-                for i in range(grid_round):
-                    old_compute_module = self.compute_modules[0]
-                    if self.package_size[0] > self.package_size[1]:
-                        self.design_module_top_down(
-                            old_compute_module,
-                            DesignTemplate.Grid,
-                            DesignOrientation.X,
-                            min(
-                                3 * self.fab_model.max_square_size - 1,
-                                (min(self.package_size[1], old_compute_module.right - old_compute_module.left + 1) + 1) // 2 - 1,
-                            ),
-                        )
-                    else:
-                        self.design_module_top_down(
-                            old_compute_module,
-                            DesignTemplate.Grid,
-                            DesignOrientation.Y,
-                            min(
-                                3 * self.fab_model.max_square_size - 1,
-                                (min(self.package_size[0], old_compute_module.bottom - old_compute_module.top + 1) + 1) // 2 - 1,
-                            ),
-                        )
             elif self.design_strategy == "greedy":
                 best_score = self.estimate_score()
                 logging.info(f"Initial score: {best_score}")
@@ -1370,10 +1330,13 @@ class Package:
             for i, fig in enumerate(self.design_history):
                 fig.savefig(os.path.join(self.result_dir, "design_history", f"design_history_{i}.png"), bbox_inches="tight")
         if save_gif:
-            if save_png:
-                make_save_gif_file(os.path.join(self.result_dir, "design_history"), "design_history_", ".png", os.path.join(self.result_dir, "design_history.gif"), duration=duration)
-            else:
-                make_save_gif_figure(self.design_history, os.path.join(self.result_dir, "design_history.gif"), duration=duration)
+            try:
+                if save_png:
+                    make_save_gif_file(os.path.join(self.result_dir, "design_history"), "design_history_", ".png", os.path.join(self.result_dir, "design_history.gif"), duration=duration)
+                else:
+                    make_save_gif_figure(self.design_history, os.path.join(self.result_dir, "design_history.gif"), duration=duration)
+            except Exception as e:
+                logging.warning(f"Failed to save design history as GIF: {e}")
 
     def load(self, filepath: str = None):
         """
