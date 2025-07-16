@@ -1379,7 +1379,7 @@ class Circuit:
                 return earliest_stage_id
             else:
                 earliest_stage_id += 1
-    
+
     def get_action_duration(self, action: CircuitAction) -> float:
         """
         Get the duration of the action in the circuit.
@@ -1426,13 +1426,6 @@ class Circuit:
             duration += max(stage_action_depth.values())
         return duration
 
-    def to_pickle(self, filepath: str):
-        """
-        Save the circuit to a pickle file.
-        """
-        with open(filepath, "wb") as f:
-            pickle.dump(self, f)
-    
     @classmethod
     def from_pickle(cls, filepath: str):
         """
@@ -1443,3 +1436,10 @@ class Circuit:
         if not isinstance(obj, cls):
             raise TypeError(f"Unpickled object is not a {cls.__name__}")
         return obj
+
+    def to_pickle(self, filepath: str):
+        """
+        Save the circuit to a pickle file.
+        """
+        with open(filepath, "wb") as f:
+            pickle.dump(self, f)

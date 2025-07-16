@@ -1,9 +1,9 @@
 import os
 import sys
 sys.path.append("..")
-import logging
 import csv
 import json
+import logging
 
 from qunoc.utils.utils import get_timestamp
 from qunoc.element.benchmark import get_program
@@ -75,7 +75,7 @@ for baseline, algorithm, package_length in product(baseline_to_test, algorithm_t
         circuit_duration = get_mech_circuit_duration(exp_result)
         logic_gate_fide = get_mech_logic_gate_fide(exp_result, (10, 10))
     elif baseline == "qunoc":
-        package = Package(pre_designed_package_path=os.path.join("./result/layout_scalability/package_size", f"{package_length}_{package_length}_greedy/package.pkl"))
+        package = Package.from_pickle(filepath=os.path.join("./result/layout_scalability/package_size", f"{package_length}_{package_length}_greedy/package.pkl"))
         program = get_program(algorithm, data_qubit_num)
         router = Router(package, program, result_dir=result_dir)
         circuit = router.route_program_on_package()

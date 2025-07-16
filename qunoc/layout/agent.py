@@ -129,17 +129,11 @@ class LayoutAgent:
     def load_model(self, filepath: str = None):
         """
         Load a pre-trained PPO model from a file.
-
-        Args:
-            filepath (str): Path to the pre-trained model file. If None, uses the default path.
         """
-        self.model.load(filepath if filepath else os.path.join(self.result_dir, "layout_agent.pth"))
+        self.model.load(filepath if filepath is not None else os.path.join(self.result_dir, "layout_agent.pth"))
 
     def save_model(self, filepath: str = None):
         """
         Save the PPO model to a file.
-
-        Args:
-            filepath (str): Path to save the model file. If None, uses the default path.
         """
-        self.model.save(filepath if filepath else os.path.join(self.result_dir, "layout_agent.pth"))
+        self.model.save(filepath if filepath is not None else os.path.join(self.result_dir, "layout_agent.pth"))

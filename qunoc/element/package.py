@@ -211,7 +211,6 @@ class Package:
         top_down_max_step: int = 10, 
         bottom_up_init_type: np.ndarray = None, 
         result_dir: str = None,
-        pre_designed_package_path: str = None, 
     ):
         """
         Initialize a package.
@@ -225,11 +224,7 @@ class Package:
             top_down_max_step (int): The max number of steps for top down design.
             bottom_up_init_type (np.ndarray): The initial type of nodes used for bottom up design.
             result_dir (str): The directory to save the design results.
-            pre_designed_package_path (str): The path of pre-designed package for loading.
         """
-        if pre_designed_package_path:
-            self.load(pre_designed_package_path)
-            return
         self.package_size = package_size
         self.node_num = package_size[0] * package_size[1]
         self.fab_model = fab_model
@@ -1338,31 +1333,28 @@ class Package:
             except Exception as e:
                 logging.warning(f"Failed to save design history as GIF: {e}")
 
-    def load(self, filepath: str = None):
+    @classmethod
+    def from_pickle(cls, filepath: str = None, filedir: str = None):
         """
-        Load the package from a file.
-
-        Args:
-            filepath (str): The path to the file to load the package from. If None, load from "package.pkl" in the result directory.
+        Load the package from a pickle file.
         """
-        if not filepath:
-            filepath = os.path.join(self.result_dir, "package.pkl")
+        if filepath is None:
+            filepath = os.path.join(filedir, "package.pkl")
         with open(filepath, "rb") as f:
-            package = pickle.load(f)
-            self.__dict__.update(package.__dict__)
-            FuncArea.fab_model = self.fab_model
-            Gap.fab_model = self.fab_model
-            logging.info(f"Package loaded from {filepath}")
+            obj = pickle.load(f)
+        if not isinstance(obj, cls):
+            raise TypeError(f"Unpickled object is not a {cls.__name__}")
+        FuncArea.fab_model = obj.fab_model
+        Gap.fab_model = obj.fab_model
+        logging.info(f"Package loaded from {filepath}")
+        return obj
 
-    def save(self, filepath: str = None):
+    def to_pickle(self, filepath: str = None):
         """
-        Save the package to a file.
-
-        Args:
-            filepath (str): The path to the file to save the package to. If None, save to "package.pkl" in the result directory.
+        Save the package to a pickle file.
         """
-        if not filepath:
+        if filepath is None:
             filepath = os.path.join(self.result_dir, "package.pkl")
         with open(filepath, "wb") as f:
             pickle.dump(self, f)
-            logging.info(f"Package saved to {filepath}")
+        logging.info(f"Package saved to {filepath}")
