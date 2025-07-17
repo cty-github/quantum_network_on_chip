@@ -220,12 +220,12 @@ class Router:
 
         if config.debug_mapping:
             logging.info(f"Initial qubit mapping: {self.init_l2p_map}")
-        try:
-            fig = self.draw_qubit_mapping("Initial Qubit Mapping")
-            self.block_history.append(fig)
-            self.action_history.append(fig)
-        except Exception as e:
-            logging.warning(f"Failed to draw qubit mapping: {e}")
+        # try:
+        #     fig = self.draw_qubit_mapping("Initial Qubit Mapping")
+        #     self.block_history.append(fig)
+        #     self.action_history.append(fig)
+        # except Exception as e:
+        #     logging.warning(f"Failed to draw qubit mapping: {e}")
 
     # Functions for compiling compute blocks and actions
     def compile_blocks_and_actions(self):
@@ -1361,11 +1361,11 @@ class Router:
                 local_block.actions.append(direct_gate_act)
                 self.circuit.add_action_into_earliest_stage(direct_gate_act)
 
-        try:
-            fig = self.draw_qubit_mapping_block([local_gate.control_qubit, local_gate.target_qubit], title=f"Transform LocalBlock {local_block.id}")
-            self.block_history.append(fig)
-        except Exception as e:
-            logging.warning(f"Failed to draw qubit mapping block: {e}")
+        # try:
+        #     fig = self.draw_qubit_mapping_block([local_gate.control_qubit, local_gate.target_qubit], title=f"Transform LocalBlock {local_block.id}")
+        #     self.block_history.append(fig)
+        # except Exception as e:
+        #     logging.warning(f"Failed to draw qubit mapping block: {e}")
 
     def schedule_tele_gates(self, tele_gates: list[Control], nearest_platforms: dict[int, tuple[int, int]]):
         """
@@ -1392,11 +1392,11 @@ class Router:
         tele_block.actions.append(ghz_action)
         self.circuit.add_action_into_earliest_stage(ghz_action)
 
-        try:
-            fig = self.draw_qubit_mapping_block(involved_qubits, ancilla_qubits=list(zip(ghz_action.source_physical_qubits, ghz_action.ancilla_qubits)), title=f"Transform TeleBlock {tele_block.id}")
-            self.block_history.append(fig)
-        except Exception as e:
-            logging.warning(f"Failed to draw qubit mapping block: {e}")
+        # try:
+        #     fig = self.draw_qubit_mapping_block(involved_qubits, ancilla_qubits=list(zip(ghz_action.source_physical_qubits, ghz_action.ancilla_qubits)), title=f"Transform TeleBlock {tele_block.id}")
+        #     self.block_history.append(fig)
+        # except Exception as e:
+        #     logging.warning(f"Failed to draw qubit mapping block: {e}")
 
         for i in range(len(involved_qubits)):
             data_qubit = involved_qubits[i]
@@ -1425,11 +1425,11 @@ class Router:
             tele_block.actions.append(teleport_act)
             self.circuit.add_action_into_earliest_stage(teleport_act)
         
-        try:
-            fig = self.draw_qubit_mapping_block(involved_qubits, ancilla_qubits=list(zip(platforms, ghz_action.ancilla_qubits)), title=f"Transform TeleBlock {tele_block.id}")
-            self.block_history.append(fig)
-        except Exception as e:
-            logging.warning(f"Failed to draw qubit mapping block: {e}")
+        # try:
+        #     fig = self.draw_qubit_mapping_block(involved_qubits, ancilla_qubits=list(zip(platforms, ghz_action.ancilla_qubits)), title=f"Transform TeleBlock {tele_block.id}")
+        #     self.block_history.append(fig)
+        # except Exception as e:
+        #     logging.warning(f"Failed to draw qubit mapping block: {e}")
 
     def schedule_move_gates(self, move_gates: list[Control]):
         """
@@ -1545,11 +1545,11 @@ class Router:
                     move_block.actions.append(direct_gate_act)
                     self.circuit.add_action_into_earliest_stage(direct_gate_act)
         
-        try:
-            fig = self.draw_qubit_mapping_block(involved_qubits, title=f"Transform MoveBlock {move_block.id}")
-            self.block_history.append(fig)
-        except Exception as e:
-            logging.warning(f"Failed to draw qubit mapping block: {e}")
+        # try:
+        #     fig = self.draw_qubit_mapping_block(involved_qubits, title=f"Transform MoveBlock {move_block.id}")
+        #     self.block_history.append(fig)
+        # except Exception as e:
+        #     logging.warning(f"Failed to draw qubit mapping block: {e}")
 
     # Functions for statistics and estimation
     def statistic_route_results(self) -> tuple[int, int, int, int, float]:
@@ -1575,8 +1575,8 @@ class Router:
                                 inter_gate_num += 1
                             total_fidelity *= self.package.get_coupler_fide(balise, parent)
                 elif isinstance(action, (Board, Alight, Interchange)):
-                    inter_gate_num += 3
-                    total_fidelity *= self.package.fab_model.inter_fide ** 3
+                    inter_gate_num += 1
+                    total_fidelity *= self.package.fab_model.inter_fide ** 1
                 elif isinstance(action, Transport):
                     qst_distance += action.get_distance()
                     total_fidelity *= self.package.fab_model.enhanced_fide ** action.get_distance()
