@@ -1,3 +1,4 @@
+import logging
 from collections import deque, defaultdict, Counter
 from functools import *
 from numpy import *
@@ -268,7 +269,7 @@ class HighwayManager:
             prior_role = circuit.take_role(op.control, idx - 1)
             if prior_role not in {None, 'c', 'mc'}: # control data has been changed
                 if VERBOSE:
-                    print(op, 'impossible on shuttle ', shuttle_idx)
+                    logging.info(f"{op} impossible on shuttle {shuttle_idx}")
                 return -1
         
         # check entrance availability
@@ -349,7 +350,7 @@ class HighwayManager:
         
     def bridge(self, circuit, shuttle_idx, control_qubit, target_qubit, mid=None, auto_commuting=True):
         if VERBOSE:
-            print('bridging ', self.qubit_idx_dict[control_qubit], self.qubit_idx_dict[target_qubit])
+            logging.info(f"bridging {self.qubit_idx_dict[control_qubit]} {self.qubit_idx_dict[target_qubit]}")
         distance = abs(control_qubit[0] - target_qubit[0]) + abs(control_qubit[1] - target_qubit[1])
         assert distance <= 2
 
@@ -358,7 +359,7 @@ class HighwayManager:
         control_line, target_line = self.qubit_idx_dict[control_qubit], self.qubit_idx_dict[target_qubit]
         if distance == 1:
             if VERBOSE:
-                print('distance == 1: control_line = {}, target_line = {}, earliest_idx = {}, latest_idx = {}'.format(control_line, target_line, earliest_idx, latest_idx))
+                logging.info('distance == 1: control_line = {}, target_line = {}, earliest_idx = {}, latest_idx = {}'.format(control_line, target_line, earliest_idx, latest_idx))
             circuit.add_2qubit_op(OpNode(control_line, target_line), auto_commuting=auto_commuting, min_idx=earliest_idx, max_idx=latest_idx)
         else:
             if mid is None:
@@ -366,7 +367,7 @@ class HighwayManager:
             
             mid_line = self.qubit_idx_dict[mid]
             if VERBOSE:
-                print('mid = {}, mid_line = {}, control_line = {}, target_line = {}, earliest_idx = {}, latest_idx = {}'.format(self.qubit_idx_dict[mid], mid_line, control_line, target_line, earliest_idx, latest_idx))
+                logging.info('mid = {}, mid_line = {}, control_line = {}, target_line = {}, earliest_idx = {}, latest_idx = {}'.format(self.qubit_idx_dict[mid], mid_line, control_line, target_line, earliest_idx, latest_idx))
             circuit.add_2qubit_op(OpNode(mid_line, target_line), auto_commuting=auto_commuting, min_idx=earliest_idx, max_idx=latest_idx)
             circuit.add_2qubit_op(OpNode(control_line, mid_line), auto_commuting=auto_commuting, min_idx=earliest_idx, max_idx=latest_idx)
             circuit.add_2qubit_op(OpNode(mid_line, target_line), auto_commuting=auto_commuting, min_idx=earliest_idx, max_idx=latest_idx)
@@ -374,7 +375,7 @@ class HighwayManager:
 
     def bridge_highway_path(self, circuit, shuttle_idx, source, target):
         if VERBOSE:
-            print('bridging between', self.qubit_idx_dict[source], self.qubit_idx_dict[target])
+            logging.info(f"bridging between {self.qubit_idx_dict[source]}, {self.qubit_idx_dict[target]}")
         highway_coupling_graph = get_highway_coupling_graph(self.chiplet_array)
         path = nx.shortest_path(highway_coupling_graph.graph, source, target)
         next_to_source, next_to_target = path[1], path[-2]
@@ -425,14 +426,14 @@ class HighwayManager:
             measured_qubits = set()
             to_bridge = dict()
             if VERBOSE:
-                print('key_nodes = ', [self.qubit_idx_dict[node] for node in key_nodes])
+                logging.info(f"key_nodes = {[self.qubit_idx_dict[node] for node in key_nodes]}")
             for node in key_nodes:
                 nearest_key_nodes = nearest_neighboring_key_nodes(node, key_nodes, nearest_num)
                 if VERBOSE:
-                    print('+'*16, self.qubit_idx_dict[node], [self.qubit_idx_dict[near] for near in nearest_key_nodes])
+                    logging.info(f"{'+'*16} {self.qubit_idx_dict[node]} {[self.qubit_idx_dict[near] for near in nearest_key_nodes]}")
                 for near in nearest_key_nodes:
                     if VERBOSE:
-                        print('    ++++',node, self.qubit_idx_dict[node], near, self.qubit_idx_dict[near])
+                        logging.info(f"    ++++ {node} {self.qubit_idx_dict[node]}, {near}, {self.qubit_idx_dict[near]}")
                     path = nx.shortest_path(occupied_subgraph, node, near)
                     if not set(path[1:-1]).intersection(set(key_nodes)):
                         pair = tuple(sorted([node, near]))
@@ -440,7 +441,7 @@ class HighwayManager:
                             to_bridge[(node, near)] = len(path) - 1
                             visited.add(pair)
             if VERBOSE:
-                print('start to bridge: ', sorted(to_bridge.keys(), key=lambda k: to_bridge[k]))
+                logging.info(f"start to bridge: {sorted(to_bridge.keys(), key=lambda k: to_bridge[k])}")
             for node, near in sorted(to_bridge.keys(), key=lambda k: to_bridge[k]):
                 measured_on_path = self.bridge_highway_path(circuit, shuttle_idx, node, near)
                 measured_qubits |= measured_on_path
@@ -471,7 +472,7 @@ class HighwayManager:
                 best_neighbor = min(all_nearest_neighbors, key=lambda nei: op_num(nei))
                 self.bridge(circuit, shuttle_idx, best_neighbor, qubit)
                 if VERBOSE:
-                    print('reentangled {} with {}'.format(self.qubit_idx_dict[qubit], self.qubit_idx_dict[best_neighbor]))
+                    logging.info(f"reentangled {self.qubit_idx_dict[qubit]} with {self.qubit_idx_dict[best_neighbor]}")
 
     def measure_throughout_highway(self, circuit, shuttle_idx):
         shuttle_end_time = self.get_shuttle_end_time(shuttle_idx)

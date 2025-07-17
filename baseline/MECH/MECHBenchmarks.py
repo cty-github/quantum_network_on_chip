@@ -1,3 +1,5 @@
+import os
+import pickle
 import logging
 from collections import Counter, defaultdict
 from random import sample
@@ -54,9 +56,9 @@ def MECH_experiments(structure, chiplet_array_dim, chiplet_size, custom_highway_
     G=gen_chiplet_array(structure, chiplet_array_dim[0], chiplet_array_dim[1], chiplet_size[0], chiplet_size[1], cross_link_sparsity=cross_link_sparsity)
     if prep_period is None:
         if structure in ['square', 'hexagon']:
-            prep_period = 13
+            prep_period = 17
         if structure in ['heavy_square', 'heavy_hexagon']:
-            prep_period = 15
+            prep_period = 17
 
     if custom_highway_qubits is not None:
         custom_highway_layout(G, custom_highway_qubits, custom_highway_edges)
@@ -69,7 +71,7 @@ def MECH_experiments(structure, chiplet_array_dim, chiplet_size, custom_highway_
     result = defaultdict(dict)
 
     for b in benchmarks:
-        print('-'*16+'executing ', b)
+        logging.info('-'*16 + 'executing ' + b + '-'*16)
         program = benchmark_program_dict[b]
         initial_v2p = dict()
         data_idx, highway_idx = 0, len(G.nodes) - len(get_highway_qubits(G))
@@ -82,25 +84,38 @@ def MECH_experiments(structure, chiplet_array_dim, chiplet_size, custom_highway_
             else:
                 initial_v2p[highway_idx] = node
                 highway_idx += 1
-        router = Router(G, initial_v2p=initial_v2p, prep_period=prep_period, meas_period=meas_period)
 
         logic_gate_num = 0
-        for i, control_block in enumerate(program):
-            if i%10 == 0:
-                print('{}/{}'.format(i, len(program)))
-            router.execute_control_multi_target_block(control_block, cross_chip_gate_weight, cross_chip_overhead = 3)
+        for control_block in program:
             logic_gate_num += int(sum(list(control_block.target_counter.values())))
+        
+        # if os.path.exists(f"./result/baseline/mech/router_{b}_{data_qubit_num}.pkl"):
+        #     with open(f"./result/baseline/mech/router_{b}_{data_qubit_num}.pkl", "rb") as f:
+        #         router = pickle.load(f)
+        #         logging.info(f"Loaded router from ./result/baseline/mech/router_{b}_{data_qubit_num}.pkl")
+        # else:
+        router = Router(G, initial_v2p=initial_v2p, prep_period=prep_period, meas_period=meas_period)
+        for i, control_block in enumerate(program):
+            router.execute_control_multi_target_block(control_block, cross_chip_gate_weight, cross_chip_overhead = 3)
+        router.highway_manager.end_shuttle(len(router.highway_manager.shuttle_stack)-1, router.circuit)
+        # with open(f"./result/baseline/mech/router_{b}_{data_qubit_num}.pkl", "wb") as f:
+        #     pickle.dump(router, f)
+        #     logging.info(f"Saved router to ./result/baseline/mech/router_{b}_{data_qubit_num}.pkl")
 
+        prep_exec_depth = 0
         for shuttle_idx in range(len(router.highway_manager.shuttle_stack)):
             for idx in range(router.highway_manager.get_shuttle_prep_start_time(shuttle_idx), router.highway_manager.get_shuttle_exec_start_time(shuttle_idx)):
                 for line in range(len(router.circuit.circuit_lines)):
-                    assert router.circuit.is_position_empty(line, idx)
+                    assert router.circuit.is_position_empty(line, idx), f"line {line}, idx {idx} should be empty but is occupied by {router.circuit.take_node(line, idx)}"
             source_measured_qubits_dict = router.highway_manager.bridge_throughout_highway(router.circuit, shuttle_idx)
             router.highway_manager.reentangle_throughout_highway(router.circuit, shuttle_idx, source_measured_qubits_dict)
+            prep_exec_depth += router.highway_manager.get_shuttle_meas_start_time(shuttle_idx) - router.highway_manager.get_shuttle_prep_start_time(shuttle_idx)
 
+        meas_depth = 0
         for shuttle_idx in range(len(router.highway_manager.shuttle_stack)):
             router.highway_manager.measure_throughout_highway(router.circuit, shuttle_idx)
-            
+            meas_depth += router.highway_manager.get_shuttle_end_time(shuttle_idx) - router.highway_manager.get_shuttle_meas_start_time(shuttle_idx)
+        
         on_chip_gate_num = 0
         cross_chip_gate_num = 0
         meas_num = 0
@@ -127,6 +142,8 @@ def MECH_experiments(structure, chiplet_array_dim, chiplet_size, custom_highway_
             'logic_gate_num': logic_gate_num, 
             'depth': router.circuit.depth, 
             'eff_gate_num': eff_gate_num, 
+            'prep_exec_depth': prep_exec_depth,
+            'meas_depth': meas_depth,
             'on_chip': on_chip_gate_num, 
             'cross_chip': cross_chip_gate_num, 
             'meas_num': meas_num, 
@@ -136,4 +153,4 @@ def MECH_experiments(structure, chiplet_array_dim, chiplet_size, custom_highway_
             'sparsity': cross_link_sparsity, 
         }
 
-    return result
+    return result, router.circuit

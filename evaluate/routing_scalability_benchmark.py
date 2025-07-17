@@ -53,15 +53,12 @@ for baseline, algorithm, package_length in product(baseline_to_test, algorithm_t
     logging.info(f"Testing package length: {package_length}, algorithm: {algorithm}, baseline: {baseline}")
     result_dir = os.path.join(exp_dir, f"{package_length}_{package_length}_{algorithm}_{baseline}")
     os.makedirs(result_dir, exist_ok=True)
-    if os.path.exists(os.path.join(result_dir, "exp_result.json")):
-        logging.info(f"Result already exists for {package_length}_{package_length}_{algorithm}_{baseline}, skipping...")
-        continue
+    # if os.path.exists(os.path.join(result_dir, "exp_result.json")):
+    #     logging.info(f"Result already exists for {package_length}_{package_length}_{algorithm}_{baseline}, skipping...")
+    #     continue
     package_size = (package_length, package_length)
     node_num = math.prod(package_size)
-    if node_num < 100:
-        data_qubit_num = node_num // 100
-    else:
-        data_qubit_num = node_num // 100
+    data_qubit_num = int(100 * 2 ** math.log(node_num / 400, 5))
 
     if baseline == "mech":
         if package_length < 100:
@@ -70,8 +67,11 @@ for baseline, algorithm, package_length in product(baseline_to_test, algorithm_t
         else:
             chiplet_array_dim = (package_length // 20, package_length // 20)
             chiplet_size = (20, 20)
-        exp_result_dict = MECH_experiments(structure="square", chiplet_array_dim=chiplet_array_dim, chiplet_size=chiplet_size, benchmarks=[algorithm], data_qubit_num=data_qubit_num)
+        cross_link_sparsity = chiplet_size[0] // FabricateModel().inter_sparsity
+        exp_result_dict, mech_circuit = MECH_experiments(structure="square", chiplet_array_dim=chiplet_array_dim, chiplet_size=chiplet_size, benchmarks=[algorithm], data_qubit_num=data_qubit_num, cross_link_sparsity=cross_link_sparsity)
         exp_result = exp_result_dict[algorithm]
+        with open(os.path.join(result_dir, "mech_circuit.pkl"), "wb") as f:
+            pickle.dump(mech_circuit, f)
         circuit_duration = get_mech_circuit_duration(exp_result)
         logic_gate_fide = get_mech_logic_gate_fide(exp_result, (10, 10))
     elif baseline == "qunoc":
