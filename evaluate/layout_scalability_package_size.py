@@ -4,30 +4,16 @@ sys.path.append("..")
 import csv
 import logging
 
-from qunoc.utils.utils import get_timestamp
 from qunoc.element.package import *
 from qunoc.layout.env import QuNoCEnv
 from qunoc.layout.agent import LayoutAgent
 
 exp_dir = "./result/layout_scalability/package_size"
 os.makedirs(exp_dir, exist_ok=True)
-logging.basicConfig(
-    filename=os.path.join(exp_dir, f"log_{get_timestamp()}.txt"),
-    filemode='w',
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-    encoding="utf-8"
-)
-
-output_path = os.path.join(exp_dir, "output.csv")
-if not os.path.exists(output_path):
-    with open(output_path, mode='w', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow(["PackageSize", "DesignStrategy", "Score", "Fidelity", "FideStd"])
 
 design_strategy_to_test = ["baseline", "heuristic", "greedy", "rl"]
 package_length_to_test = list(range(40, 220, 20))
-
+log_filename = "log"
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="")
@@ -36,11 +22,27 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.strategy:
         design_strategy_to_test = [args.strategy]
+        log_filename += f"_{args.strategy}"
     if args.length:
-        package_length_to_test = list(range(args.length, 220, 20))
+        package_length_to_test = [args.length]
+        log_filename += f"_{args.length}"
 
+logging.basicConfig(
+    filename=os.path.join(exp_dir, f"{log_filename}.txt"),
+    filemode='w',
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+    encoding="utf-8"
+)
 logging.info(f"Design strategies to test: {design_strategy_to_test}")
 logging.info(f"Package lengths to test: {package_length_to_test}")
+
+output_path = os.path.join(exp_dir, "output.csv")
+if not os.path.exists(output_path):
+    with open(output_path, mode='w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(["PackageSize", "DesignStrategy", "Score", "Fidelity", "FideStd"])
+
 for design_strategy, package_length in product(design_strategy_to_test, package_length_to_test):
     logging.info(f"Testing package length: {package_length}, design strategy: {design_strategy}")
     result_dir = os.path.join(exp_dir, f"{package_length}_{package_length}_{design_strategy}")
@@ -51,7 +53,7 @@ for design_strategy, package_length in product(design_strategy_to_test, package_
         package = Package.from_pickle(os.path.join(result_dir, "package.pkl"))
     else:
         if design_strategy == "baseline":
-            package = Package(package_size, design_strategy="manual", result_dir=result_dir)
+            package = Package(package_size, design_scheme="bottom_up", design_strategy="manual", bottom_up_init_type=np.ones(package_size, dtype=np.int8), result_dir=result_dir)
         elif design_strategy == "heuristic":
             package = Package(package_size, design_strategy="heuristic", result_dir=result_dir)
         elif design_strategy == "greedy":
@@ -64,7 +66,7 @@ for design_strategy, package_length in product(design_strategy_to_test, package_
                 agent = LayoutAgent(env, result_dir=result_dir)
                 agent.train(total_timesteps=100*package_size[0]*package_size[1])
             package = agent.design()
-        package.save()
+        package.to_pickle()
         package.save_design_history()
         try:
             fig, _ = package.draw_qubits(axis_off=False)

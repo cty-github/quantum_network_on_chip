@@ -1391,7 +1391,10 @@ class Circuit:
             float: The duration of the action in nanoseconds.
         """
         if isinstance(action, GhzPreparation):
-            return self.op_config.reset_time + action.get_depth() * self.op_config.inter_time
+            return min(
+                self.op_config.reset_time * 2 + self.op_config.inter_time * 4 + self.op_config.measure_time,
+                self.op_config.reset_time + action.get_depth() * self.op_config.inter_time
+            )
         elif isinstance(action, (Board, Alight, Interchange)):
             return self.op_config.inter_time * 3
         elif isinstance(action, Transport):

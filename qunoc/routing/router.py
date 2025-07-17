@@ -1584,7 +1584,8 @@ class Router:
                     if action.inter_flag:
                         inter_gate_num += 1
                     else:
-                        intra_gate_num += 1
+                        intra_gate_num += 3
+                        inter_gate_num -= 2
                     meas_num += 1
                     phy_qubit_u = action.platform
                     phy_qubit_v = action.register
@@ -1820,6 +1821,20 @@ class Router:
                     make_save_gif_figure(self.action_history, os.path.join(self.result_dir, "action_history.gif"), duration=duration)
             except Exception as e:
                 logging.warning(f"Failed to save action history as GIF: {e}")
+
+    def get_block_num(self) -> int:
+        """
+        Get the number of compute blocks in the program.
+
+        Returns:
+            int: The number of compute blocks.
+        """
+        if hasattr(self, "compute_blocks"):
+            return len(self.compute_blocks)
+        elif hasattr(self, "block_depend_graph"):
+            return self.block_depend_graph.number_of_nodes() - 1
+        else:
+            raise ValueError("No compute blocks or block dependency graph found in the program.")
 
     def get_block_depth(self) -> int:
         """

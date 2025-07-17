@@ -69,6 +69,7 @@ def MECH_experiments(structure, chiplet_array_dim, chiplet_size, custom_highway_
         data_qubit_num = len(G.nodes) - len(get_highway_qubits(G))
     benchmark_program_dict = {'vqe': VQE(data_qubit_num), 'qft': QFT(data_qubit_num), 'qaoa': QAOA(data_qubit_num), 'bv': BV(data_qubit_num)}
     result = defaultdict(dict)
+    circuit = dict()
 
     for b in benchmarks:
         logging.info('-'*16 + 'executing ' + b + '-'*16)
@@ -152,5 +153,6 @@ def MECH_experiments(structure, chiplet_array_dim, chiplet_size, custom_highway_
             'shuttle_num': len(router.highway_manager.shuttle_stack), 
             'sparsity': cross_link_sparsity, 
         }
+        circuit[b] = router.circuit
 
-    return result, router.circuit
+    return result, circuit

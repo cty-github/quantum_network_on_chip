@@ -5,7 +5,6 @@ import csv
 import json
 import logging
 
-from qunoc.utils.utils import get_timestamp
 from qunoc.element.benchmark import get_program
 from qunoc.element.package import *
 from qunoc.routing.router import *
@@ -14,24 +13,11 @@ from baseline.utils.utils import get_mech_circuit_duration, get_mech_logic_gate_
 
 exp_dir = "./result/routing_scalability/benchmark"
 os.makedirs(exp_dir, exist_ok=True)
-logging.basicConfig(
-    filename=os.path.join(exp_dir, f"log_{get_timestamp()}.txt"),
-    filemode='w',
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-    encoding="utf-8"
-)
-
-output_path = os.path.join(exp_dir, "output.csv")
-if not os.path.exists(output_path):
-    with open(output_path, mode='w', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow(["Algorithm", "#DataQubit", "#LogicGate", "Baseline", "CircuitDuration", "GateFidelity"])
 
 baseline_to_test = ["mech", "qunoc"]
 algorithm_to_test = ["vqe", "qft", "qaoa", "bv"]
 package_length_to_test = list(range(40, 220, 20))
-
+log_filename = "log"
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="")
@@ -41,14 +27,31 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.baseline:
         baseline_to_test = [args.baseline]
+        log_filename += f"_{args.baseline}"
     if args.algorithm:
         algorithm_to_test = [args.algorithm]
+        log_filename += f"_{args.algorithm}"
     if args.length:
-        package_length_to_test = list(range(args.length, 220, 20))
+        package_length_to_test = [args.length]
+        log_filename += f"_{args.length}"
 
+logging.basicConfig(
+    filename=os.path.join(exp_dir, f"{log_filename}.txt"),
+    filemode='w',
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+    encoding="utf-8"
+)
 logging.info(f"Baselines to test: {baseline_to_test}")
 logging.info(f"Algorithms to test: {algorithm_to_test}")
 logging.info(f"Package lengths to test: {package_length_to_test}")
+
+output_path = os.path.join(exp_dir, "output.csv")
+if not os.path.exists(output_path):
+    with open(output_path, mode='w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(["Algorithm", "#DataQubit", "#LogicGate", "Baseline", "CircuitDuration", "GateFidelity"])
+
 for baseline, algorithm, package_length in product(baseline_to_test, algorithm_to_test, package_length_to_test):
     logging.info(f"Testing package length: {package_length}, algorithm: {algorithm}, baseline: {baseline}")
     result_dir = os.path.join(exp_dir, f"{package_length}_{package_length}_{algorithm}_{baseline}")
@@ -58,7 +61,7 @@ for baseline, algorithm, package_length in product(baseline_to_test, algorithm_t
     #     continue
     package_size = (package_length, package_length)
     node_num = math.prod(package_size)
-    data_qubit_num = int(100 * 2 ** math.log(node_num / 400, 5))
+    data_qubit_num = int(100 * 2 ** math.log(node_num / 1600, 5))
 
     if baseline == "mech":
         if package_length < 100:
@@ -68,10 +71,11 @@ for baseline, algorithm, package_length in product(baseline_to_test, algorithm_t
             chiplet_array_dim = (package_length // 20, package_length // 20)
             chiplet_size = (20, 20)
         cross_link_sparsity = chiplet_size[0] // FabricateModel().inter_sparsity
-        exp_result_dict, mech_circuit = MECH_experiments(structure="square", chiplet_array_dim=chiplet_array_dim, chiplet_size=chiplet_size, benchmarks=[algorithm], data_qubit_num=data_qubit_num, cross_link_sparsity=cross_link_sparsity)
+        exp_result_dict, circuit_dict = MECH_experiments(structure="square", chiplet_array_dim=chiplet_array_dim, chiplet_size=chiplet_size, benchmarks=[algorithm], data_qubit_num=data_qubit_num, cross_link_sparsity=cross_link_sparsity)
         exp_result = exp_result_dict[algorithm]
+        circuit = circuit_dict[algorithm]
         with open(os.path.join(result_dir, "mech_circuit.pkl"), "wb") as f:
-            pickle.dump(mech_circuit, f)
+            pickle.dump(circuit, f)
         circuit_duration = get_mech_circuit_duration(exp_result)
         logic_gate_fide = get_mech_logic_gate_fide(exp_result, (10, 10))
     elif baseline == "qunoc":

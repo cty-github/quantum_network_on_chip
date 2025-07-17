@@ -265,6 +265,8 @@ class Package:
                     self.package_graph.nodes[node]["qubit"] = None
             self.design_qunoc_bottom_up()
             self.compute_modules, self.transfer_lines = self.check_func_area()
+            for area in self.compute_modules + self.transfer_lines:
+                self.complete_area(area)
             self.complete_package()
         elif self.design_scheme == "top_down":
             self.transfer_lines: list[TransferLine] = []
@@ -286,16 +288,25 @@ class Package:
             if self.design_strategy == "heuristic":
                 old_compute_module = self.compute_modules[0]
                 radial_round = (
-                    min(self.package_size) - 2 * self.fab_model.max_square_size
-                ) // (4 * self.fab_model.max_square_size + 2)
-                for _ in range(radial_round):
-                    self.design_module_top_down(
-                        old_compute_module,
-                        DesignTemplate.Radial,
-                        DesignOrientation.X,
-                        2 * self.fab_model.max_square_size,
-                    )
-                    old_compute_module = self.compute_modules[-1]
+                    min(self.package_size) - 1 * self.fab_model.max_square_size - 2
+                ) // (2 * self.fab_model.max_square_size + 2)
+                if radial_round == 0:
+                    if min(package_size) >= 2 * self.fab_model.max_square_size + 3:
+                        self.design_module_top_down(
+                            old_compute_module,
+                            DesignTemplate.Strip,
+                            DesignOrientation.X if package_size[0] > package_size[1] else DesignOrientation.Y,
+                            1 * self.fab_model.max_square_size,
+                        )
+                else:
+                    for _ in range(radial_round):
+                        self.design_module_top_down(
+                            old_compute_module,
+                            DesignTemplate.Radial,
+                            DesignOrientation.X,
+                            1 * self.fab_model.max_square_size,
+                        )
+                        old_compute_module = self.compute_modules[-1]
             elif self.design_strategy == "greedy":
                 best_score = self.estimate_score()
                 logging.info(f"Initial score: {best_score}")
@@ -380,6 +391,8 @@ class Package:
             raise NotImplementedError("Greedy strategy is not implemented yet.")
         elif self.design_strategy == "rl":
             raise NotImplementedError("Reinforcement learning strategy is not implemented yet.")
+        elif self.design_strategy == "manual":
+            pass
         else:
             raise ValueError("Invalid design strategy: {}".format(self.design_strategy))
 
@@ -1014,6 +1027,8 @@ class Package:
             path (Path): The path with highest fidelity.
             fidelity (float): The fidelity of the path.
         """
+        if len(self.transfer_lines) == 0:
+            return self.get_shortest_no_transfer_path(source, target)
         path, fidelity = self.get_shortest_transfer_path(source, target)
         if self.has_no_transfer_path(source, target):
             no_transfer_path, no_transfer_fidelity = self.get_shortest_no_transfer_path(source, target)
