@@ -10,6 +10,7 @@ def get_mech_data_qubit_num(structure, chiplet_array_dim, chiplet_size, custom_h
     return len(G.nodes) - len(get_highway_qubits(G))
 
 def get_mech_circuit_duration(exp_result: dict, op_config: OperationConfig = OperationConfig()):
+    return exp_result["depth"] * max(op_config.reset_time, op_config.single_time, op_config.intra_time, op_config.inter_time, op_config.measure_time)
     return exp_result["prep_exec_depth"] * max(op_config.reset_time, op_config.single_time, op_config.intra_time, op_config.inter_time) + exp_result["meas_depth"] * op_config.measure_time
 
 def get_mech_logic_gate_fide(exp_result: dict, chiplet_size: tuple[int, int], fab_model: FabricateModel = FabricateModel()):

@@ -1431,21 +1431,21 @@ class Router:
         # except Exception as e:
         #     logging.warning(f"Failed to draw qubit mapping block: {e}")
 
-    def generate_bell_state(self, data_qubit, platform, station) -> BellPreparation:
-        """
-        Generate a Bell state preparation action for the given data qubit.
+    # def generate_bell_state(self, data_qubit, platform, station) -> BellPreparation:
+    #     """
+    #     Generate a Bell state preparation action for the given data qubit.
 
-        Args:
-            data_qubit (int): The data qubit for which the Bell state is prepared.
-            platform (tuple[int, int]): The platform where the Bell state is prepared.
-            station (Station): The station where the Bell state is prepared.
+    #     Args:
+    #         data_qubit (int): The data qubit for which the Bell state is prepared.
+    #         platform (tuple[int, int]): The platform where the Bell state is prepared.
+    #         station (Station): The station where the Bell state is prepared.
 
-        Returns:
-            BellPreparation: The action to prepare the Bell state.
-        """
-        bell_action = BellPreparation(data_qubit, [self.ancilla_qubit_id, self.ancilla_qubit_id + 1], platform, station)
-        self.ancilla_qubit_id += 2
-        return bell_action
+    #     Returns:
+    #         BellPreparation: The action to prepare the Bell state.
+    #     """
+    #     bell_action = BellPreparation(data_qubit, [self.ancilla_qubit_id, self.ancilla_qubit_id + 1], platform, station)
+    #     self.ancilla_qubit_id += 2
+    #     return bell_action
 
     def schedule_move_gates(self, move_gates: list[Control]):
         """

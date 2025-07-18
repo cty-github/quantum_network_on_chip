@@ -505,16 +505,30 @@ class Package:
         """
         if isinstance(func_area, ComputeModule):
             for chiplet in func_area.get_chiplets():
-                for node in chiplet.get_nodes():
-                    self.package_graph.nodes[node]["type"] = NodeType.Compute
-                    self.package_graph.nodes[node]["qubit"].type = NodeType.Compute
-                    self.package_graph.nodes[node]["qubit"].role = QubitRole.Register
-                    if (node[0] == func_area.left[0] or node[0] == func_area.right[0]) and (node[1] == func_area.top[0] or node[1] == func_area.bottom[0]):
+                for x, y in product(range(chiplet.left, chiplet.right + 1), range(chiplet.top, chiplet.bottom + 1)):
+                    node = (x, y)
+                    if node in chiplet.get_nodes():
+                        self.package_graph.nodes[node]["type"] = NodeType.Compute
+                        self.package_graph.nodes[node]["qubit"].type = NodeType.Compute
+                        self.package_graph.nodes[node]["qubit"].role = QubitRole.Register
+                        if (node[0] == func_area.left[0] or node[0] == func_area.right[0]) and (node[1] == func_area.top[0] or node[1] == func_area.bottom[0]):
+                            self.package_graph.nodes[node]["qubit"].role = QubitRole.Empty
+                        self.package_graph.nodes[node]["qubit"].chiplet = chiplet
+                        self.package_graph.nodes[node]["qubit"].area = func_area
+                        self.compute_nodes.add(node)
+                        self.transfer_nodes.discard(node)
+                    else:
+                        self.package_graph.nodes[node]["type"] = NodeType.Empty
+                        self.package_graph.nodes[node]["qubit"].type = NodeType.Empty
                         self.package_graph.nodes[node]["qubit"].role = QubitRole.Empty
-                    self.package_graph.nodes[node]["qubit"].chiplet = chiplet
-                    self.package_graph.nodes[node]["qubit"].area = func_area
-                    self.compute_nodes.add(node)
-                    self.transfer_nodes.discard(node)
+                        self.package_graph.nodes[node]["qubit"].chiplet = chiplet
+                        self.package_graph.nodes[node]["qubit"].area = func_area
+                        self.compute_nodes.discard(node)
+                        self.transfer_nodes.discard(node)
+                    if x < chiplet.right:
+                        self.package_graph.edges[(node, (x + 1, y))]["type"] = EdgeType.Empty
+                    if y < chiplet.bottom:
+                        self.package_graph.edges[(node, (x, y + 1))]["type"] = EdgeType.Empty
             for gap in func_area.get_compute_transfer_gaps() + func_area.get_intra_gaps():
                 for i in range(gap.start, gap.end + 1):
                     node_u = get_full_space_tuple(gap.pos[0], gap.axis, i)

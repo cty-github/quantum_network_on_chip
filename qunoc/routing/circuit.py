@@ -256,79 +256,39 @@ class Interchange(BoardingAction):
     def get_involved_nodes(self) -> set[tuple[int, int]]:
         return {self.interchange[0], self.interchange[1]}
 
-class BellPreparation(BoardingAction):
-    """
-    Represents the action to prepare a Bell state.
+# class BellPreparation(BoardingAction):
+#     """
+#     Represents the action to prepare a Bell state.
 
-    Attributes:
-        data_qubit (int): The data qubit requiring the Bell state.
-        ancilla_qubits (list[int]): The ancilla qubits used in the Bell state. 
-        platform (tuple[int, int]): The physical qubit on compute chiplet where the Bell state is prepared.
-        station (tuple[int, int]): The physical qubit on transfer chiplet where the Bell state is prepared.
-    """
+#     Attributes:
+#         data_qubit (int): The data qubit requiring the Bell state.
+#         ancilla_qubits (list[int]): The ancilla qubits used in the Bell state. 
+#         platform (tuple[int, int]): The physical qubit on compute chiplet where the Bell state is prepared.
+#         station (tuple[int, int]): The physical qubit on transfer chiplet where the Bell state is prepared.
+#     """
 
-    def __init__(self, data_qubit: int, ancilla_qubits: list[int], platform: tuple[int, int], station: tuple[int, int]):
-        """
-        Initialize the Bell preparation action.
+#     def __init__(self, data_qubit: int, ancilla_qubits: list[int], platform: tuple[int, int], station: tuple[int, int]):
+#         """
+#         Initialize the Bell preparation action.
 
-        Args:
-            data_qubit (int): The data qubit requiring the Bell state.
-            ancilla_qubits (list[int]): The ancilla qubits used in the Bell state.
-            platform (tuple[int, int]): The physical qubit on compute chiplet where the Bell state is prepared.
-            station (tuple[int, int]): The physical qubit on transfer chiplet where the Bell state is prepared.
-        """
-        super().__init__()
-        self.data_qubit = data_qubit
-        self.ancilla_qubits = ancilla_qubits
-        self.platform = platform
-        self.station = station
-        self.init_logging()
+#         Args:
+#             data_qubit (int): The data qubit requiring the Bell state.
+#             ancilla_qubits (list[int]): The ancilla qubits used in the Bell state.
+#             platform (tuple[int, int]): The physical qubit on compute chiplet where the Bell state is prepared.
+#             station (tuple[int, int]): The physical qubit on transfer chiplet where the Bell state is prepared.
+#         """
+#         super().__init__()
+#         self.data_qubit = data_qubit
+#         self.ancilla_qubits = ancilla_qubits
+#         self.platform = platform
+#         self.station = station
+#         self.init_logging()
 
-    def __repr__(self):
-        return f"{self.__class__.__name__} {self.id}: Prepare Bell state for logic qubit {self.data_qubit} on physical qubit {self.platform}."
+#     def __repr__(self):
+#         return f"{self.__class__.__name__} {self.id}: Prepare Bell state for logic qubit {self.data_qubit} on physical qubit {self.platform}."
 
-    def get_involved_nodes(self) -> set[tuple[int, int]]:
-        return {self.platform, self.station}
-
-class Teleport(RidingAction):
-    """
-    Represents the action to teleport a data qubit using a prepared GHZ state.
-    
-    Attributes:
-        ancilla_qubit (int): The ancilla qubit used for teleportation.
-        data_qubit (int): The data qubit to be teleported.
-        ancilla_node (tuple[int, int]): The physical qubit on compute chiplet where the ancilla qubit is located.
-        data_node (tuple[int, int]): The physical qubit on compute chiplet where the data qubit is located.
-        control_flag (bool): The flag marking if the data qubit is the control qubit.
-        inter_flag (bool): The flag marking if the action is performed on inter coupler.
-    """
-
-    def __init__(self, ancilla_qubit: int, data_qubit: int, ancilla_node: tuple[int, int], data_node: tuple[int, int], control_flag: bool, inter_flag: bool):
-        """
-        Initialize the teleportation action.
-
-        Args:
-            ancilla_qubit (int): The ancilla qubit used for teleportation.
-            data_qubit (int): The data qubit to be teleported.
-            ancilla_node (tuple[int, int]): The physical qubit on compute chiplet where the ancilla qubit is located.
-            data_node (tuple[int, int]): The physical qubit on compute chiplet where the data qubit is located.
-            control_flag (bool): The flag marking if the data qubit is the control qubit.
-            inter_flag (bool): The flag marking if the action is performed on inter coupler.
-        """
-        super().__init__()
-        self.ancilla_qubit = ancilla_qubit
-        self.data_qubit = data_qubit
-        self.ancilla_node = ancilla_node
-        self.data_node = data_node
-        self.control_flag = control_flag
-        self.inter_flag = inter_flag
-        self.init_logging()
-
-    def __repr__(self):
-        return f"{self.__class__.__name__} {self.id}: Teleport data qubit {self.data_qubit} with ancilla qubit {self.ancilla_qubit} on physical qubit {self.ancilla_node}."
-    
-    def get_involved_nodes(self) -> set[tuple[int, int]]:
-        return {self.ancilla_node, self.data_node}
+#     def get_involved_nodes(self) -> set[tuple[int, int]]:
+#         return {self.platform, self.station}
 
 class Transport(RidingAction):
     """
@@ -369,6 +329,46 @@ class Transport(RidingAction):
             int: The distance of QST.
         """
         return abs(self.source_physical_qubit[0] - self.target_physical_qubit[0]) + abs(self.source_physical_qubit[1] - self.target_physical_qubit[1])
+
+class Teleport(RidingAction):
+    """
+    Represents the action to teleport a data qubit using a prepared GHZ state.
+    
+    Attributes:
+        ancilla_qubit (int): The ancilla qubit used for teleportation.
+        data_qubit (int): The data qubit to be teleported.
+        ancilla_node (tuple[int, int]): The physical qubit on compute chiplet where the ancilla qubit is located.
+        data_node (tuple[int, int]): The physical qubit on compute chiplet where the data qubit is located.
+        control_flag (bool): The flag marking if the data qubit is the control qubit.
+        inter_flag (bool): The flag marking if the action is performed on inter coupler.
+    """
+
+    def __init__(self, ancilla_qubit: int, data_qubit: int, ancilla_node: tuple[int, int], data_node: tuple[int, int], control_flag: bool, inter_flag: bool):
+        """
+        Initialize the teleportation action.
+
+        Args:
+            ancilla_qubit (int): The ancilla qubit used for teleportation.
+            data_qubit (int): The data qubit to be teleported.
+            ancilla_node (tuple[int, int]): The physical qubit on compute chiplet where the ancilla qubit is located.
+            data_node (tuple[int, int]): The physical qubit on compute chiplet where the data qubit is located.
+            control_flag (bool): The flag marking if the data qubit is the control qubit.
+            inter_flag (bool): The flag marking if the action is performed on inter coupler.
+        """
+        super().__init__()
+        self.ancilla_qubit = ancilla_qubit
+        self.data_qubit = data_qubit
+        self.ancilla_node = ancilla_node
+        self.data_node = data_node
+        self.control_flag = control_flag
+        self.inter_flag = inter_flag
+        self.init_logging()
+
+    def __repr__(self):
+        return f"{self.__class__.__name__} {self.id}: Teleport data qubit {self.data_qubit} with ancilla qubit {self.ancilla_qubit} on physical qubit {self.ancilla_node}."
+    
+    def get_involved_nodes(self) -> set[tuple[int, int]]:
+        return {self.ancilla_node, self.data_node}
 
 class Enter(RidingAction):
     """
@@ -506,42 +506,42 @@ class DirectGate(RidingAction):
     def get_involved_nodes(self) -> set[tuple[int, int]]:
         return {self.phy_ctrl_qubit, self.phy_targ_qubit}
 
-class TeleState(RidingAction):
-    """
-    Represents the action of completing a teleportation on a compute module.
+# class TeleState(RidingAction):
+#     """
+#     Represents the action of completing a teleportation on a compute module.
 
-    Attributes:
-        data_qubit (int): The data qubit to be teleported.
-        ancilla_qubits (list[int]): The ancilla qubits used in the teleportation.
-        register (tuple[int, int]): The physical qubit on compute chiplet where the teleportation is completed.
-        source_platform (tuple[int, int]): The physical qubit on compute chiplet where the teleportation is initiated.
-        target_platform (tuple[int, int]): The physical qubit on compute chiplet where the teleportation is routed to.
-    """
+#     Attributes:
+#         data_qubit (int): The data qubit to be teleported.
+#         ancilla_qubits (list[int]): The ancilla qubits used in the teleportation.
+#         register (tuple[int, int]): The physical qubit on compute chiplet where the teleportation is completed.
+#         source_platform (tuple[int, int]): The physical qubit on compute chiplet where the teleportation is initiated.
+#         target_platform (tuple[int, int]): The physical qubit on compute chiplet where the teleportation is routed to.
+#     """
     
-    def __init__(self, data_qubit: int, ancilla_qubits: list[int], register: tuple[int, int], source_platform: tuple[int, int], target_platform: tuple[int, int]):
-        """
-        Initialize the teleportation state action.
+#     def __init__(self, data_qubit: int, ancilla_qubits: list[int], register: tuple[int, int], source_platform: tuple[int, int], target_platform: tuple[int, int]):
+#         """
+#         Initialize the teleportation state action.
 
-        Args:
-            data_qubit (int): The data qubit to be teleported.
-            ancilla_qubits (list[int]): The ancilla qubits used in the teleportation.
-            register (tuple[int, int]): The physical qubit on compute chiplet where the teleportation is completed.
-            source_platform (tuple[int, int]): The physical qubit on compute chiplet where the teleportation is initiated.
-            target_platform (tuple[int, int]): The physical qubit on compute chiplet where the teleportation is routed to.
-        """
-        super().__init__()
-        self.data_qubit = data_qubit
-        self.ancilla_qubits = ancilla_qubits
-        self.register = register
-        self.source_platform = source_platform
-        self.target_platform = target_platform
-        self.init_logging()
+#         Args:
+#             data_qubit (int): The data qubit to be teleported.
+#             ancilla_qubits (list[int]): The ancilla qubits used in the teleportation.
+#             register (tuple[int, int]): The physical qubit on compute chiplet where the teleportation is completed.
+#             source_platform (tuple[int, int]): The physical qubit on compute chiplet where the teleportation is initiated.
+#             target_platform (tuple[int, int]): The physical qubit on compute chiplet where the teleportation is routed to.
+#         """
+#         super().__init__()
+#         self.data_qubit = data_qubit
+#         self.ancilla_qubits = ancilla_qubits
+#         self.register = register
+#         self.source_platform = source_platform
+#         self.target_platform = target_platform
+#         self.init_logging()
 
-    def __repr__(self):
-        return f"{self.__class__.__name__} {self.id}: Teleport data qubit {self.data_qubit} with ancilla qubits {self.ancilla_qubits} from physical qubit {self.source_platform} to physical qubit {self.target_platform}."
+#     def __repr__(self):
+#         return f"{self.__class__.__name__} {self.id}: Teleport data qubit {self.data_qubit} with ancilla qubits {self.ancilla_qubits} from physical qubit {self.source_platform} to physical qubit {self.target_platform}."
     
-    def get_involved_nodes(self) -> set[tuple[int, int]]:
-        return {self.register, self.source_platform, self.target_platform}
+#     def get_involved_nodes(self) -> set[tuple[int, int]]:
+#         return {self.register, self.source_platform, self.target_platform}
 
 
 class CircuitStage:
@@ -980,6 +980,8 @@ class RidingStage(CircuitStage):
             return False
         elif isinstance(action, Transport):
             return self.add_transport_action_immediate(action)
+        elif isinstance(action, Teleport):
+            return self.add_teleport_action_immediate(action)
         elif isinstance(action, Enter):
             return self.add_enter_action_immediate(action)
         elif isinstance(action, Exit):
@@ -988,8 +990,6 @@ class RidingStage(CircuitStage):
             return self.add_swap_action_immediate(action)
         elif isinstance(action, DirectGate):
             return self.add_direct_action_immediate(action)
-        elif isinstance(action, Teleport):
-            return self.add_teleport_action_immediate(action)
 
     def add_transport_action(self, action: Transport) -> bool:
         """
@@ -1206,6 +1206,31 @@ class RidingStage(CircuitStage):
         self.add_action_logging(action)
         return True
 
+    def add_teleport_action_immediate(self, action: Teleport) -> bool:
+        """
+        Add a Teleport to the operating stage.
+
+        Note: The action is added to the end of the operating actions list.
+
+        Args:
+            action (Teleport): The teleportation action to add.
+
+        Returns:
+            bool: Whether the action is successfully added.
+        """
+        assert isinstance(action, Teleport), "Action should be Teleport"
+        assert self.curr_p2l_map[action.ancilla_node] == action.ancilla_qubit, f"In action {action.id}, ancilla qubit {action.ancilla_qubit} for teleportation should be in platform {action.ancilla_node}."
+        assert self.curr_p2l_map[action.data_node] == action.data_qubit, f"In action {action.id}, data qubit {action.data_qubit} to teleport should be in register {action.data_node}."
+
+        self.curr_l2p_map.pop(action.ancilla_qubit)
+        self.curr_p2l_map[action.ancilla_node] = -1
+        self.node_action_ids.setdefault(action.ancilla_node, []).append(action.id)
+        self.node_action_ids.setdefault(action.data_node, []).append(action.id)
+
+        self.circuit_actions.append(action)
+        self.add_action_logging(action)
+        return True
+
     def add_enter_action_immediate(self, action: Enter) -> bool:
         """
         Add an Enter to the operating stage.
@@ -1313,31 +1338,6 @@ class RidingStage(CircuitStage):
 
         self.node_action_ids.setdefault(action.phy_ctrl_qubit, []).append(action.id)
         self.node_action_ids.setdefault(action.phy_targ_qubit, []).append(action.id)
-
-        self.circuit_actions.append(action)
-        self.add_action_logging(action)
-        return True
-
-    def add_teleport_action_immediate(self, action: Teleport) -> bool:
-        """
-        Add a Teleport to the operating stage.
-
-        Note: The action is added to the end of the operating actions list.
-
-        Args:
-            action (Teleport): The teleportation action to add.
-
-        Returns:
-            bool: Whether the action is successfully added.
-        """
-        assert isinstance(action, Teleport), "Action should be Teleport"
-        assert self.curr_p2l_map[action.ancilla_node] == action.ancilla_qubit, f"In action {action.id}, ancilla qubit {action.ancilla_qubit} for teleportation should be in platform {action.ancilla_node}."
-        assert self.curr_p2l_map[action.data_node] == action.data_qubit, f"In action {action.id}, data qubit {action.data_qubit} to teleport should be in register {action.data_node}."
-
-        self.curr_l2p_map.pop(action.ancilla_qubit)
-        self.curr_p2l_map[action.ancilla_node] = -1
-        self.node_action_ids.setdefault(action.ancilla_node, []).append(action.id)
-        self.node_action_ids.setdefault(action.data_node, []).append(action.id)
 
         self.circuit_actions.append(action)
         self.add_action_logging(action)
@@ -1482,10 +1482,10 @@ class Circuit:
             return action.get_max_degree() * self.op_config.intra_time
         elif isinstance(action, (Board, Alight, Interchange)):
             return self.op_config.inter_time * 2
-        elif isinstance(action, Teleport):
-            return self.op_config.inter_time if action.inter_flag else self.op_config.intra_time
         elif isinstance(action, Transport):
             return action.get_distance() ** 0.5 * self.op_config.qst_time_constant
+        elif isinstance(action, Teleport):
+            return self.op_config.inter_time if action.inter_flag else self.op_config.intra_time
         elif isinstance(action, (SwapGate, Enter, Exit)):
             return (self.op_config.inter_time if action.inter_flag else self.op_config.intra_time) * 3
         elif isinstance(action, DirectGate):
