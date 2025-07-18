@@ -173,7 +173,7 @@ class OperationConfig:
             inter_time: float = float(np.mean([152, 148, 164, 128, 176, 116, 284, 108, 468, 116])),
             qst_time_constant: float = 125 / (5 ** 0.5), 
             measure_time: float = 2280, 
-            reset_time: float = 400
+            reset_time: float = 220
         ):
         """
         Initialize the operation configuration.

@@ -1431,6 +1431,22 @@ class Router:
         # except Exception as e:
         #     logging.warning(f"Failed to draw qubit mapping block: {e}")
 
+    def generate_bell_state(self, data_qubit, platform, station) -> BellPreparation:
+        """
+        Generate a Bell state preparation action for the given data qubit.
+
+        Args:
+            data_qubit (int): The data qubit for which the Bell state is prepared.
+            platform (tuple[int, int]): The platform where the Bell state is prepared.
+            station (Station): The station where the Bell state is prepared.
+
+        Returns:
+            BellPreparation: The action to prepare the Bell state.
+        """
+        bell_action = BellPreparation(data_qubit, [self.ancilla_qubit_id, self.ancilla_qubit_id + 1], platform, station)
+        self.ancilla_qubit_id += 2
+        return bell_action
+
     def schedule_move_gates(self, move_gates: list[Control]):
         """
         Transform move block into circuit actions and schedule actions immediately.
@@ -1575,8 +1591,8 @@ class Router:
                                 inter_gate_num += 1
                             total_fidelity *= self.package.get_coupler_fide(balise, parent)
                 elif isinstance(action, (Board, Alight, Interchange)):
-                    inter_gate_num += 1
-                    total_fidelity *= self.package.fab_model.inter_fide ** 1
+                    inter_gate_num += 2
+                    total_fidelity *= self.package.fab_model.inter_fide ** 2
                 elif isinstance(action, Transport):
                     qst_distance += action.get_distance()
                     total_fidelity *= self.package.fab_model.enhanced_fide ** action.get_distance()
@@ -1584,27 +1600,27 @@ class Router:
                     if action.inter_flag:
                         inter_gate_num += 1
                     else:
-                        intra_gate_num += 3
-                        inter_gate_num -= 2
-                    meas_num += 1
-                    phy_qubit_u = action.platform
-                    phy_qubit_v = action.register
-                    total_fidelity *= self.package.get_coupler_fide(phy_qubit_u, phy_qubit_v)
-                elif isinstance(action, (Enter, Exit, SwapGate, DirectGate)):
-                    if action.inter_flag:
-                        inter_gate_num += 1
-                    else:
                         intra_gate_num += 1
+                    meas_num += 1
+                    total_fidelity *= self.package.get_coupler_fide(action.ancilla_node, action.data_node)
+                elif isinstance(action, (Enter, Exit, SwapGate)):
+                    if action.inter_flag:
+                        inter_gate_num += 3
+                    else:
+                        intra_gate_num += 3
                     if isinstance(action, (Enter, Exit)):
                         phy_qubit_u = action.platform
                         phy_qubit_v = action.register
                     elif isinstance(action, SwapGate):
                         phy_qubit_u = action.qubit_u
                         phy_qubit_v = action.qubit_v
-                    elif isinstance(action, DirectGate):
-                        phy_qubit_u = action.phy_ctrl_qubit
-                        phy_qubit_v = action.phy_targ_qubit
                     total_fidelity *= self.package.get_coupler_fide(phy_qubit_u, phy_qubit_v) ** 3
+                elif isinstance(action, DirectGate):
+                    if action.inter_flag:
+                        inter_gate_num += 1
+                    else:
+                        intra_gate_num += 1
+                    total_fidelity *= self.package.get_coupler_fide(action.phy_ctrl_qubit, action.phy_targ_qubit)
         return intra_gate_num, inter_gate_num, qst_distance, meas_num, total_fidelity
 
     def estimate_qunoc_circuit_fide(self) -> float:
@@ -1749,7 +1765,7 @@ class Router:
             elif isinstance(action, Teleport):
                 ancilla_qubit = action.ancilla_qubit
                 data_qubit = action.data_qubit
-                ancilla_node = action.platform
+                ancilla_node = action.ancilla_node
                 data_node = self.circuit.stages[-1].curr_l2p_map[data_qubit]
                 ax.plot([ancilla_node[0], data_node[0]], [ancilla_node[1], data_node[1]], "g-", linewidth=4*linewidth_b)
                 ax.plot(ancilla_node[0], ancilla_node[1], "bo", markersize=4*markersize)
