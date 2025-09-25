@@ -7,13 +7,25 @@ from .Circuit import *
 from .Chiplet import *
 from .HighwayOccupancy import *
 from .Router import *
-from qunoc.element.package import OperationConfig
+from qiskit.quantum_info import SparsePauliOp
+from qiskit.circuit.library import hamiltonian_variational_ansatz
 
-def VQE(data_qubit_num):
+def VQE(data_qubit_num, num_pauli_terms=4):
+    paulis = []
+    pauli_options = ['I', 'X', 'Y', 'Z']
+    for _ in range(num_pauli_terms):
+        pauli_str = ''.join(random.choice(pauli_options) for _ in range(data_qubit_num))
+        paulis.append(pauli_str)
+    hamiltonian = SparsePauliOp(paulis)
+    ansatz = hamiltonian_variational_ansatz(hamiltonian)
+
     program = []
-    for i in range(data_qubit_num-1):
-        control_block = ControlBlock(i, Counter(list(range(i+1, data_qubit_num))))
-        program.append(control_block)
+    for instr, qargs, _ in ansatz.data:
+        if len(qargs) == 2:
+            q0 = ansatz.qubits.index(qargs[0])
+            q1 = ansatz.qubits.index(qargs[1])
+            control_block = ControlBlock(q0, Counter([q1]))
+            program.append(control_block)
     return program
 
 def QFT(data_qubit_num):
@@ -27,14 +39,9 @@ def QFT(data_qubit_num):
 def QAOA(data_qubit_num, percentage=0.5):
     all_possible_gates = [(i,j) for i in range(data_qubit_num) for j in range(i+1, data_qubit_num)]
     gates = list(sample(all_possible_gates, k=int(len(all_possible_gates) * percentage)))
-    gates.sort()
-
     program = []
-    control_target_dict = defaultdict(list)
     for control, target in gates:
-        control_target_dict[control].append(target)
-    for control, target_list in control_target_dict.items():
-        control_block = ControlBlock(control, Counter(target_list))
+        control_block = ControlBlock(control, Counter([target]))
         program.append(control_block)
     return program
 
@@ -48,8 +55,9 @@ def BV(data_qubit_num, percentage=0.5):
     for control, target in gates:
         control_target_dict[control].append(target)
     for control, target_list  in control_target_dict.items():
-        control_block = ControlBlock(control, Counter(target_list))
-        program.append(control_block)
+        for i in range(len(target_list)):
+            control_block = ControlBlock(control, Counter([target_list[i]]))
+            program.append(control_block)
     return program
     
 def MECH_experiments(structure, chiplet_array_dim, chiplet_size, custom_highway_qubits=None, custom_highway_edges=[], benchmarks=['vqe','qft','qaoa','bv'], data_qubit_num=None, cross_link_sparsity=1, prep_period=None, meas_period=2, cross_chip_gate_weight = 7.4, meas_weight = 2.2):
