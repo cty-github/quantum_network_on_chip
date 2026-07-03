@@ -1,7 +1,13 @@
-import networkx as nx
+import random
 from random import sample
+
 import matplotlib.pyplot as plt
+import networkx as nx
 import qiskit
+import qiskit_superstaq as qss
+import supermarq
+from qiskit.circuit.library import hamiltonian_variational_ansatz
+from qiskit.quantum_info import SparsePauliOp
 
 
 class Gate:
@@ -231,22 +237,32 @@ class Program:
         """
         return self.qiskit_circuit.draw(output="mpl")
 
-def vqe(data_qubit_num: int) -> Program:
+def vqe(data_qubit_num: int, num_pauli_terms: int = 4) -> Program:
     """
     Generate a VQE program.
 
     Args:
         data_qubit_num (int): Number of data qubits.
+        num_pauli_terms (int): Number of pauli terms in the Hamiltonian.
 
     Returns:
         Program: A quantum program with VQE logic gates.
     """
+    paulis = []
+    pauli_options = ['I', 'X', 'Y', 'Z']
+    for _ in range(num_pauli_terms):
+        pauli_str = ''.join(random.choice(pauli_options) for _ in range(data_qubit_num))
+        paulis.append(pauli_str)
+    hamiltonian = SparsePauliOp(paulis)
+    ansatz = hamiltonian_variational_ansatz(hamiltonian)
+
     Gate._counter = 0
     logic_gates = []
-    for i in range(data_qubit_num-1):
-        logic_gates.extend([Barrier(j) for j in range(data_qubit_num-1)])
-        control_gates = [Control(i, j) for j in range(i+1, data_qubit_num)]
-        logic_gates.extend(control_gates)
+    for instr, qargs, _ in ansatz.data:
+        if len(qargs) == 2:
+            q0 = ansatz.qubits.index(qargs[0])
+            q1 = ansatz.qubits.index(qargs[1])
+            logic_gates.append(Control(q0, q1))
     return Program("vqe", data_qubit_num, logic_gates)
 
 def qft(data_qubit_num: int) -> Program:
@@ -301,7 +317,7 @@ def bv(data_qubit_num: int, percentage: float = 0.5) -> Program:
         Program: A quantum program with BV logic gates.
     """
     Gate._counter = 0
-    all_possible_gates = [(0, i) for i in range(1, data_qubit_num)]
+    all_possible_gates = [(i, data_qubit_num-1) for i in range(0, data_qubit_num-1)]
     control_gates = sample(all_possible_gates, k=int(len(all_possible_gates)*percentage))
     control_gates.sort()
     logic_gates = []
@@ -309,12 +325,178 @@ def bv(data_qubit_num: int, percentage: float = 0.5) -> Program:
         logic_gates.append(Control(*gate))
     return Program("bv", data_qubit_num, logic_gates)
 
+def fully_connected_ansatz(data_qubit_num: int, layers: int = 1) -> Program:
+    """
+    Generate a fully connected ansatz program.
+
+    Args:
+        data_qubit_num (int): Number of data qubits.
+        layers (int): Number of layers.
+
+    Returns:
+        Program: A quantum program with fully connected ansatz logic gates.
+    """
+    Gate._counter = 0
+    logic_gates = []
+
+    for layer in range(layers):
+        for i in range(data_qubit_num):
+            for j in range(i+1, data_qubit_num):
+                logic_gates.append(Control(i, j))
+
+        if layer < layers - 1:
+            logic_gates.extend([Barrier(k) for k in range(data_qubit_num)])
+
+    return Program("fully_connected", data_qubit_num, logic_gates)
+
+def circular_ansatz(data_qubit_num: int, layers: int = 1) -> Program:
+    """
+    Generate a circular ansatz program.
+
+    Args:
+        data_qubit_num (int): Number of data qubits.
+        layers (int): Number of layers.
+
+    Returns:
+        Program: A quantum program with circular ansatz logic gates.
+    """
+    Gate._counter = 0
+    logic_gates = []
+
+    for layer in range(layers):
+        for i in range(data_qubit_num):
+            next_qubit = (i + 1) % data_qubit_num
+            if i != next_qubit: 
+                logic_gates.append(Control(i, next_qubit))
+
+        if layer < layers - 1:
+            logic_gates.extend([Barrier(k) for k in range(data_qubit_num)])
+
+    return Program("circular", data_qubit_num, logic_gates)
+
+def s_ghz(data_qubit_num: int) -> Program:
+    """
+    Generate a SUPERMARQ GHZ state preparation benchmark program.
+
+    Args:
+        data_qubit_num (int): Number of data qubits.
+
+    Returns:
+        Program: A quantum program with GHZ logic gates.
+    """
+    import supermarq.benchmarks
+
+    Gate._counter = 0
+    logic_gates = []
+
+    # 使用 SUPERMARQ 的 GHZ 基准测试
+    ghz_benchmark = supermarq.benchmarks.GHZ(num_qubits=data_qubit_num)
+    circuit = ghz_benchmark.qiskit_circuit()
+
+    # 转换 Qiskit 电路为项目的 Control 门格式
+    for instr, qargs, _ in circuit.data:
+        if len(qargs) == 2:  # 只处理双量子比特门
+            q0 = circuit.qubits.index(qargs[0])
+            q1 = circuit.qubits.index(qargs[1])
+            logic_gates.append(Control(q0, q1))
+
+    return Program("s_ghz", data_qubit_num, logic_gates)
+
+
+def s_hamiltonian_simulation(data_qubit_num: int, layers: int = 2) -> Program:
+    """
+    Generate a SUPERMARQ Hamiltonian Simulation benchmark program.
+    Simulates 1D Transverse Field Ising Model dynamics.
+
+    Args:
+        data_qubit_num (int): Number of data qubits.
+        layers (int): Number of Trotter layers (affects total_time).
+
+    Returns:
+        Program: A quantum program with Hamiltonian simulation logic gates.
+    """
+    import supermarq.benchmarks
+
+    Gate._counter = 0
+    logic_gates = []
+
+    ham_sim = supermarq.benchmarks.HamiltonianSimulation(
+        num_qubits=data_qubit_num,
+        time_step=0.1,
+        total_time=layers * 0.1
+    )
+    circuit = ham_sim.qiskit_circuit()
+
+    for instr, qargs, _ in circuit.data:
+        if len(qargs) == 2:  
+            q0 = circuit.qubits.index(qargs[0])
+            q1 = circuit.qubits.index(qargs[1])
+            logic_gates.append(Control(q0, q1))
+
+    return Program("s_hamiltonian_simulation", data_qubit_num, logic_gates)
+
+
+def s_mermin_bell(data_qubit_num: int) -> Program:
+    """
+    Generate a SUPERMARQ Mermin-Bell benchmark program.
+    Tests quantum non-locality using Bell inequality violations.
+
+    Args:
+        data_qubit_num (int): Number of data qubits.
+
+    Returns:
+        Program: A quantum program with Mermin-Bell logic gates.
+    """
+    import supermarq.benchmarks
+
+    Gate._counter = 0
+    logic_gates = []
+
+    # 使用 SUPERMARQ 的 MerminBell 基准测试
+    mermin = supermarq.benchmarks.MerminBell(num_qubits=data_qubit_num)
+    circuit = mermin.qiskit_circuit()
+
+    # 转换 Qiskit 电路为项目的 Control 门格式
+    for instr, qargs, _ in circuit.data:
+        if len(qargs) == 2:  # 只处理双量子比特门
+            q0 = circuit.qubits.index(qargs[0])
+            q1 = circuit.qubits.index(qargs[1])
+            logic_gates.append(Control(q0, q1))
+
+    return Program("s_mermin_bell", data_qubit_num, logic_gates)
+
+
+def bv_hard(data_qubit_num: int) -> Program:
+    """
+    Generate hard version BV Oracle with upper triangular matrix form.
+
+    Oracle structure: qubit0 controls qubits 1,2,...,n;
+                     qubit1 controls qubits 2,3,...,n; and so on.
+
+    Mathematical function: f(x) = Σ_{i=1}^{n} x_i + Σ_{i<j} x_i x_j (mod 2)
+
+    Args:
+        data_qubit_num (int): Number of data qubits.
+
+    Returns:
+        Program: A quantum program with hard BV Oracle logic gates.
+    """
+    Gate._counter = 0
+    logic_gates = []
+
+    # 创建上三角矩阵形式的控制连接
+    for i in range(data_qubit_num):
+        for j in range(i + 1, data_qubit_num):
+            logic_gates.append(Control(j, i))
+
+    return Program("bv_hard", data_qubit_num, logic_gates)
+
 def get_program(algorithm: str, data_qubit_num: int, **kwargs) -> Program:
     """
     Get a quantum program by name.
 
     Args:
-        algorithm (str): Name of the quantum algorithm (e.g., "vqe", "qft", "qaoa", "bv").
+        algorithm (str): Name of the quantum algorithm (e.g., "vqe", "qft", "qaoa", "bv", "s_ghz").
         data_qubit_num (int): Number of data qubits.
         **kwargs: Additional keyword arguments for specific algorithms.
 
@@ -329,5 +511,17 @@ def get_program(algorithm: str, data_qubit_num: int, **kwargs) -> Program:
         return qaoa(data_qubit_num, **kwargs)
     elif algorithm == "bv":
         return bv(data_qubit_num, **kwargs)
+    elif algorithm == "fully_connected":
+        return fully_connected_ansatz(data_qubit_num, **kwargs)
+    elif algorithm == "circular":
+        return circular_ansatz(data_qubit_num, **kwargs)
+    elif algorithm == "s_ghz":
+        return s_ghz(data_qubit_num)
+    elif algorithm == "s_hamiltonian_simulation":
+        return s_hamiltonian_simulation(data_qubit_num, **kwargs)
+    elif algorithm == "s_mermin_bell":
+        return s_mermin_bell(data_qubit_num)
+    elif algorithm == "bv_hard":
+        return bv_hard(data_qubit_num)
     else:
         raise ValueError(f"Unknown program name: {algorithm}")

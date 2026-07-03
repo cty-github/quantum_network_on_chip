@@ -412,6 +412,145 @@ class HighwayManager:
             auto_cancellation=auto_cancellation,
         )
 
+    def execute_on_highway_eqst(
+        self,
+        circuit: Circuit,
+        op,
+        shuttle_idx=None,
+        exec_idx=None,
+        auto_commuting=True,
+        auto_cancellation=False,
+    ):
+        # if shuttle_idx is None:
+        #     if exec_idx is None:
+        #         exec_idx = self.get_highway_aware_earliest_index_for_2qubit_component(
+        #             circuit,
+        #             op,
+        #             auto_commuting=auto_commuting,
+        #             auto_cancellation=auto_cancellation,
+        #         )
+        #     shuttle_idx = self.which_shuttle(exec_idx)
+        # if shuttle_idx < 0:
+        #     self.allocate_shuttle(circuit)
+        #     shuttle_idx = len(self.shuttle_stack) - 1
+        #     exec_idx = self.get_earliest_index_for_2qubit_component_on_shuttle(
+        #         shuttle_idx,
+        #         circuit,
+        #         op,
+        #         auto_commuting=auto_commuting,
+        #         auto_cancellation=auto_cancellation,
+        #     )
+
+        # highway_shuttle: HighwayOccupancy = self.shuttle_stack[shuttle_idx]
+
+        control_qubit, target_qubit = (
+            self.idx_qubit_dict[op.control],
+            self.idx_qubit_dict[op.target],
+        )
+        path = find_highway_eqst_path(self.chiplet_array, control_qubit, target_qubit)
+        
+        if exec_idx is None:
+            lines = [self.qubit_idx_dict[q] for q in path]
+            for idx in range(1, len(path)-1):
+                qubit1, qubit2 = path[idx-1], path[idx]
+                if abs(qubit1[0]-qubit2[0]) + abs(qubit1[1]-qubit2[1]) == 2:
+                    mid_qubit = nx.shortest_path(self.chiplet_array, control_qubit, target_qubit)[1]
+                    lines.append(self.qubit_idx_dict[mid_qubit])
+            exec_idx = circuit.get_earliest_index_for_lines(lines)
+        depth = exec_idx + 1
+        ops = []
+
+        eqst_path = [path[0]]
+        for idx in range(1, len(path)-1):
+            qubit1, qubit2 = path[idx-1], path[idx]
+            if abs(qubit1[0]-qubit2[0]) + abs(qubit1[1]-qubit2[1]) == 2:
+                mid_qubit = nx.shortest_path(self.chiplet_array, qubit1, qubit2)[1]
+                eqst_path.extend([mid_qubit, qubit2])
+            else:
+                if self.chiplet_array.edges[(qubit1, qubit2)]['type'] == 'cross_chip':
+                    if len(eqst_path) > 2:
+                        ops.append(OpNode(*[self.qubit_idx_dict[q] for q in eqst_path]))
+                    elif len(eqst_path) == 2:
+                        ops.append(OpNode(self.qubit_idx_dict[eqst_path[0]], self.qubit_idx_dict[eqst_path[1]]))
+                        ops.append(OpNode(self.qubit_idx_dict[eqst_path[1]], self.qubit_idx_dict[eqst_path[0]]))
+                        ops.append(OpNode(self.qubit_idx_dict[eqst_path[0]], self.qubit_idx_dict[eqst_path[1]]))
+                    if len(eqst_path) > 1:
+                        v1, v2 = self.qubit_idx_dict[eqst_path[0]], self.qubit_idx_dict[eqst_path[-1]]
+                        self.idx_qubit_dict[v1], self.idx_qubit_dict[v2] = eqst_path[-1], eqst_path[0]
+                        self.qubit_idx_dict[eqst_path[0]], self.qubit_idx_dict[eqst_path[-1]] = v2, v1
+                    line1, line2 = self.qubit_idx_dict[qubit1], self.qubit_idx_dict[qubit2]
+                    ops.append(OpNode(line1, line2))
+                    ops.append(OpNode(line2, line1))
+                    ops.append(OpNode(line1, line2))
+                    self.qubit_idx_dict[qubit1], self.qubit_idx_dict[qubit2] = line2, line1
+                    self.idx_qubit_dict[line1], self.idx_qubit_dict[line2] = qubit2, qubit1
+                    eqst_path = [qubit2]
+                else:
+                    eqst_path.append(qubit2)
+        if len(eqst_path) > 2:
+            ops.append(OpNode(*[self.qubit_idx_dict[q] for q in eqst_path]))
+        elif len(eqst_path) == 2:
+            ops.append(OpNode(self.qubit_idx_dict[eqst_path[0]], self.qubit_idx_dict[eqst_path[1]]))
+            ops.append(OpNode(self.qubit_idx_dict[eqst_path[1]], self.qubit_idx_dict[eqst_path[0]]))
+            ops.append(OpNode(self.qubit_idx_dict[eqst_path[0]], self.qubit_idx_dict[eqst_path[1]]))
+        if len(eqst_path) > 1:
+            v1, v2 = self.qubit_idx_dict[eqst_path[0]], self.qubit_idx_dict[eqst_path[-1]]
+            self.idx_qubit_dict[v1], self.idx_qubit_dict[v2] = eqst_path[-1], eqst_path[0]
+            self.qubit_idx_dict[eqst_path[0]], self.qubit_idx_dict[eqst_path[-1]] = v2, v1
+        
+        ops.append(OpNode(path[-2], path[-1]))
+
+        eqst_path = [path[-2]]
+        for idx in range(len(path)-2, 0, -1):
+            qubit1, qubit2 = path[idx], path[idx-1]
+            if abs(qubit1[0]-qubit2[0]) + abs(qubit1[1]-qubit2[1]) == 2:
+                mid_qubit = nx.shortest_path(self.chiplet_array, qubit1, qubit2)[1]
+                eqst_path.extend([mid_qubit, qubit2])
+            else:
+                if self.chiplet_array.edges[(qubit1, qubit2)]['type'] == 'cross_chip':
+                    if len(eqst_path) > 2:
+                        ops.append(OpNode(*[self.qubit_idx_dict[q] for q in eqst_path]))
+                    elif len(eqst_path) == 2:
+                        ops.append(OpNode(self.qubit_idx_dict[eqst_path[0]], self.qubit_idx_dict[eqst_path[1]]))
+                        ops.append(OpNode(self.qubit_idx_dict[eqst_path[1]], self.qubit_idx_dict[eqst_path[0]]))
+                        ops.append(OpNode(self.qubit_idx_dict[eqst_path[0]], self.qubit_idx_dict[eqst_path[1]]))
+                    if len(eqst_path) > 1:
+                        v1, v2 = self.qubit_idx_dict[eqst_path[0]], self.qubit_idx_dict[eqst_path[-1]]
+                        self.idx_qubit_dict[v1], self.idx_qubit_dict[v2] = eqst_path[-1], eqst_path[0]
+                        self.qubit_idx_dict[eqst_path[0]], self.qubit_idx_dict[eqst_path[-1]] = v2, v1
+                    line1, line2 = self.qubit_idx_dict[qubit1], self.qubit_idx_dict[qubit2]
+                    ops.append(OpNode(line1, line2))
+                    ops.append(OpNode(line2, line1))
+                    ops.append(OpNode(line1, line2))
+                    self.qubit_idx_dict[qubit1], self.qubit_idx_dict[qubit2] = line2, line1
+                    self.idx_qubit_dict[line1], self.idx_qubit_dict[line2] = qubit2, qubit1
+                    eqst_path = [qubit2]
+                else:
+                    eqst_path.append(qubit2)
+        if len(eqst_path) > 2:
+            ops.append(OpNode(*[self.qubit_idx_dict[q] for q in eqst_path]))
+        elif len(eqst_path) == 2:
+            ops.append(OpNode(self.qubit_idx_dict[eqst_path[0]], self.qubit_idx_dict[eqst_path[1]]))
+            ops.append(OpNode(self.qubit_idx_dict[eqst_path[1]], self.qubit_idx_dict[eqst_path[0]]))
+            ops.append(OpNode(self.qubit_idx_dict[eqst_path[0]], self.qubit_idx_dict[eqst_path[1]]))
+        if len(eqst_path) > 1:
+            v1, v2 = self.qubit_idx_dict[eqst_path[0]], self.qubit_idx_dict[eqst_path[-1]]
+            self.idx_qubit_dict[v1], self.idx_qubit_dict[v2] = eqst_path[-1], eqst_path[0]
+            self.qubit_idx_dict[eqst_path[0]], self.qubit_idx_dict[eqst_path[-1]] = v2, v1
+
+        for op in ops:
+            if op.qubit_num > 2:
+                circuit.add_eqst_op(op, depth)
+                depth += 1
+            else:
+                circuit.add_2qubit_op(
+                    op,
+                    depth,
+                    auto_commuting=auto_commuting,
+                    auto_cancellation=auto_cancellation,
+                )
+                depth += 1
+
     def get_highway_aware_earliest_index_for_1qubit_op(self, circuit, op):
         # highway aware: local gates should avoid occupying highway preparation periods
         line_depth = circuit.get_line_depth(op.q)

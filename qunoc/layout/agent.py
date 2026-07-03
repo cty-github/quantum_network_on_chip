@@ -1,3 +1,5 @@
+import os
+
 import torch
 import torch.nn as nn
 from stable_baselines3 import PPO
@@ -130,7 +132,10 @@ class LayoutAgent:
         """
         Load a pre-trained PPO model from a file.
         """
-        self.model.load(filepath if filepath is not None else os.path.join(self.result_dir, "layout_agent.pth"))
+        self.model = PPO.load(
+            filepath if filepath is not None else os.path.join(self.result_dir, "layout_agent.pth"),
+            env=self.env,
+        )
 
     def save_model(self, filepath: str = None):
         """

@@ -90,3 +90,46 @@ class Router:
                 for i in range(v_targets_dict[nearest_target]):
                     self.highway_manager.execute_on_highway(self.circuit, OpNode(line1, line2))
             remaining_v_targets.remove(nearest_target)
+
+    def execute_control_multi_target_block_eqst(self, control_block, cross_chip_gate_weight, cross_chip_overhead = 3):
+        v_control, v_targets_dict = control_block.control, control_block.target_counter
+        remaining_v_targets = set(v_targets_dict.keys())
+        if VERBOSE:
+            logging.info(f"Executing block: {control_block} with v_control {v_control} and v_targets {remaining_v_targets}")
+
+        # move control qubit to highway
+        p_control = self._v2p[v_control]
+        if get_distance_to_highway(self.chip, p_control) > 1:
+            entrances_with_paths = find_possible_entrances_with_paths(self.chip, p_control)
+            best_entrance, best_path = min(entrances_with_paths, key=lambda entrances_with_path: self.path_cost(entrances_with_path[1], cross_chip_gate_weight, cross_chip_overhead))
+            self.swap_along_path_unless_encoutering_control(best_path)
+            assert get_distance_to_highway(self.chip, self._v2p[v_control])
+        if VERBOSE:
+            logging.info(f"Moved control qubit {v_control} to highway at position {self._v2p[v_control]}")
+
+        # move target qubits to highway from near to far
+        blocked_by_p_control = False
+        while remaining_v_targets:
+            nearest_target = min(remaining_v_targets, key=lambda v_target: get_distance_to_highway(self.chip, self._v2p[v_target]))
+            p_control, p_nearest_target = self._v2p[v_control], self._v2p[nearest_target]
+            if not is_qubit_next_to_highway(self.chip, p_nearest_target): #TODO: exclude the highway entrance occupied by control
+                entrances_with_paths = find_possible_entrances_with_paths(self.chip, p_nearest_target) #!TODO: don't occupy the position of control qubit!
+                best_entrance, best_path = min(entrances_with_paths, key=lambda entrances_with_path: self.path_cost(entrances_with_path[1], cross_chip_gate_weight, cross_chip_overhead))
+                blocked_by_p_control = self.swap_along_path_unless_encoutering_control(best_path, p_control)
+                
+                assert self._v2p[v_control] == p_control
+                p_nearest_target = best_path[-1]
+                assert is_qubit_next_to_highway(self.chip, p_nearest_target) or are_regularly_connected(self.chip, p_control, p_nearest_target)
+            p_control, p_nearest_target = self._v2p[v_control], self._v2p[nearest_target]
+            line1, line2 = self.highway_manager.qubit_idx_dict[p_control], self.highway_manager.qubit_idx_dict[p_nearest_target]
+            if VERBOSE:
+                logging.info(f"Try to move target qubit {nearest_target} to highway at position {self._v2p[nearest_target]} with control {v_control} at position {self._v2p[v_control]}")
+            
+            if blocked_by_p_control:
+                for i in range(v_targets_dict[nearest_target]):
+                    self.highway_manager.execute_on_local(self.circuit, OpNode(line1, line2))
+            else:
+                for i in range(v_targets_dict[nearest_target]):
+                    self.highway_manager.execute_on_highway_eqst(self.circuit, OpNode(line1, line2))
+            remaining_v_targets.remove(nearest_target)
+

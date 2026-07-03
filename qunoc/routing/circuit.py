@@ -5,6 +5,7 @@ from copy import deepcopy
 from ..utils.config import config
 from ..element.benchmark import *
 from ..element.chiplet import OperationConfig
+from ..element.package import Package
 
 
 class CircuitAction:
@@ -29,8 +30,8 @@ class CircuitAction:
         """
         if config.debug_block:
             logging.info(f"Transformed {self}")
-    
-    def get_involved_nodes(self) -> set[tuple[int, int]]:
+
+    def get_involved_nodes(self, dummy: bool = False) -> set[tuple[int, int]]:
         """
         Get the physical qubits involved in the action.
 
@@ -110,7 +111,7 @@ class GhzPreparation(BoardingAction):
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Prepare {self.qubit_num}-GHZ state for logic qubits {self.data_qubits} on physical qubits {self.source_physical_qubits}."
     
-    def get_involved_nodes(self):
+    def get_involved_nodes(self, dummy: bool = False) -> set[tuple[int, int]]:
         return set(self.source_physical_qubits)
 
     def record_ancilla_qubit_nodes(self, ancilla_qubit: int, ancilla_nodes: list[tuple[int, int]]):
@@ -194,7 +195,7 @@ class Board(BoardingAction):
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Board logic qubit {self.logic_qubit} from physical qubit {self.platform} to physical qubit {self.station}."
     
-    def get_involved_nodes(self) -> set[tuple[int, int]]:
+    def get_involved_nodes(self, dummy: bool = False) -> set[tuple[int, int]]:
         return {self.station, self.platform}
 
 class Alight(BoardingAction):
@@ -225,7 +226,7 @@ class Alight(BoardingAction):
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Alight logic qubit {self.logic_qubit} from physical qubit {self.station} to physical qubit {self.platform}."
     
-    def get_involved_nodes(self) -> set[tuple[int, int]]:
+    def get_involved_nodes(self, dummy: bool = False) -> set[tuple[int, int]]:
         return {self.station, self.platform}
 
 class Interchange(BoardingAction):
@@ -253,7 +254,7 @@ class Interchange(BoardingAction):
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Interchange logic qubit {self.logic_qubit} between physical qubits {self.interchange}."
     
-    def get_involved_nodes(self) -> set[tuple[int, int]]:
+    def get_involved_nodes(self, dummy: bool = False) -> set[tuple[int, int]]:
         return {self.interchange[0], self.interchange[1]}
 
 # class BellPreparation(BoardingAction):
@@ -318,8 +319,14 @@ class Transport(RidingAction):
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Transport logic qubit {self.logic_qubit} from physical qubit {self.source_physical_qubit} to physical qubit {self.target_physical_qubit}."
 
-    def get_involved_nodes(self) -> set[tuple[int, int]]:
-        return {self.source_physical_qubit, self.target_physical_qubit}
+    def get_involved_nodes(self, dummy: bool = False) -> set[tuple[int, int]]:
+        if dummy:
+            if self.source_physical_qubit[0] == self.target_physical_qubit[0]:
+                return set([(self.source_physical_qubit[0], i) for i in range(min(self.source_physical_qubit[1], self.target_physical_qubit[1]), max(self.source_physical_qubit[1], self.target_physical_qubit[1]) + 1)])
+            elif self.source_physical_qubit[1] == self.target_physical_qubit[1]:
+                return set([(i, self.source_physical_qubit[1]) for i in range(min(self.source_physical_qubit[0], self.target_physical_qubit[0]), max(self.source_physical_qubit[0], self.target_physical_qubit[0]) + 1)])
+        else:
+            return {self.source_physical_qubit, self.target_physical_qubit}
 
     def get_distance(self) -> int:
         """
@@ -367,7 +374,7 @@ class Teleport(RidingAction):
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Teleport data qubit {self.data_qubit} with ancilla qubit {self.ancilla_qubit} on physical qubit {self.ancilla_node}."
     
-    def get_involved_nodes(self) -> set[tuple[int, int]]:
+    def get_involved_nodes(self, dummy: bool = False) -> set[tuple[int, int]]:
         return {self.ancilla_node, self.data_node}
 
 class Enter(RidingAction):
@@ -401,7 +408,7 @@ class Enter(RidingAction):
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Enter logic qubit {self.logic_qubit} to physical qubit {self.platform} from physical qubit {self.register}."
     
-    def get_involved_nodes(self) -> set[tuple[int, int]]:
+    def get_involved_nodes(self, dummy: bool = False) -> set[tuple[int, int]]:
         return {self.platform, self.register}
     
 class Exit(RidingAction):
@@ -435,7 +442,7 @@ class Exit(RidingAction):
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Exit logic qubit {self.logic_qubit} from physical qubit {self.platform} to physical qubit {self.register}."
 
-    def get_involved_nodes(self) -> set[tuple[int, int]]:
+    def get_involved_nodes(self, dummy: bool = False) -> set[tuple[int, int]]:
         return {self.platform, self.register}
 
 class SwapGate(RidingAction):
@@ -469,7 +476,7 @@ class SwapGate(RidingAction):
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: Route logic qubit {self.logic_qubit} with swap gate between physical qubits {self.qubit_u} and {self.qubit_v}."
 
-    def get_involved_nodes(self) -> set[tuple[int, int]]:
+    def get_involved_nodes(self, dummy: bool = False) -> set[tuple[int, int]]:
         return {self.qubit_u, self.qubit_v}
 
 class DirectGate(RidingAction):
@@ -503,7 +510,7 @@ class DirectGate(RidingAction):
     def __repr__(self):
         return f"{self.__class__.__name__} {self.id}: {self.logic_gate}."
 
-    def get_involved_nodes(self) -> set[tuple[int, int]]:
+    def get_involved_nodes(self, dummy: bool = False) -> set[tuple[int, int]]:
         return {self.phy_ctrl_qubit, self.phy_targ_qubit}
 
 # class TeleState(RidingAction):
@@ -1481,8 +1488,9 @@ class Circuit:
         if isinstance(action, GhzPreparation):
             return action.get_max_degree() * self.op_config.intra_time
         elif isinstance(action, (Board, Alight, Interchange)):
-            return self.op_config.inter_time * 2
+            return self.op_config.inter_time * 3
         elif isinstance(action, Transport):
+            return action.get_distance() * self.op_config.qst_time_constant
             return action.get_distance() ** 0.5 * self.op_config.qst_time_constant
         elif isinstance(action, Teleport):
             return self.op_config.inter_time if action.inter_flag else self.op_config.intra_time
@@ -1491,7 +1499,7 @@ class Circuit:
         elif isinstance(action, DirectGate):
             return self.op_config.inter_time if action.inter_flag else self.op_config.intra_time
 
-    def estimate_duration(self) -> float:
+    def estimate_duration(self, package: Package = None) -> float:
         """
         Estimate the duration of the circuit.
 
@@ -1515,12 +1523,222 @@ class Circuit:
                 stage_action_duration = 0
             else:
                 stage_action_duration = max(stage_action_depth.values())
-            if isinstance(stage, RidingAction):
+            if isinstance(stage, RidingStage):
+                transport_chiplet_dict = {}
                 for action in stage.circuit_actions:
                     if isinstance(action, Transport):
-                        stage_action_duration = max(stage_action_duration, self.get_action_duration(action))
+                        transport_chiplet = package.get_node_chiplet(action.source_physical_qubit)
+                        if transport_chiplet in transport_chiplet_dict:
+                            # transport_chiplet_dict[transport_chiplet] += self.get_action_duration(action)
+                            transport_chiplet_dict[transport_chiplet] = max(transport_chiplet_dict[transport_chiplet], self.get_action_duration(action))
+                        else:
+                            transport_chiplet_dict[transport_chiplet] = self.get_action_duration(action)
+                if len(list(transport_chiplet_dict.values())) != 0:
+                    # print(max(transport_chiplet_dict.values()))
+                    stage_action_duration = max(stage_action_duration, max(transport_chiplet_dict.values()))
             duration += stage_action_duration
         return duration
+
+    @classmethod
+    def from_pickle(cls, filepath: str):
+        """
+        Load a circuit from a pickle file.
+        """
+        with open(filepath, "rb") as f:
+            obj = pickle.load(f)
+        if not isinstance(obj, cls):
+            raise TypeError(f"Unpickled object is not a {cls.__name__}")
+        return obj
+
+    def to_pickle(self, filepath: str):
+        """
+        Save the circuit to a pickle file.
+        """
+        with open(filepath, "wb") as f:
+            pickle.dump(self, f)
+
+class DummyCircuit:
+    """
+    Represents a dummy circuit for testing purposes.
+    
+    Attributes:
+        logic_qubit_num (int): The number of logic qubits in the circuit.
+        init_l2p_map (dict): The initial mapping from logical qubits to physical qubits.
+        init_p2l_map (dict): The initial mapping from physical qubits to logical qubits.
+        op_config (OperationConfig): The configuration for operations, including time constants for different operations.
+        action_depend_graph (nx.DiGraph): The directed acyclic graph representing dependencies between actions.
+    """
+
+    def __init__(self, logic_qubit_num: int, package_shape: tuple[int, int], init_l2p_map: dict[int, tuple[int, int]], init_p2l_map: dict[tuple[int, int], int], op_config: OperationConfig):
+        """
+        Initialize the dummy circuit.
+
+        Args:
+            logic_qubit_num (int): The number of logic qubits in the circuit.
+            package_shape (tuple[int, int]): The shape of the package, representing the number of rows and columns of physical qubits.
+            init_l2p_map (dict[int, tuple[int, int]]): The initial mapping from logical qubits to physical qubits.
+            init_p2l_map (dict[tuple[int, int], int]): The initial mapping from physical qubits to logical qubits.
+            op_config (OperationConfig): The configuration for operations, including time constants for different operations.
+        """
+        self.logic_qubit_num = logic_qubit_num
+        self.package_shape = package_shape
+        self.init_l2p_map = init_l2p_map
+        self.init_p2l_map = init_p2l_map
+        self.op_config = op_config
+
+        self.curr_l2p_map = deepcopy(init_l2p_map)
+        self.curr_p2l_map = deepcopy(init_p2l_map)
+        self.action_depend_graph = nx.DiGraph()
+        self.action_depend_graph.add_node(-1, action=None)
+        self.recent_node_active_action = {(x, y): -1 for x in range(self.package_shape[0]) for y in range(self.package_shape[1])}
+        if config.debug_action:
+            logging.info("-" * 80)
+            logging.info(f"Initialized circuit with {self.logic_qubit_num} logic qubits.")
+            logging.info(f"Current qubit mapping: {self.curr_l2p_map}")
+    
+    def add_action(self, action: CircuitAction):
+        """
+        Add an action to the dummy circuit.
+
+        Args:
+            action (CircuitAction): The action to be added.
+        """
+        if isinstance(action, GhzPreparation):
+            for physical_qubit in action.source_physical_qubits:
+                assert self.curr_p2l_map[physical_qubit] == -1, f"In action {action.id}, physical qubit {physical_qubit} should be free for GHZ preparation."
+
+            for ancilla_qubit, physical_qubit in zip(action.ancilla_qubits, action.source_physical_qubits):
+                self.curr_l2p_map[ancilla_qubit] = physical_qubit
+                self.curr_p2l_map[physical_qubit] = ancilla_qubit
+        elif isinstance(action, Board):
+            assert self.curr_p2l_map[action.platform] == action.logic_qubit, f"In action {action.id}, logic qubit {action.logic_qubit} to board should be in platform {action.platform}."
+
+            alight_qubit = self.curr_p2l_map[action.station]
+            self.curr_l2p_map[action.logic_qubit] = action.station
+            self.curr_p2l_map[action.station] = action.logic_qubit
+            if alight_qubit != -1:
+                self.curr_l2p_map[alight_qubit] = action.platform
+            self.curr_p2l_map[action.platform] = alight_qubit
+        elif isinstance(action, Alight):
+            assert self.curr_p2l_map[action.station] == action.logic_qubit, f"In action {action.id}, logic qubit {action.logic_qubit} to alight should be in station {action.station}."
+
+            board_qubit = self.curr_p2l_map[action.platform]
+            self.curr_l2p_map[action.logic_qubit] = action.platform
+            self.curr_p2l_map[action.platform] = action.logic_qubit
+            if board_qubit != -1:
+                self.curr_l2p_map[board_qubit] = action.station
+            self.curr_p2l_map[action.station] = board_qubit
+        elif isinstance(action, Interchange):
+            assert self.curr_p2l_map[action.interchange[0]] == action.logic_qubit, f"In action {action.id}, data qubit {action.logic_qubit} to interchange should be in source interchange {action.interchange[0]}."
+
+            interchanged_qubit = self.curr_p2l_map[action.interchange[1]]
+            self.curr_l2p_map[action.logic_qubit] = action.interchange[1]
+            self.curr_p2l_map[action.interchange[1]] = action.logic_qubit
+            if interchanged_qubit != -1:
+                self.curr_l2p_map[interchanged_qubit] = action.interchange[0]
+            self.curr_p2l_map[action.interchange[0]] = interchanged_qubit
+        elif isinstance(action, Transport):
+            assert self.curr_p2l_map[action.source_physical_qubit] == action.logic_qubit, f"In action {action.id}, logic qubit {action.logic_qubit} to transport should be in source balise {action.source_physical_qubit}."
+
+            exchanged_qubit = self.curr_p2l_map[action.target_physical_qubit]
+            self.curr_l2p_map[action.logic_qubit] = action.target_physical_qubit
+            self.curr_p2l_map[action.target_physical_qubit] = action.logic_qubit
+            if exchanged_qubit != -1:
+                self.curr_l2p_map[exchanged_qubit] = action.source_physical_qubit
+            self.curr_p2l_map[action.source_physical_qubit] = exchanged_qubit
+        elif isinstance(action, Teleport):
+            assert self.curr_p2l_map[action.ancilla_node] == action.ancilla_qubit, f"In action {action.id}, ancilla qubit {action.ancilla_qubit} for teleportation should be in platform {action.ancilla_node}."
+            assert self.curr_p2l_map[action.data_node] == action.data_qubit, f"In action {action.id}, data qubit {action.data_qubit} to teleport should be in register {action.data_node}."
+
+            self.curr_l2p_map.pop(action.ancilla_qubit)
+            self.curr_p2l_map[action.ancilla_node] = -1
+        elif isinstance(action, Enter):
+            assert self.curr_p2l_map[action.register] == action.logic_qubit, f"In action {action.id}, logic qubit {action.logic_qubit} to enter should be in register {action.register}."
+
+            exit_qubit = self.curr_p2l_map[action.platform]
+            self.curr_l2p_map[action.logic_qubit] = action.platform
+            self.curr_p2l_map[action.platform] = action.logic_qubit
+            if exit_qubit != -1:
+                self.curr_l2p_map[exit_qubit] = action.register
+            self.curr_p2l_map[action.register] = exit_qubit
+        elif isinstance(action, Exit):
+            assert self.curr_p2l_map[action.platform] == action.logic_qubit, f"In action {action.id}, logic qubit {action.logic_qubit} to exit should be in platform {action.platform}."
+
+            enter_qubit = self.curr_p2l_map[action.register]
+            self.curr_l2p_map[action.logic_qubit] = action.register
+            self.curr_p2l_map[action.register] = action.logic_qubit
+            if enter_qubit != -1:
+                self.curr_l2p_map[enter_qubit] = action.platform
+            self.curr_p2l_map[action.platform] = enter_qubit
+        elif isinstance(action, SwapGate):
+            assert self.curr_p2l_map[action.qubit_u] == action.logic_qubit, \
+                f"In action {action.id}, logic qubit {action.logic_qubit} should can be routed by the swap gate between {action.qubit_u} and {action.qubit_v}."
+
+            logic_qubit_u = self.curr_p2l_map[action.qubit_u]
+            logic_qubit_v = self.curr_p2l_map[action.qubit_v]
+            if logic_qubit_u != -1:
+                self.curr_l2p_map[logic_qubit_u] = action.qubit_v
+            self.curr_p2l_map[action.qubit_u] = logic_qubit_v
+            if logic_qubit_v != -1:
+                self.curr_l2p_map[logic_qubit_v] = action.qubit_u
+            self.curr_p2l_map[action.qubit_v] = logic_qubit_u
+        elif isinstance(action, DirectGate):
+            assert self.curr_p2l_map[action.phy_ctrl_qubit] == action.logic_gate.control_qubit, \
+                f"In action {action.id}, control qubit {action.logic_gate.control_qubit} should be in physical qubit {action.phy_ctrl_qubit}."
+            assert self.curr_p2l_map[action.phy_targ_qubit] == action.logic_gate.target_qubit, \
+                f"In action {action.id}, target qubit {action.logic_gate.target_qubit} should be in physical qubit {action.phy_targ_qubit}."
+        else:
+            raise ValueError("Unknown action type.")
+
+        self.action_depend_graph.add_node(action.id, action=action)
+        for node in action.get_involved_nodes(dummy=True):
+            self.action_depend_graph.add_edge(self.recent_node_active_action[node], action.id)
+            self.recent_node_active_action[node] = action.id
+
+    def get_action_duration(self, action: CircuitAction) -> float:
+        """
+        Get the duration of the action in the circuit.
+
+        Args:
+            action (CircuitAction): The action to get the duration for.
+
+        Returns:
+            float: The duration of the action in nanoseconds.
+        """
+        if isinstance(action, GhzPreparation):
+            return action.get_max_degree() * self.op_config.intra_time
+        elif isinstance(action, (Board, Alight, Interchange)):
+            return self.op_config.inter_time * 3
+        elif isinstance(action, Transport):
+            return action.get_distance() * self.op_config.qst_time_constant
+            return action.get_distance() ** 0.5 * self.op_config.qst_time_constant
+        elif isinstance(action, Teleport):
+            return self.op_config.inter_time if action.inter_flag else self.op_config.intra_time
+        elif isinstance(action, (SwapGate, Enter, Exit)):
+            return (self.op_config.inter_time if action.inter_flag else self.op_config.intra_time) * 3
+        elif isinstance(action, DirectGate):
+            return self.op_config.inter_time if action.inter_flag else self.op_config.intra_time
+        elif action is None:
+            return 0
+
+    def estimate_duration(self) -> float:
+        """
+        Estimate the duration of the circuit.
+
+        Returns:
+            float: The estimated duration of the circuit in nanoseconds.
+        """
+        durations = {action_id: self.get_action_duration(self.action_depend_graph.nodes[action_id]["action"]) for action_id in self.action_depend_graph}
+        longest_time = {action_id: 0 for action_id in self.action_depend_graph}
+
+        for action_id in nx.topological_sort(self.action_depend_graph):
+            preds = list(self.action_depend_graph.predecessors(action_id))
+            if preds:
+                longest_time[action_id] = max(longest_time[p] for p in preds) + durations[action_id]
+            else:
+                longest_time[action_id] = durations[action_id]
+
+        return max(longest_time.values(), default=0)
 
     @classmethod
     def from_pickle(cls, filepath: str):

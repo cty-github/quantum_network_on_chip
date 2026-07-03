@@ -1,4 +1,7 @@
+import copy
+import logging
 from typing import Any
+
 import gymnasium as gym
 from gymnasium import spaces
 
@@ -30,12 +33,13 @@ class QuNoCEnv(gym.Env):
             3. orientation choosen to design the area
             4. interval choosen to design the area
     """
-    
-    def __init__(self, 
-        package_size: tuple[int, int] = (100, 100), 
-        fab_model: FabricateModel = FabricateModel(), 
+
+    def __init__(
+        self,
+        package_size: tuple[int, int] = (100, 100),
+        fab_model: FabricateModel = FabricateModel(),
         result_dir: str = None,
-        patience: int = 10, 
+        patience: int = 10,
     ):
         """
         Initialize the quantum network-on-chip (NoC) layout environment.
@@ -51,15 +55,15 @@ class QuNoCEnv(gym.Env):
         self.fab_model = fab_model
         self.result_dir = result_dir
         self.patience = patience
-        
+
         low_per_channel = np.array([0, 0, 0, 0, 0], dtype=np.int32)
         high_per_channel = np.array(
             [
-                len(NodeType) - 1, # type of the cell
-                self.package_size[0] - 1, # left boundary
-                self.package_size[1] - 1, # top boundary
-                self.package_size[0] - 1, # right boundary
-                self.package_size[1] - 1, # bottom boundary
+                len(NodeType) - 1,  # type of the cell
+                self.package_size[0] - 1,  # left boundary
+                self.package_size[1] - 1,  # top boundary
+                self.package_size[0] - 1,  # right boundary
+                self.package_size[1] - 1,  # bottom boundary
             ],
             dtype=np.int32,
         )
@@ -71,24 +75,39 @@ class QuNoCEnv(gym.Env):
         )
         self.action_space = spaces.MultiDiscrete(
             [
-                self.package_size[0], # x coordinate of the qubit choosen to design whose area
-                self.package_size[1], # y coordinate of the qubit choosen to design whose area
-                len(DesignTemplate), # template choosen to design the area
-                len(DesignOrientation), # orientation choosen to design the area
-                (max(self.package_size) // 2 - self.fab_model.max_square_size - 1) // self.fab_model.max_square_size + 1, # number of interval choosen to design the area
+                self.package_size[
+                    0
+                ],  # x coordinate of the qubit choosen to design whose area
+                self.package_size[
+                    1
+                ],  # y coordinate of the qubit choosen to design whose area
+                len(DesignTemplate),  # template choosen to design the area
+                len(DesignOrientation),  # orientation choosen to design the area
+                (max(self.package_size) // 2 - self.fab_model.max_square_size - 1)
+                // self.fab_model.max_square_size
+                + 1,  # number of interval choosen to design the area
             ]
         )
 
-    def reset(self, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[np.ndarray, dict[str, Any]]:
+    def reset(
+        self, seed: int | None = None, options: dict[str, Any] | None = None
+    ) -> tuple[np.ndarray, dict[str, Any]]:
         super().reset(seed=seed, options=options)
-        self.package = Package(self.package_size, self.fab_model, design_strategy="rl", result_dir=self.result_dir)
+        self.package = Package(
+            self.package_size,
+            self.fab_model,
+            design_strategy="rl",
+            result_dir=self.result_dir,
+        )
         self.last_score = self.estimate()
         self.no_improve_steps = 0
         self.best_score = self.last_score
-        self.best_package = self.package
+        self.best_package = copy.deepcopy(self.package)
         return self.get_current_state(), {}
 
-    def step(self, action: np.ndarray, record: bool = False) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
+    def step(
+        self, action: np.ndarray, record: bool = False
+    ) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
         action = self.deserialize_action(action)
         if action is None:
             reward = -1e8
@@ -99,7 +118,7 @@ class QuNoCEnv(gym.Env):
             self.last_score = score
             if score > self.best_score:
                 self.best_score = score
-                self.best_package = self.package
+                self.best_package = copy.deepcopy(self.package)
 
         if reward > 0:
             self.no_improve_steps = 0
@@ -114,7 +133,7 @@ class QuNoCEnv(gym.Env):
             {},
         )
 
-    def render(self, mode = "human", filepath: str = None):
+    def render(self, mode="human", filepath: str = None):
         try:
             fig, _ = self.package.draw_qubits()
             if mode == "human":
@@ -139,17 +158,22 @@ class QuNoCEnv(gym.Env):
 
         Args:
             action_vector (list): The action vector to deserialize.
-        
+
         Returns:
             dict | None: The deserialized action dictionary or None if the action is invalid.
         """
+        interval = int((action_vector[4] + 1) * self.fab_model.max_square_size)
         action_dict = {
-            "old_module": self.package.get_node_area((action_vector[0], action_vector[1])),
+            "old_module": self.package.get_node_area(
+                (action_vector[0], action_vector[1])
+            ),
             "template": DesignTemplate(action_vector[2]),
             "orient": DesignOrientation(action_vector[3]),
-            "interval": (action_vector[4] + 1) * self.fab_model.max_square_size,
+            "interval": (interval, interval),
         }
-        if isinstance(action_dict["old_module"], ComputeModule) and Package.is_valid_to_design(**action_dict):
+        if isinstance(
+            action_dict["old_module"], ComputeModule
+        ) and Package.is_valid_to_design(**action_dict):
             return action_dict
         else:
             return None

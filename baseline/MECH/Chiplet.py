@@ -451,12 +451,30 @@ def get_distance_to_highway(G, node):
 
 
 def find_possible_entrances_with_paths(G, node, range_beyond_closest=2):
-        max_steps=int(get_distance_to_highway(G, node)) + range_beyond_closest
-        entrance_with_paths = []
-        nearby_entrance_cadidates = set(potential_highway_nodes_within_radius(G, node, radius=max_steps))
-        for entrance in nearby_entrance_cadidates:
-            all_shortest_paths = nx.all_shortest_paths(G, node, entrance)
-            for path in all_shortest_paths:
-                if len(set(path).intersection(get_highway_qubits(G))) == 1:
-                    entrance_with_paths.append((entrance, tuple(path[:-1])))
-        return entrance_with_paths
+    # TODO: record the entrance qubit to calculate the EQST distance
+    max_steps=int(get_distance_to_highway(G, node)) + range_beyond_closest
+    entrance_with_paths = []
+    nearby_entrance_cadidates = set(potential_highway_nodes_within_radius(G, node, radius=max_steps))
+    for entrance in nearby_entrance_cadidates:
+        all_shortest_paths = nx.all_shortest_paths(G, node, entrance)
+        for path in all_shortest_paths:
+            if len(set(path).intersection(get_highway_qubits(G))) == 1:
+                entrance_with_paths.append((entrance, tuple(path[:-1])))
+    return entrance_with_paths
+    
+def find_highway_eqst_path(G, source, target):
+    highway_coupling_graph = get_highway_coupling_graph(G)
+    subgraph = highway_coupling_graph.graph.copy()
+    subgraph.add_nodes_from([source, target])
+
+    for nei in G.neighbors(source):
+        if nei in G.highway_qubits:
+            subgraph.add_edge(source, nei)
+    for nei in G.neighbors(target):
+        if nei in G.highway_qubits:
+            subgraph.add_edge(target, nei)
+    if subgraph.has_edge(source, target):
+        subgraph.remove_edge(source, target)
+    
+    path = nx.dijkstra_path(subgraph, source, target)
+    return path

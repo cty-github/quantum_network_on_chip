@@ -1,30 +1,62 @@
-import os
-import random
-import pickle
+import copy
 import logging
-from anytree import Node
+import math
+import os
+import pickle
+import random
+from enum import Enum, auto
 from itertools import product
-import matplotlib.pyplot as plt
+from numbers import Integral
 
-from .chiplet import *
-from ..utils.utils import color_pool, delete_files_with_prefix_and_suffix, make_save_gif_file, make_save_gif_figure
+import torch
+import matplotlib.pyplot as plt
+import networkx as nx
+import numpy as np
+from anytree import Node
+
+from ..utils.utils import (
+    color_pool,
+    delete_files_with_prefix_and_suffix,
+    make_save_gif_figure,
+    make_save_gif_file,
+)
+from .chiplet import (
+    Chiplet,
+    ComputeChiplet,
+    ComputeModule,
+    Coupler,
+    EdgeType,
+    FabricateModel,
+    FuncArea,
+    Gap,
+    NodeType,
+    OperationConfig,
+    Qubit,
+    QubitRole,
+    TransferChiplet,
+    TransferLine,
+    get_full_space_tuple,
+)
 
 
 class DesignTemplate(Enum):
     """
     Enumerate of predetermined templates used in layout design.
     """
-    Strip = 0
+
+    Stripe = 0
     Radial = auto()
     Grid = auto()
 
     def __repr__(self):
         return self.name
 
+
 class DesignOrientation(Enum):
     """
     Enumerate of orientations used in layout design.
     """
+
     X = 0
     Y = auto()
 
@@ -44,7 +76,7 @@ class Road:
     def __init__(self, source: tuple[int, int], target: tuple[int, int]):
         """
         Initialize a road.
-        
+
         Args:
             source (tuple[int, int]): The source node of the road.
             target (tuple[int, int]): The target node of the road.
@@ -54,7 +86,7 @@ class Road:
 
     def __repr__(self):
         return f"{self.__class__.__name__}_{self.source}_{self.target}"
-    
+
     def get_fidelity(self) -> float:
         """
         Calculate the fidelity of the road.
@@ -64,12 +96,15 @@ class Road:
         """
         raise NotImplementedError("This method should be implemented in subclasses.")
 
+
 class IntraComputeRoad(Road):
     """
     Represents the road between two adjacent nodes in the same compute module.
     """
 
-    def __init__(self, source: tuple[int, int], target: tuple[int, int], module: ComputeModule):
+    def __init__(
+        self, source: tuple[int, int], target: tuple[int, int], module: ComputeModule
+    ):
         """
         Initialize a road inside a compute module.
 
@@ -84,6 +119,7 @@ class IntraComputeRoad(Road):
     def get_fidelity(self) -> float:
         return self.module.get_fidelity(self.source, self.target)
 
+
 class IntraTransferRoad(Road):
     """
     Represents the road between two adjacent nodes in the same transfer chiplet.
@@ -92,7 +128,9 @@ class IntraTransferRoad(Road):
         chiplet (TransferChiplet): The transfer chiplet to which the two nodes belong.
     """
 
-    def __init__(self, source: tuple[int, int], target: tuple[int, int], chiplet: TransferChiplet):
+    def __init__(
+        self, source: tuple[int, int], target: tuple[int, int], chiplet: TransferChiplet
+    ):
         """
         Initialize a road inside a transfer chiplet.
 
@@ -105,7 +143,10 @@ class IntraTransferRoad(Road):
         self.chiplet = chiplet
 
     def get_fidelity(self) -> float:
-        return self.chiplet.intra_fide ** self.chiplet.get_distance(self.source, self.target)
+        return self.chiplet.intra_fide ** self.chiplet.get_distance(
+            self.source, self.target
+        )
+
 
 class InterChipletRoad(Road):
     """
@@ -116,7 +157,14 @@ class InterChipletRoad(Road):
         target_chiplet (Chiplet): The target chiplet of the road.
     """
 
-    def __init__(self, source: tuple[int, int], target: tuple[int, int], source_chiplet: Chiplet, target_chiplet: Chiplet, fide: float):
+    def __init__(
+        self,
+        source: tuple[int, int],
+        target: tuple[int, int],
+        source_chiplet: Chiplet,
+        target_chiplet: Chiplet,
+        fide: float,
+    ):
         """
         Initialize a road between two chiplets.
 
@@ -131,9 +179,10 @@ class InterChipletRoad(Road):
         self.source_chiplet = source_chiplet
         self.target_chiplet = target_chiplet
         self.fide = fide
-    
+
     def get_fidelity(self) -> float:
         return self.fide
+
 
 class Path:
     """
@@ -146,14 +195,16 @@ class Path:
     def __init__(self, roads: list[Road]):
         """
         Initialize a path.
-        
+
         Args:
             roads (list[Road]): The list of roads in the path.
         """
         for i in range(len(roads) - 1):
-            assert roads[i].target == roads[i + 1].source, f"Invalid path: {roads[i]} -> {roads[i + 1]}"
+            assert roads[i].target == roads[i + 1].source, (
+                f"Invalid path: {roads[i]} -> {roads[i + 1]}"
+            )
         self.roads = roads
-    
+
     def get_fidelity(self) -> float:
         """
         Calculate the fidelity of the path.
@@ -202,14 +253,16 @@ class Package:
         interchange_dict (dict[TransferChiplet, dict[TransferChiplet, Path]]): The dictionary recording the interchange path between transfer chiplets.
     """
 
-    def __init__(self, 
-        package_size: tuple[int, int] = (100, 100), 
-        fab_model: FabricateModel = FabricateModel(), 
-        op_cofig: OperationConfig = OperationConfig(),
-        design_scheme: str = "top_down", 
-        design_strategy: str = "heuristic", 
-        top_down_max_step: int = 10, 
-        bottom_up_init_type: np.ndarray = None, 
+    def __init__(
+        self,
+        package_size: tuple[int, int] = (100, 100),
+        fab_model: FabricateModel = FabricateModel(),
+        op_config: OperationConfig = OperationConfig(),
+        compute_ratio: float = 0.8,
+        design_scheme: str = "top_down",
+        design_strategy: str = "heuristic",
+        top_down_max_step: int = 10,
+        bottom_up_init_type: np.ndarray = None,
         result_dir: str = None,
     ):
         """
@@ -218,7 +271,8 @@ class Package:
         Args:
             package_size (tuple[int, int]): The size of the package.
             fab_model (FabricateModel): The fabrication model of the package.
-            op_cofig (OperationConfig): The operation configuration of the package.
+            op_config (OperationConfig): The operation configuration of the package.
+            compute_ratio (float): The ratio of compute nodes.
             design_scheme (str): The design scheme of the package, i.e. "top_down", "bottom_up".
             design_strategy (str): The design strategy of the package, i.e. "heuristic", "greedy", "rl", "manual".
             top_down_max_step (int): The max number of steps for top down design.
@@ -230,7 +284,7 @@ class Package:
         self.fab_model = fab_model
         FuncArea.fab_model = fab_model
         Gap.fab_model = fab_model
-        self.op_config = op_cofig
+        self.op_config = op_config
         self.design_scheme = design_scheme
         self.design_strategy = design_strategy
         self.top_down_max_step = top_down_max_step
@@ -238,10 +292,13 @@ class Package:
 
         self.design_history: list[plt.Figure] = []
 
+        # self.observation = torch.Tensor(shape=(5, *self.package_size), dtype=torch.int32) # (role, left_bound, right_bound, top_bound, bottom_bound)
         self.package_graph: nx.Graph = nx.grid_2d_graph(*self.package_size)
         for node in self.package_graph.nodes:
             self.package_graph.nodes[node]["type"] = NodeType.Empty
-            self.package_graph.nodes[node]["qubit"] = Qubit(node, NodeType.Empty, self.fab_model.single_fide)
+            self.package_graph.nodes[node]["qubit"] = Qubit(
+                node, NodeType.Empty, self.fab_model.single_fide
+            )
         for edge in self.package_graph.edges:
             self.package_graph.edges[edge]["type"] = EdgeType.Intra
         self.compute_nodes: set[tuple[int, int]] = set()
@@ -254,7 +311,9 @@ class Package:
             else:
                 assert bottom_up_init_type.shape == self.package_size
             for node in self.package_graph.nodes:
-                self.package_graph.nodes[node]["type"] = NodeType(bottom_up_init_type[node[0], node[1]])
+                self.package_graph.nodes[node]["type"] = NodeType(
+                    bottom_up_init_type[node[0], node[1]]
+                )
                 if bottom_up_init_type[node[0], node[1]]:
                     self.package_graph.nodes[node]["qubit"].type = self.package_graph.nodes[node]["type"]
                     if bottom_up_init_type[node[0], node[1]] == NodeType.Compute.value:
@@ -269,12 +328,37 @@ class Package:
                 self.complete_area(area)
             self.complete_package()
         elif self.design_scheme == "top_down":
-            self.transfer_lines: list[TransferLine] = []
-            self.transfer_lines.append(TransferLine(1, 0, (0, True), (package_size[1] - 2, False)))
-            self.transfer_lines.append(TransferLine(0, 0, (1, False), (package_size[0] - 1, True)))
-            self.transfer_lines.append(TransferLine(1, package_size[0] - 1, (1, False), (package_size[1] - 1, True)))
-            self.transfer_lines.append(TransferLine(0, package_size[1] - 1, (0, True), (package_size[0] - 2, False)))
-            self.compute_modules = [ComputeModule(self.transfer_lines[0], self.transfer_lines[1], self.transfer_lines[2], self.transfer_lines[3])]
+
+            if self.design_strategy == "manual":
+                # The manual design process is implemented outside by the user.
+                self.transfer_lines: list[TransferLine] = []
+                self.compute_modules = [ComputeModule(0, 0, package_size[0] - 1, package_size[1] - 1)]
+            else:
+                self.transfer_lines: list[TransferLine] = []
+                self.transfer_lines.append(
+                    TransferLine(1, 0, (0, True), (package_size[1] - 2, False))
+                )
+                self.transfer_lines.append(
+                    TransferLine(0, 0, (1, False), (package_size[0] - 1, True))
+                )
+                self.transfer_lines.append(
+                    TransferLine(
+                        1, package_size[0] - 1, (1, False), (package_size[1] - 1, True)
+                    )
+                )
+                self.transfer_lines.append(
+                    TransferLine(
+                        0, package_size[1] - 1, (0, True), (package_size[0] - 2, False)
+                    )
+                )
+                self.compute_modules = [
+                    ComputeModule(
+                        self.transfer_lines[0],
+                        self.transfer_lines[1],
+                        self.transfer_lines[2],
+                        self.transfer_lines[3],
+                    )
+                ]
             self.design_tree_root = Node(self.compute_modules[0])
             self.design_tree_dict = {str(self.compute_modules[0]): self.design_tree_root}
             for area in self.compute_modules + self.transfer_lines:
@@ -285,56 +369,23 @@ class Package:
                 self.design_history.append(fig)
             except Exception as e:
                 logging.warning(f"Failed to draw qubits: {e}")
-            if self.design_strategy == "heuristic":
-                old_compute_module = self.compute_modules[0]
-                radial_round = (
-                    min(self.package_size) - 1 * self.fab_model.max_square_size - 2
-                ) // (2 * self.fab_model.max_square_size + 2)
-                if radial_round == 0:
-                    if min(package_size) >= 2 * self.fab_model.max_square_size + 3:
-                        self.design_module_top_down(
-                            old_compute_module,
-                            DesignTemplate.Strip,
-                            DesignOrientation.X if package_size[0] > package_size[1] else DesignOrientation.Y,
-                            1 * self.fab_model.max_square_size,
-                        )
-                else:
-                    for _ in range(radial_round):
-                        self.design_module_top_down(
-                            old_compute_module,
-                            DesignTemplate.Radial,
-                            DesignOrientation.X,
-                            1 * self.fab_model.max_square_size,
-                        )
-                        old_compute_module = self.compute_modules[-1]
+            if self.design_strategy == "stripe":
+                self.stripe_design()
+            elif self.design_strategy == "grid":
+                self.grid_design()
+            elif self.design_strategy == "radial":
+                self.radial_design()
+            elif self.design_strategy == "template":
+                self.template_design()
+            elif self.design_strategy == "heuristic":
+                self.heuristic_design(compute_ratio=compute_ratio)
             elif self.design_strategy == "greedy":
-                best_score = self.estimate_score()
-                logging.info(f"Initial score: {best_score}")
-                while True:
-                    best_action: tuple = None
-                    candidate_modules: list[ComputeModule] = [area.name for area in list(self.design_tree_root.leaves) if isinstance(area.name, ComputeModule)]
-                    for action in product(
-                        candidate_modules, 
-                        list(DesignTemplate), 
-                        list(DesignOrientation), 
-                        range(self.fab_model.max_square_size, max(self.package_size)//2, self.fab_model.max_square_size)
-                    ):  
-                        score = self.try_design_module(*action)
-                        if score > best_score:
-                            best_action = action
-                            best_score = score
-                    if best_action is None:
-                        self.complete_package()
-                        break
-                    self.design_module_top_down(*best_action)
-                    logging.info(f"New action: {best_action}")
-                    logging.info(f"New score: {best_score}")
+                self.greedy_design(compute_ratio=compute_ratio)
             elif self.design_strategy == "rl":
                 # The rest rl design process is implemented outside in the LayoutAgent.
                 pass
-            elif self.design_strategy == "manual":
-                # The manual design process is implemented outside by the user.
-                pass
+            elif self.design_strategy == "brute":
+                self.brute_force_design(compute_ratio=compute_ratio)
         else:
             raise ValueError("Invalid design scheme: {}".format(design_scheme))
 
@@ -369,9 +420,13 @@ class Package:
         self.compute_nodes.clear()
         self.transfer_nodes.clear()
         for node in self.package_graph.nodes:
-            self.package_graph.nodes[node]["type"] = NodeType(new_type_matrix[node[0], node[1]])
+            self.package_graph.nodes[node]["type"] = NodeType(
+                new_type_matrix[node[0], node[1]]
+            )
             if new_type_matrix[node[0], node[1]]:
-                self.package_graph.nodes[node]["qubit"].type = self.package_graph.nodes[node]["type"]
+                self.package_graph.nodes[node]["qubit"].type = self.package_graph.nodes[
+                    node
+                ]["type"]
             if new_type_matrix[node[0], node[1]] == NodeType.Compute.value:
                 self.compute_nodes.add(node)
             elif new_type_matrix[node[0], node[1]] == NodeType.Transfer.value:
@@ -390,7 +445,9 @@ class Package:
         elif self.design_strategy == "greedy":
             raise NotImplementedError("Greedy strategy is not implemented yet.")
         elif self.design_strategy == "rl":
-            raise NotImplementedError("Reinforcement learning strategy is not implemented yet.")
+            raise NotImplementedError(
+                "Reinforcement learning strategy is not implemented yet."
+            )
         elif self.design_strategy == "manual":
             pass
         else:
@@ -437,23 +494,33 @@ class Package:
                     else:
                         break
                 if area_type == NodeType.Compute:
-                    compute_modules.append(ComputeModule(area_left, area_top, area_right, area_bottom))
+                    compute_modules.append(
+                        ComputeModule(area_left, area_top, area_right, area_bottom)
+                    )
                 elif area_type == NodeType.Transfer:
                     if area_bottom == area_top:
-                        transfer_lines.append(TransferLine(0, area_top, area_left, area_right))
+                        transfer_lines.append(
+                            TransferLine(0, area_top, area_left, area_right)
+                        )
                     elif area_right == area_left:
-                        transfer_lines.append(TransferLine(1, area_left, area_top, area_bottom))
+                        transfer_lines.append(
+                            TransferLine(1, area_left, area_top, area_bottom)
+                        )
                     else:
-                        raise ValueError("Invalid transfer line: left_{}, top_{}, right_{}, bottom_{}".format(area_left, area_top, area_right, area_bottom))
+                        raise ValueError(
+                            "Invalid transfer line: left_{}, top_{}, right_{}, bottom_{}".format(
+                                area_left, area_top, area_right, area_bottom
+                            )
+                        )
         return compute_modules, transfer_lines
 
     # Functions for top down design
     @staticmethod
     def is_valid_to_design(
-        old_module: ComputeModule, 
-        template: DesignTemplate, 
-        orient: DesignOrientation, 
-        interval: int, 
+        old_module: ComputeModule,
+        template: DesignTemplate,
+        orient: DesignOrientation,
+        interval: tuple[int, int],
     ) -> bool:
         """
         Check if the module is valid to design with the given template and arguments.
@@ -462,7 +529,7 @@ class Package:
             module (ComputeModule): The module to be designed.
             template (DesignTemplate): The template to be used.
             orient (DesignOrientation): The orientation of the template.
-            interval (int): The interval between the compute modules.
+            interval (tuple[int, int]): The x/y intervals between compute modules.
 
         Returns:
             bool: Whether the module is valid to design.
@@ -473,24 +540,36 @@ class Package:
             raise ValueError("Invalid template type: {}".format(template))
         if not isinstance(orient, DesignOrientation):
             raise ValueError("Invalid orientation type: {}".format(orient))
-        if interval < 1:
-            return False
-        if template == DesignTemplate.Strip:
+        if not isinstance(interval, tuple) or len(interval) != 2:
+            raise ValueError("Invalid interval type: {}".format(interval))
+
+        x_interval, y_interval = interval
+        stripe_interval = y_interval if orient == DesignOrientation.X else x_interval
+        module_x_size = old_module.right[0] - old_module.left[0] + 1
+        module_y_size = old_module.bottom[0] - old_module.top[0] + 1
+
+        if template == DesignTemplate.Stripe:
             if orient == DesignOrientation.X:
-                if old_module.bottom[0] - old_module.top[0] + 1 < 2 * interval + 1:
+                if module_y_size < 2 * stripe_interval + 1:
                     return False
             elif orient == DesignOrientation.Y:
-                if old_module.right[0] - old_module.left[0] + 1 < 2 * interval + 1:
+                if module_x_size < 2 * stripe_interval + 1:
                     return False
         elif template == DesignTemplate.Radial:
-            if old_module.bottom[0] - old_module.top[0] + 1 < 3 * interval + 2:
+            if module_x_size < 3 or module_y_size < 3:
                 return False
-            if old_module.right[0] - old_module.left[0] + 1 < 3 * interval + 2:
+            if module_y_size < 2 * y_interval + 3:
+                return False
+            if module_x_size < 2 * x_interval + 3:
+                return False
+            if module_x_size - 2 * x_interval - 1 < 1:
+                return False
+            if module_y_size - 2 * y_interval - 1 < 1:
                 return False
         elif template == DesignTemplate.Grid:
-            if old_module.bottom[0] - old_module.top[0] + 1 < 2 * interval + 1:
+            if module_y_size < 2 * y_interval + 1:
                 return False
-            if old_module.right[0] - old_module.left[0] + 1 < 2 * interval + 1:
+            if module_x_size < 2 * x_interval + 1:
                 return False
         return True
 
@@ -505,13 +584,20 @@ class Package:
         """
         if isinstance(func_area, ComputeModule):
             for chiplet in func_area.get_chiplets():
-                for x, y in product(range(chiplet.left, chiplet.right + 1), range(chiplet.top, chiplet.bottom + 1)):
+                for x, y in product(
+                    range(chiplet.left, chiplet.right + 1),
+                    range(chiplet.top, chiplet.bottom + 1),
+                ):
                     node = (x, y)
                     if node in chiplet.get_nodes():
                         self.package_graph.nodes[node]["type"] = NodeType.Compute
                         self.package_graph.nodes[node]["qubit"].type = NodeType.Compute
                         self.package_graph.nodes[node]["qubit"].role = QubitRole.Register
-                        if (node[0] == func_area.left[0] or node[0] == func_area.right[0]) and (node[1] == func_area.top[0] or node[1] == func_area.bottom[0]):
+                        if (
+                            node[0] == func_area.left[0] or node[0] == func_area.right[0]
+                        ) and (
+                            node[1] == func_area.top[0] or node[1] == func_area.bottom[0]
+                        ):
                             self.package_graph.nodes[node]["qubit"].role = QubitRole.Empty
                         self.package_graph.nodes[node]["qubit"].chiplet = chiplet
                         self.package_graph.nodes[node]["qubit"].area = func_area
@@ -526,17 +612,25 @@ class Package:
                         self.compute_nodes.discard(node)
                         self.transfer_nodes.discard(node)
                     if x < chiplet.right:
-                        self.package_graph.edges[(node, (x + 1, y))]["type"] = EdgeType.Empty
+                        self.package_graph.edges[(node, (x + 1, y))]["type"] = (
+                            EdgeType.Empty
+                        )
                     if y < chiplet.bottom:
-                        self.package_graph.edges[(node, (x, y + 1))]["type"] = EdgeType.Empty
+                        self.package_graph.edges[(node, (x, y + 1))]["type"] = (
+                            EdgeType.Empty
+                        )
             for gap in func_area.get_compute_transfer_gaps() + func_area.get_intra_gaps():
                 for i in range(gap.start, gap.end + 1):
                     node_u = get_full_space_tuple(gap.pos[0], gap.axis, i)
                     node_v = get_full_space_tuple(gap.pos[1], gap.axis, i)
                     if i in gap.get_couplers():
-                        self.package_graph.edges[(node_u, node_v)]["type"] = EdgeType.Inter
+                        self.package_graph.edges[(node_u, node_v)]["type"] = (
+                            EdgeType.Inter
+                        )
                     else:
-                        self.package_graph.edges[(node_u, node_v)]["type"] = EdgeType.Empty
+                        self.package_graph.edges[(node_u, node_v)]["type"] = (
+                            EdgeType.Empty
+                        )
             for edge in func_area.get_intra_edges():
                 self.package_graph.edges[edge]["type"] = EdgeType.Intra
         elif isinstance(func_area, TransferLine):
@@ -550,29 +644,48 @@ class Package:
                     self.transfer_nodes.add(node)
                     self.compute_nodes.discard(node)
             for interchange in func_area.get_interchanges():
-                self.package_graph.edges[(interchange.qubit_u, interchange.qubit_v)]["type"] = EdgeType.Inter
+                self.package_graph.edges[(interchange.qubit_u, interchange.qubit_v)][
+                    "type"
+                ] = EdgeType.Inter
             for edge in func_area.get_intra_edges():
                 self.package_graph.edges[edge]["type"] = EdgeType.Intra
 
-    def design_module_top_down(self, 
-        old_module: ComputeModule, 
-        template: DesignTemplate, 
-        orient: DesignOrientation, 
-        interval: int, 
+    def _validate_module_dimensions(
+        self, left: int, top: int, right: int, bottom: int
+    ) -> bool:
+        """
+        Validate that a module has valid dimensions (width and height >= 1).
+
+        Args:
+            left, top, right, bottom: Module boundaries
+
+        Returns:
+            bool: True if dimensions are valid
+        """
+        return (right >= left) and (bottom >= top)
+
+    def design_module_top_down(
+        self,
+        old_module: ComputeModule,
+        template: DesignTemplate,
+        orient: DesignOrientation,
+        interval: tuple[int, int],
         record: bool = True,
     ):
         """
         Design the module with the given template and arguments.
-        
+
         Args:
             module (ComputeModule): The module to be designed.
             template (DesignTemplate): The template to be used.
             orient (DesignOrientation): The orientation of the template.
-            interval (int): The interval between the compute modules.
+            interval (tuple[int, int]): The x/y intervals between compute modules.
         """
         assert Package.is_valid_to_design(old_module, template, orient, interval), (
             f"Invalid design: module_{old_module}, template_{template}, orient_{orient}, interval_{interval}"
         )
+        x_interval, y_interval = interval
+        stripe_interval = y_interval if orient == DesignOrientation.X else x_interval
         old_left_coord, old_left_line, _ = old_module.left
         old_left_arg = old_left_line if old_left_line else old_left_coord
         old_top_coord, old_top_line, _ = old_module.top
@@ -583,226 +696,373 @@ class Package:
         old_bottom_arg = old_bottom_line if old_bottom_line else old_bottom_coord
         new_compute_modules: list[ComputeModule] = []
         new_transfer_lines: list[TransferLine] = []
-        if template == DesignTemplate.Strip:
+        if template == DesignTemplate.Stripe:
             if orient == DesignOrientation.X:
-                n_blocks = (old_bottom_coord - old_top_coord + 2) // (interval + 1)
+                n_blocks = (old_bottom_coord - old_top_coord + 2) // (stripe_interval + 1)
                 for i in range(n_blocks - 1):
-                    new_transfer_lines.append(TransferLine(
-                        0, 
-                        old_top_coord + (i + 1) * (interval + 1) - 1, 
-                        (old_left_coord, old_left_coord == 0), 
-                        (old_right_coord, old_right_coord == self.package_size[0] - 1), 
-                    ))
+                    new_transfer_lines.append(
+                        TransferLine(
+                            0,
+                            old_top_coord + (i + 1) * (stripe_interval + 1) - 1,
+                            (old_left_coord, old_left_coord == 0),
+                            (
+                                old_right_coord,
+                                old_right_coord == self.package_size[0] - 1,
+                            ),
+                        )
+                    )
                 for i in range(n_blocks):
                     new_top_arg = old_top_arg if i == 0 else new_transfer_lines[i - 1]
-                    new_bottom_arg = old_bottom_arg if i == n_blocks - 1 else new_transfer_lines[i]
-                    new_compute_modules.append(ComputeModule(
-                        old_left_arg, 
-                        new_top_arg,
-                        old_right_arg, 
-                        new_bottom_arg,
-                    ))
+                    new_bottom_arg = (
+                        old_bottom_arg if i == n_blocks - 1 else new_transfer_lines[i]
+                    )
+                    new_compute_modules.append(
+                        ComputeModule(
+                            old_left_arg,
+                            new_top_arg,
+                            old_right_arg,
+                            new_bottom_arg,
+                        )
+                    )
             elif orient == DesignOrientation.Y:
-                n_blocks = (old_right_coord - old_left_coord + 2) // (interval + 1)
+                n_blocks = (old_right_coord - old_left_coord + 2) // (stripe_interval + 1)
                 for i in range(n_blocks - 1):
-                    new_transfer_lines.append(TransferLine(
-                        1, 
-                        old_left_coord + (i + 1) * (interval + 1) - 1, 
-                        (old_top_coord, old_top_coord == 0), 
-                        (old_bottom_coord, old_bottom_coord == self.package_size[1] - 1), 
-                    ))
+                    new_transfer_lines.append(
+                        TransferLine(
+                            1,
+                            old_left_coord + (i + 1) * (stripe_interval + 1) - 1,
+                            (old_top_coord, old_top_coord == 0),
+                            (
+                                old_bottom_coord,
+                                old_bottom_coord == self.package_size[1] - 1,
+                            ),
+                        )
+                    )
                 for i in range(n_blocks):
                     new_left_arg = old_left_arg if i == 0 else new_transfer_lines[i - 1]
-                    new_right_arg = old_right_arg if i == n_blocks - 1 else new_transfer_lines[i]
-                    new_compute_modules.append(ComputeModule(
-                        new_left_arg,
-                        old_top_arg, 
-                        new_right_arg,
-                        old_bottom_arg, 
-                    ))
+                    new_right_arg = (
+                        old_right_arg if i == n_blocks - 1 else new_transfer_lines[i]
+                    )
+                    new_compute_modules.append(
+                        ComputeModule(
+                            new_left_arg,
+                            old_top_arg,
+                            new_right_arg,
+                            old_bottom_arg,
+                        )
+                    )
         elif template == DesignTemplate.Radial:
             if orient == DesignOrientation.X:
-                new_transfer_lines.append(TransferLine(
-                    0, 
-                    old_top_coord + interval, 
-                    (old_left_coord, old_left_coord == 0), 
-                    (old_right_coord - interval - 1, False), 
-                ))
-                new_transfer_lines.append(TransferLine(
-                    1,
-                    old_right_coord - interval,
-                    (old_top_coord, old_top_coord == 0),
-                    (old_bottom_coord - interval - 1, False),
-                ))
-                new_transfer_lines.append(TransferLine(
-                    0,
-                    old_bottom_coord - interval,
-                    (old_left_coord + interval + 1, False),
-                    (old_right_coord, old_right_coord == self.package_size[0] - 1),
-                ))
-                new_transfer_lines.append(TransferLine(
-                    1,
-                    old_left_coord + interval,
-                    (old_top_coord + interval + 1, False),
-                    (old_bottom_coord, old_bottom_coord == self.package_size[1] - 1),
-                ))
-                new_compute_modules.append(ComputeModule(
-                    old_left_arg, 
-                    old_top_arg,
-                    new_transfer_lines[1],
-                    new_transfer_lines[0],
-                ))
-                new_compute_modules.append(ComputeModule(
-                    new_transfer_lines[1],
-                    old_top_arg,
-                    old_right_arg,
-                    new_transfer_lines[2], 
-                ))
-                new_compute_modules.append(ComputeModule(
-                    new_transfer_lines[3],
-                    new_transfer_lines[2],
-                    old_right_arg,
-                    old_bottom_arg,
-                ))
-                new_compute_modules.append(ComputeModule(
-                    old_left_arg,
-                    new_transfer_lines[0],
-                    new_transfer_lines[3],
-                    old_bottom_arg,
-                ))
-                new_compute_modules.append(ComputeModule(
-                    new_transfer_lines[3],
-                    new_transfer_lines[0],
-                    new_transfer_lines[1],
-                    new_transfer_lines[2],
-                ))
+                new_transfer_lines.append(
+                    TransferLine(
+                        0,
+                        old_top_coord + y_interval,
+                        (old_left_coord, old_left_coord == 0),
+                        (old_right_coord - x_interval - 1, False),
+                    )
+                )
+                new_transfer_lines.append(
+                    TransferLine(
+                        1,
+                        old_right_coord - x_interval,
+                        (old_top_coord, old_top_coord == 0),
+                        (old_bottom_coord - y_interval - 1, False),
+                    )
+                )
+                new_transfer_lines.append(
+                    TransferLine(
+                        0,
+                        old_bottom_coord - y_interval,
+                        (old_left_coord + x_interval + 1, False),
+                        (old_right_coord, old_right_coord == self.package_size[0] - 1),
+                    )
+                )
+                new_transfer_lines.append(
+                    TransferLine(
+                        1,
+                        old_left_coord + x_interval,
+                        (old_top_coord + y_interval + 1, False),
+                        (old_bottom_coord, old_bottom_coord == self.package_size[1] - 1),
+                    )
+                )
+                new_compute_modules.append(
+                    ComputeModule(
+                        old_left_arg,
+                        old_top_arg,
+                        new_transfer_lines[1],
+                        new_transfer_lines[0],
+                    )
+                )
+                new_compute_modules.append(
+                    ComputeModule(
+                        new_transfer_lines[1],
+                        old_top_arg,
+                        old_right_arg,
+                        new_transfer_lines[2],
+                    )
+                )
+                new_compute_modules.append(
+                    ComputeModule(
+                        new_transfer_lines[3],
+                        new_transfer_lines[2],
+                        old_right_arg,
+                        old_bottom_arg,
+                    )
+                )
+                new_compute_modules.append(
+                    ComputeModule(
+                        old_left_arg,
+                        new_transfer_lines[0],
+                        new_transfer_lines[3],
+                        old_bottom_arg,
+                    )
+                )
+                new_compute_modules.append(
+                    ComputeModule(
+                        new_transfer_lines[3],
+                        new_transfer_lines[0],
+                        new_transfer_lines[1],
+                        new_transfer_lines[2],
+                    )
+                )
             elif orient == DesignOrientation.Y:
-                new_transfer_lines.append(TransferLine(
-                    1,
-                    old_left_coord + interval,
-                    (old_top_coord, old_top_coord == 0),
-                    (old_bottom_coord - interval - 1, False),
-                ))
-                new_transfer_lines.append(TransferLine(
-                    0,
-                    old_bottom_coord - interval,
-                    (old_left_coord, old_left_coord == 0),
-                    (old_right_coord - interval - 1, False),
-                ))
-                new_transfer_lines.append(TransferLine(
-                    1,
-                    old_right_coord - interval,
-                    (old_top_coord + interval + 1, False),
-                    (old_bottom_coord, old_bottom_coord == self.package_size[1] - 1),
-                ))
-                new_transfer_lines.append(TransferLine(
-                    0,
-                    old_top_coord + interval,
-                    (old_left_coord + interval + 1, False),
-                    (old_right_coord, old_right_coord == self.package_size[0] - 1),
-                ))
-                new_compute_modules.append(ComputeModule(
-                    old_left_arg, 
-                    old_top_arg,
-                    new_transfer_lines[0],
-                    new_transfer_lines[1],
-                ))
-                new_compute_modules.append(ComputeModule(
-                    old_left_arg,
-                    new_transfer_lines[1],
-                    new_transfer_lines[2],
-                    old_bottom_arg,
-                ))
-                new_compute_modules.append(ComputeModule(
-                    new_transfer_lines[2],
-                    new_transfer_lines[3],
-                    old_right_arg,
-                    old_bottom_arg,
-                ))
-                new_compute_modules.append(ComputeModule(
-                    new_transfer_lines[0],
-                    old_top_arg,
-                    old_right_arg,
-                    new_transfer_lines[3],
-                ))
-                new_compute_modules.append(ComputeModule(
-                    new_transfer_lines[0],
-                    new_transfer_lines[3],
-                    new_transfer_lines[2],
-                    new_transfer_lines[1],
-                ))
+                new_transfer_lines.append(
+                    TransferLine(
+                        1,
+                        old_left_coord + x_interval,
+                        (old_top_coord, old_top_coord == 0),
+                        (old_bottom_coord - y_interval - 1, False),
+                    )
+                )
+                new_transfer_lines.append(
+                    TransferLine(
+                        0,
+                        old_bottom_coord - y_interval,
+                        (old_left_coord, old_left_coord == 0),
+                        (old_right_coord - x_interval - 1, False),
+                    )
+                )
+                new_transfer_lines.append(
+                    TransferLine(
+                        1,
+                        old_right_coord - x_interval,
+                        (old_top_coord + y_interval + 1, False),
+                        (old_bottom_coord, old_bottom_coord == self.package_size[1] - 1),
+                    )
+                )
+                new_transfer_lines.append(
+                    TransferLine(
+                        0,
+                        old_top_coord + y_interval,
+                        (old_left_coord + x_interval + 1, False),
+                        (old_right_coord, old_right_coord == self.package_size[0] - 1),
+                    )
+                )
+                new_compute_modules.append(
+                    ComputeModule(
+                        old_left_arg,
+                        old_top_arg,
+                        new_transfer_lines[0],
+                        new_transfer_lines[1],
+                    )
+                )
+                new_compute_modules.append(
+                    ComputeModule(
+                        old_left_arg,
+                        new_transfer_lines[1],
+                        new_transfer_lines[2],
+                        old_bottom_arg,
+                    )
+                )
+                new_compute_modules.append(
+                    ComputeModule(
+                        new_transfer_lines[2],
+                        new_transfer_lines[3],
+                        old_right_arg,
+                        old_bottom_arg,
+                    )
+                )
+                new_compute_modules.append(
+                    ComputeModule(
+                        new_transfer_lines[0],
+                        old_top_arg,
+                        old_right_arg,
+                        new_transfer_lines[3],
+                    )
+                )
+                new_compute_modules.append(
+                    ComputeModule(
+                        new_transfer_lines[0],
+                        new_transfer_lines[3],
+                        new_transfer_lines[2],
+                        new_transfer_lines[1],
+                    )
+                )
         elif template == DesignTemplate.Grid:
             if orient == DesignOrientation.X:
-                n_blocks = (old_bottom_coord - old_top_coord + 2) // (interval + 1)
-                n_units = (old_right_coord - old_left_coord + 2) // (interval + 1)
+                n_blocks = (old_bottom_coord - old_top_coord + 2) // (y_interval + 1)
+                n_units = (old_right_coord - old_left_coord + 2) // (x_interval + 1)
                 for i in range(n_blocks):
                     for j in range(n_units - 1):
-                        new_pos = old_left_coord + (j + 1) * (interval + 1) - 1
-                        new_start_coord = old_top_coord + i * (interval + 1)
-                        new_end_coord = old_bottom_coord if i == n_blocks - 1 else old_top_coord + i * (interval + 1) + interval - 1
-                        new_transfer_lines.append(TransferLine(
-                            1, 
-                            new_pos, 
-                            (new_start_coord, new_start_coord == 0), 
-                            (new_end_coord, new_end_coord == self.package_size[1] - 1),
-                        ))
+                        new_pos = old_left_coord + (j + 1) * (x_interval + 1) - 1
+                        new_start_coord = old_top_coord + i * (y_interval + 1)
+                        new_end_coord = (
+                            old_bottom_coord
+                            if i == n_blocks - 1
+                            else old_top_coord + i * (y_interval + 1) + y_interval - 1
+                        )
+                        new_transfer_lines.append(
+                            TransferLine(
+                                1,
+                                new_pos,
+                                (new_start_coord, new_start_coord == 0),
+                                (
+                                    new_end_coord,
+                                    new_end_coord == self.package_size[1] - 1,
+                                ),
+                            )
+                        )
                     if i < n_blocks - 1:
-                        new_transfer_lines.append(TransferLine(
-                            0, 
-                            old_top_coord + (i + 1) * (interval + 1) - 1, 
-                            (old_left_coord, old_left_coord == 0), 
-                            (old_right_coord, old_right_coord == self.package_size[0] - 1),
-                        ))
+                        new_transfer_lines.append(
+                            TransferLine(
+                                0,
+                                old_top_coord + (i + 1) * (y_interval + 1) - 1,
+                                (old_left_coord, old_left_coord == 0),
+                                (
+                                    old_right_coord,
+                                    old_right_coord == self.package_size[0] - 1,
+                                ),
+                            )
+                        )
                 for i in range(n_blocks):
                     for j in range(n_units):
-                        new_top_arg = old_top_arg if i == 0 else new_transfer_lines[i * n_units - 1]
-                        new_bottom_arg = old_bottom_arg if i == n_blocks - 1 else new_transfer_lines[(i + 1) * n_units - 1]
-                        new_left_arg = old_left_arg if j == 0 else new_transfer_lines[i * n_units + j - 1]
-                        new_right_arg = old_right_arg if j == n_units - 1 else new_transfer_lines[i * n_units + j]
-                        new_compute_modules.append(ComputeModule(
-                            new_left_arg,
-                            new_top_arg,
-                            new_right_arg,
-                            new_bottom_arg,
-                        ))
+                        new_top_arg = (
+                            old_top_arg if i == 0 else new_transfer_lines[i * n_units - 1]
+                        )
+                        new_bottom_arg = (
+                            old_bottom_arg
+                            if i == n_blocks - 1
+                            else new_transfer_lines[(i + 1) * n_units - 1]
+                        )
+                        new_left_arg = (
+                            old_left_arg
+                            if j == 0
+                            else new_transfer_lines[i * n_units + j - 1]
+                        )
+                        new_right_arg = (
+                            old_right_arg
+                            if j == n_units - 1
+                            else new_transfer_lines[i * n_units + j]
+                        )
+                        new_compute_modules.append(
+                            ComputeModule(
+                                new_left_arg,
+                                new_top_arg,
+                                new_right_arg,
+                                new_bottom_arg,
+                            )
+                        )
             elif orient == DesignOrientation.Y:
-                n_blocks = (old_right_coord - old_left_coord + 2) // (interval + 1)
-                n_units = (old_bottom_coord - old_top_coord + 2) // (interval + 1)
+                n_blocks = (old_right_coord - old_left_coord + 2) // (x_interval + 1)
+                n_units = (old_bottom_coord - old_top_coord + 2) // (y_interval + 1)
                 for i in range(n_blocks):
                     for j in range(n_units - 1):
-                        new_pos = old_top_coord + (j + 1) * (interval + 1) - 1
-                        new_start_coord = old_left_coord + i * (interval + 1)
-                        new_end_coord = old_right_coord if i == n_blocks - 1 else old_left_coord + i * (interval + 1) + interval - 1
-                        new_transfer_lines.append(TransferLine(
-                            0, 
-                            new_pos, 
-                            (new_start_coord, new_start_coord == 0), 
-                            (new_end_coord, new_end_coord == self.package_size[0] - 1),
-                        ))
+                        new_pos = old_top_coord + (j + 1) * (y_interval + 1) - 1
+                        new_start_coord = old_left_coord + i * (x_interval + 1)
+                        new_end_coord = (
+                            old_right_coord
+                            if i == n_blocks - 1
+                            else old_left_coord + i * (x_interval + 1) + x_interval - 1
+                        )
+                        new_transfer_lines.append(
+                            TransferLine(
+                                0,
+                                new_pos,
+                                (new_start_coord, new_start_coord == 0),
+                                (
+                                    new_end_coord,
+                                    new_end_coord == self.package_size[0] - 1,
+                                ),
+                            )
+                        )
                     if i < n_blocks - 1:
-                        new_transfer_lines.append(TransferLine(
-                            1, 
-                            old_left_coord + (i + 1) * (interval + 1) - 1, 
-                            (old_top_coord, old_top_coord == 0), 
-                            (old_bottom_coord, old_bottom_coord == self.package_size[1] - 1),
-                        ))
+                        new_transfer_lines.append(
+                            TransferLine(
+                                1,
+                                old_left_coord + (i + 1) * (x_interval + 1) - 1,
+                                (old_top_coord, old_top_coord == 0),
+                                (
+                                    old_bottom_coord,
+                                    old_bottom_coord == self.package_size[1] - 1,
+                                ),
+                            )
+                        )
                 for i in range(n_blocks):
                     for j in range(n_units):
-                        new_left_arg = old_left_arg if i == 0 else new_transfer_lines[i * n_units - 1]
-                        new_right_arg = old_right_arg if i == n_blocks - 1 else new_transfer_lines[(i + 1) * n_units - 1]
-                        new_top_arg = old_top_arg if j == 0 else new_transfer_lines[i * n_units + j - 1]
-                        new_bottom_arg = old_bottom_arg if j == n_units - 1 else new_transfer_lines[i * n_units + j]
-                        new_compute_modules.append(ComputeModule(
-                            new_left_arg,
-                            new_top_arg,
-                            new_right_arg,
-                            new_bottom_arg,
-                        ))
+                        new_left_arg = (
+                            old_left_arg
+                            if i == 0
+                            else new_transfer_lines[i * n_units - 1]
+                        )
+                        new_right_arg = (
+                            old_right_arg
+                            if i == n_blocks - 1
+                            else new_transfer_lines[(i + 1) * n_units - 1]
+                        )
+                        new_top_arg = (
+                            old_top_arg
+                            if j == 0
+                            else new_transfer_lines[i * n_units + j - 1]
+                        )
+                        new_bottom_arg = (
+                            old_bottom_arg
+                            if j == n_units - 1
+                            else new_transfer_lines[i * n_units + j]
+                        )
+                        new_compute_modules.append(
+                            ComputeModule(
+                                new_left_arg,
+                                new_top_arg,
+                                new_right_arg,
+                                new_bottom_arg,
+                            )
+                        )
         self.compute_modules.remove(old_module)
         self.compute_modules.extend(new_compute_modules)
         self.transfer_lines.extend(new_transfer_lines)
+
+        # Validate all new compute modules have valid dimensions before completing areas
+        for module in new_compute_modules:
+            left_coord = (
+                module.left[0] if isinstance(module.left[0], int) else module.left[0][0]
+            )
+            top_coord = (
+                module.top[0] if isinstance(module.top[0], int) else module.top[0][0]
+            )
+            right_coord = (
+                module.right[0]
+                if isinstance(module.right[0], int)
+                else module.right[0][0]
+            )
+            bottom_coord = (
+                module.bottom[0]
+                if isinstance(module.bottom[0], int)
+                else module.bottom[0][0]
+            )
+
+            if not self._validate_module_dimensions(
+                left_coord, top_coord, right_coord, bottom_coord
+            ):
+                raise ValueError(
+                    f"Invalid module dimensions created: left={left_coord}, top={top_coord}, "
+                    f"right={right_coord}, bottom={bottom_coord}. "
+                    f"This indicates an issue with template {template} and interval {interval}."
+                )
+
         for func_area in new_compute_modules + new_transfer_lines:
-            self.design_tree_dict[str(func_area)] = Node(func_area, parent=self.design_tree_dict[str(old_module)])
+            self.design_tree_dict[str(func_area)] = Node(
+                func_area, parent=self.design_tree_dict[str(old_module)]
+            )
             self.complete_area(func_area)
         self.complete_package()
         if record:
@@ -812,11 +1072,12 @@ class Package:
             except Exception as e:
                 logging.warning(f"Failed to draw qubits: {e}")
 
-    def try_design_module(self, 
-        old_module: ComputeModule, 
-        template: DesignTemplate, 
-        orient: DesignOrientation, 
-        interval: int, 
+    def try_design_module(
+        self,
+        old_module: ComputeModule,
+        template: DesignTemplate,
+        orient: DesignOrientation,
+        interval: tuple[int, int],
     ) -> float:
         """
         Try to design the module with the given template and arguments. This function does not actually change the package and only returns the score.
@@ -825,7 +1086,7 @@ class Package:
             module (ComputeModule): The module to be designed.
             template (DesignTemplate): The template to be used.
             orient (DesignOrientation): The orientation of the template.
-            interval (int): The interval between the compute modules.
+            interval (tuple[int, int]): The x/y intervals between compute modules.
 
         Returns:
             score (float): The score of the design.
@@ -846,6 +1107,393 @@ class Package:
         self.compute_modules.append(old_module)
         self.complete_area(old_module)
         return score
+
+    def stripe_design(self):
+        """
+        Perform stripe design of the package.
+        """
+        old_compute_module = self.compute_modules[0]
+        self.design_module_top_down(
+            old_compute_module,
+            DesignTemplate.Stripe,
+            DesignOrientation.X
+            if self.package_size[0] > self.package_size[1]
+            else DesignOrientation.Y,
+            (4 * self.fab_model.max_square_size, 4 * self.fab_model.max_square_size),
+            # min((old_compute_module.right[0] - old_compute_module.left[0]) // 3, (old_compute_module.bottom[0] - old_compute_module.top[0]) // 3),
+        )
+
+    def grid_design(self):
+        """
+        Perform grid design of the package.
+        """
+        old_compute_module = self.compute_modules[0]
+        self.design_module_top_down(
+            old_compute_module,
+            DesignTemplate.Grid,
+            DesignOrientation.X
+            if self.package_size[0] > self.package_size[1]
+            else DesignOrientation.Y,
+            (2 * self.fab_model.max_square_size - 2, 2 * self.fab_model.max_square_size - 2),
+            # min((old_compute_module.right[0] - old_compute_module.left[0]) // 3, (old_compute_module.bottom[0] - old_compute_module.top[0]) // 3),
+        )
+
+    def radial_design(self):
+        """
+        Perform radial design of the package.
+        """
+        old_compute_module = self.compute_modules[0]
+        # radial_round = (min(self.package_size) - 2 * self.fab_model.max_square_size - 2) // (4 * self.fab_model.max_square_size + 2)
+        # for _ in range(radial_round):
+        #     self.design_module_top_down(
+        #         old_compute_module,
+        #         DesignTemplate.Radial,
+        #         DesignOrientation.X,
+        #         (2 * self.fab_model.max_square_size, 2 * self.fab_model.max_square_size),
+        #     )
+        #     old_compute_module = self.compute_modules[-1]
+        self.design_module_top_down(
+            old_compute_module,
+            DesignTemplate.Radial,
+            DesignOrientation.X,
+            (
+                (old_compute_module.right[0] - old_compute_module.left[0]) // 3,
+                (old_compute_module.bottom[0] - old_compute_module.top[0]) // 3,
+            ),
+        )
+
+    def template_design(self):
+        """
+        Perform template design of the package. This function tries all templates and orientations and chooses the best one to design iteratively until the compute ratio is less than the given threshold.
+
+        Args:
+            compute_ratio (float): The threshold of compute ratio to stop the design.
+        """
+        old_compute_module = self.compute_modules[0]
+        best_score = -math.inf
+        best_template = None
+        best_orient = None
+        best_interval = None
+        for template in DesignTemplate:
+            for orient in DesignOrientation:
+                if template == DesignTemplate.Radial:
+                    interval = (
+                        (old_compute_module.right[0] - old_compute_module.left[0]) // 3,
+                        (old_compute_module.bottom[0] - old_compute_module.top[0]) // 3,
+                    )
+                else:
+                    interval_value = 2 * self.fab_model.max_square_size - 2
+                    interval = (interval_value, interval_value)
+                score = self.try_design_module(old_compute_module, template, orient, interval)
+                if score > best_score:
+                    best_score = score
+                    best_template = template
+                    best_orient = orient
+                    best_interval = interval
+        if best_template is not None and best_orient is not None and best_interval is not None:
+            self.design_module_top_down(
+                old_compute_module, best_template, best_orient, best_interval
+            )
+
+    def heuristic_design(self, compute_ratio: float = 0.8):
+        """
+        Perform heuristic design of the package.
+        """
+        old_compute_module_idx = 0
+        while old_compute_module_idx < len(self.compute_modules):
+            if len(self.compute_nodes) / (len(self.compute_nodes) + len(self.transfer_nodes)) <= compute_ratio:
+                break
+            old_compute_module = self.compute_modules[old_compute_module_idx]
+            x_size = old_compute_module.right[0] - old_compute_module.left[0] + 1
+            y_size = old_compute_module.bottom[0] - old_compute_module.top[0] + 1
+            main_dir = DesignOrientation.X if x_size >= y_size else DesignOrientation.Y
+            if min(x_size, y_size) >= 6 * self.fab_model.max_square_size + 5:
+                self.design_module_top_down(
+                    old_compute_module,
+                    DesignTemplate.Radial,
+                    main_dir,
+                    (x_size // 3, y_size // 3),
+                )
+            elif max(x_size, y_size) >= 6 * self.fab_model.max_square_size + 5:
+                if main_dir == DesignOrientation.X:
+                    interval = (2 * self.fab_model.max_square_size, min((y_size-1) // 2, 2 * self.fab_model.max_square_size))
+                else:
+                    interval = (min((x_size-1) // 2, 2 * self.fab_model.max_square_size), 2 * self.fab_model.max_square_size)
+                self.design_module_top_down(
+                    old_compute_module,
+                    DesignTemplate.Grid,
+                    main_dir,
+                    interval,
+                )
+            else:
+                self.design_module_top_down(
+                    old_compute_module,
+                    DesignTemplate.Stripe,
+                    main_dir,
+                    (2 * self.fab_model.max_square_size, 2 * self.fab_model.max_square_size),
+                )
+            old_compute_module_idx += 1
+
+        # if min(self.package_size) <= 100:
+        #     old_compute_module = self.compute_modules[0]
+        #     radial_round = (
+        #         min(self.package_size) - 2 * self.fab_model.max_square_size
+        #     ) // (4 * self.fab_model.max_square_size)
+        #     if radial_round == 0:
+        #         if min(self.package_size) >= 4 * self.fab_model.max_square_size:
+        #             self.design_module_top_down(
+        #                 old_compute_module,
+        #                 DesignTemplate.Grid,
+        #                 DesignOrientation.X
+        #                 if self.package_size[0] > self.package_size[1]
+        #                 else DesignOrientation.Y,
+        #                 2 * self.fab_model.max_square_size - 1,
+        #             )
+        #     else:
+        #         for _ in range(radial_round):
+        #             if len(self.compute_nodes) / (len(self.compute_nodes) + len(self.transfer_nodes)) <= compute_ratio:
+        #                 self.complete_package()
+        #                 break
+        #             self.design_module_top_down(
+        #                 old_compute_module,
+        #                 DesignTemplate.Radial,
+        #                 DesignOrientation.X,
+        #                 2 * self.fab_model.max_square_size - 1,
+        #             )
+        #             old_compute_center_module = self.compute_modules[-1]
+        #             old_compute_round_module = self.compute_modules[-5:-1]
+        #             for old_compute_module in old_compute_round_module:
+        #                 if self.is_valid_to_design(
+        #                     old_compute_module,
+        #                     DesignTemplate.Stripe,
+        #                     DesignOrientation.Y
+        #                     if (old_compute_module.right[0] - old_compute_module.left[0])
+        #                     > (old_compute_module.bottom[0] - old_compute_module.top[0])
+        #                     else DesignOrientation.X,
+        #                     2 * self.fab_model.max_square_size - 1,
+        #                 ):
+        #                     self.design_module_top_down(
+        #                         old_compute_module,
+        #                         DesignTemplate.Stripe,
+        #                         DesignOrientation.Y
+        #                         if (
+        #                             old_compute_module.right[0]
+        #                             - old_compute_module.left[0]
+        #                         )
+        #                         > (
+        #                             old_compute_module.bottom[0]
+        #                             - old_compute_module.top[0]
+        #                         )
+        #                         else DesignOrientation.X,
+        #                         2 * self.fab_model.max_square_size - 1,
+        #                     )
+        #             old_compute_module = old_compute_center_module
+        # else:
+        #     i = 0
+        #     while i < len(self.compute_modules):
+        #         old_compute_module = self.compute_modules[i]
+        #         left_coord = old_compute_module.left[0]
+        #         top_coord = old_compute_module.top[0]
+        #         right_coord = old_compute_module.right[0]
+        #         bottom_coord = old_compute_module.bottom[0]
+        #         module_x_size = right_coord - left_coord + 1
+        #         module_y_size = bottom_coord - top_coord + 1
+        #         if (
+        #             max(module_x_size, module_y_size)
+        #             < 3 * self.fab_model.max_square_size + 2
+        #         ):
+        #             i += 1
+        #             continue
+        #         if (
+        #             min(module_x_size, module_y_size)
+        #             >= 3 * self.fab_model.max_square_size + 2
+        #         ):
+        #             self.design_module_top_down(
+        #                 old_compute_module,
+        #                 DesignTemplate.Radial,
+        #                 DesignOrientation.X,
+        #                 (min(module_x_size, module_y_size) - 2)
+        #                 // 3
+        #                 // self.fab_model.max_square_size
+        #                 * self.fab_model.max_square_size,
+        #             )
+        #         elif (
+        #             min(module_x_size, module_y_size)
+        #             >= 2 * self.fab_model.max_square_size + 1
+        #         ):
+        #             self.design_module_top_down(
+        #                 old_compute_module,
+        #                 DesignTemplate.Stripe,
+        #                 DesignOrientation.X
+        #                 if module_x_size > module_y_size
+        #                 else DesignOrientation.Y,
+        #                 self.fab_model.max_square_size - 1,
+        #             )
+        #         else:
+        #             i += 1
+        #             continue
+        # else:
+        #     old_compute_module = self.compute_modules[0]
+        #     self.design_module_top_down(
+        #         old_compute_module,
+        #         DesignTemplate.Grid,
+        #         DesignOrientation.X,
+        #         self.fab_model.max_square_size,
+        #     )
+        # i = 0
+        # while i < len(self.compute_modules):
+        #     old_compute_module = self.compute_modules[i]
+        #     left_coord = old_compute_module.left[0]
+        #     top_coord = old_compute_module.top[0]
+        #     right_coord = old_compute_module.right[0]
+        #     bottom_coord = old_compute_module.bottom[0]
+        #     module_x_size = right_coord - left_coord + 1
+        #     module_y_size = bottom_coord - top_coord + 1
+        #     if min(module_x_size, module_y_size) >= 3 * self.fab_model.max_square_size + 2:
+        #         self.design_module_top_down(
+        #             old_compute_module,
+        #             DesignTemplate.Radial,
+        #             DesignOrientation.X,
+        #             self.fab_model.max_square_size,
+        #         )
+        #     else:
+        #         i += 1
+        #         continue
+
+    def greedy_design(self, compute_ratio: float = 0.8):
+        """
+        Perform greedy design of the package.
+        """
+        best_score = self.estimate_score()
+        logging.info(f"Initial score: {best_score}")
+        while True:
+            if len(self.compute_nodes) / (len(self.compute_nodes) + len(self.transfer_nodes)) < compute_ratio:
+                self.complete_package()
+                break
+            best_action: tuple = None
+            candidate_modules: list[ComputeModule] = [
+                area.name
+                for area in list(self.design_tree_root.leaves)
+                if isinstance(area.name, ComputeModule)
+            ]
+            for action in product(
+                candidate_modules,
+                list(DesignTemplate),
+                list(DesignOrientation),
+                [
+                    (interval, interval)
+                    for interval in range(
+                        self.fab_model.max_square_size,
+                        max(self.package_size) // 2,
+                        self.fab_model.max_square_size,
+                    )
+                ],
+            ):
+                score = self.try_design_module(*action)
+                if score > best_score:
+                    best_action = action
+                    best_score = score
+            if best_action is None:
+                self.complete_package()
+                break
+            self.design_module_top_down(*best_action)
+            logging.info(f"New action: {best_action}")
+            logging.info(f"New score: {best_score}")
+
+    def brute_force_design(self, compute_ratio: float = 0.8):
+        best_score = self.estimate_score()
+        best_sequence = []
+
+        def search_all_sequences(current_package, current_depth, sequence):
+            nonlocal best_score, best_sequence
+
+            if current_depth >= 2:
+                return
+            
+            if len(current_package.compute_nodes) / (len(current_package.compute_nodes) + len(current_package.transfer_nodes)) <= compute_ratio:
+                return
+
+            candidate_modules = [
+                module
+                for module in current_package.compute_modules
+                if isinstance(module, ComputeModule)
+            ]
+
+            if not candidate_modules:
+                return
+
+            for action in product(
+                candidate_modules,
+                list(DesignTemplate),
+                list(DesignOrientation),
+                [
+                    (interval, interval)
+                    for interval in range(
+                        current_package.fab_model.max_square_size,
+                        max(current_package.package_size) // 2,
+                        current_package.fab_model.max_square_size,
+                    )
+                ],
+            ):
+                module, template, orient, interval = action
+
+                if not Package.is_valid_to_design(module, template, orient, interval):
+                    continue
+
+                test_package: Package = copy.deepcopy(current_package)
+
+                # Find the corresponding module in the copied package
+                module_index = current_package.compute_modules.index(module)
+                test_module = test_package.compute_modules[module_index]
+
+                try:
+                    test_package.design_module_top_down(
+                        test_module, template, orient, interval, record=False
+                    )
+                    score = test_package.estimate_score()
+                except Exception:
+                    continue
+
+                if score > best_score:
+                    best_score = score
+                    # Store the module index instead of the module object
+                    best_sequence = sequence + [
+                        (module_index, template, orient, interval)
+                    ]
+
+                search_all_sequences(
+                    test_package,
+                    current_depth + 1,
+                    sequence + [(module_index, template, orient, interval)],
+                )
+
+        search_all_sequences(self, 0, [])
+
+        if best_sequence:
+            print("Best sequence found:", best_sequence)
+            print("Current compute_modules before execution:", self.compute_modules)
+            for i, action in enumerate(best_sequence):
+                module_index, template, orient, interval = action
+                print(f"\nAction {i}: {action}")
+                print(f"Looking for module at index: {module_index}")
+
+                if module_index < len(self.compute_modules):
+                    original_module = self.compute_modules[module_index]
+                    print(
+                        f"  Using original module at index {module_index}: {original_module}"
+                    )
+                    print(
+                        f"  Executing: design_module_top_down({original_module}, {template}, {orient}, {interval})"
+                    )
+                    self.design_module_top_down(
+                        original_module, template, orient, interval
+                    )
+                else:
+                    print("ERROR: Module index out of range!")
+                    print(f"Available modules: {len(self.compute_modules)}")
+            print("\nFinal compute_modules after execution:", self.compute_modules)
+
+        self.complete_package()
 
     def update_chiplets_and_gaps(self):
         """
@@ -884,15 +1532,23 @@ class Package:
         for interchange in self.interchanges:
             transfer_chiplet_u = self.get_node_chiplet(interchange.qubit_u)
             transfer_chiplet_v = self.get_node_chiplet(interchange.qubit_v)
-            self.metro_topology.add_edge(transfer_chiplet_u, transfer_chiplet_v, coupler=interchange)
-        all_pairs_shortest_path_dict = dict(nx.all_pairs_shortest_path(self.metro_topology))
-        self.interchange_path_dict: dict[TransferChiplet, dict[TransferChiplet, Path]] = {}
+            self.metro_topology.add_edge(
+                transfer_chiplet_u, transfer_chiplet_v, coupler=interchange
+            )
+        all_pairs_shortest_path_dict = dict(
+            nx.all_pairs_shortest_path(self.metro_topology)
+        )
+        self.interchange_path_dict: dict[
+            TransferChiplet, dict[TransferChiplet, Path]
+        ] = {}
         for transfer_chiplet_u, all_targets_dict in all_pairs_shortest_path_dict.items():
             self.interchange_path_dict[transfer_chiplet_u] = {}
             for transfer_chiplet_v, shortest_path in all_targets_dict.items():
                 nodes: list[tuple[int, int]] = []
                 for i in range(len(shortest_path) - 1):
-                    interchange: Coupler = self.metro_topology.edges[(shortest_path[i], shortest_path[i + 1])]["coupler"]
+                    interchange: Coupler = self.metro_topology.edges[
+                        (shortest_path[i], shortest_path[i + 1])
+                    ]["coupler"]
                     if shortest_path[i].has_node(interchange.qubit_u):
                         nodes.extend([interchange.qubit_u, interchange.qubit_v])
                     elif shortest_path[i].has_node(interchange.qubit_v):
@@ -900,11 +1556,21 @@ class Package:
                 roads: list[Road] = []
                 for i in range(len(nodes) - 1):
                     if i % 2 == 0:
-                        road = InterChipletRoad(nodes[i], nodes[i + 1], shortest_path[i // 2], shortest_path[i // 2 + 1], self.fab_model.inter_fide)
+                        road = InterChipletRoad(
+                            nodes[i],
+                            nodes[i + 1],
+                            shortest_path[i // 2],
+                            shortest_path[i // 2 + 1],
+                            self.fab_model.inter_fide,
+                        )
                     else:
-                        road = IntraTransferRoad(nodes[i], nodes[i + 1], shortest_path[i // 2 + 1])
+                        road = IntraTransferRoad(
+                            nodes[i], nodes[i + 1], shortest_path[i // 2 + 1]
+                        )
                     roads.append(road)
-                self.interchange_path_dict[transfer_chiplet_u][transfer_chiplet_v] = Path(roads)
+                self.interchange_path_dict[transfer_chiplet_u][transfer_chiplet_v] = Path(
+                    roads
+                )
 
     def complete_package(self):
         """
@@ -925,9 +1591,12 @@ class Package:
         Returns:
             tuple[tuple[int, int], tuple[int, int]]: The transfer pair.
         """
-        return random.sample(self.compute_nodes, 2)
+        compute_nodes_list = list(self.compute_nodes)
+        return random.sample(compute_nodes_list, 2)
 
-    def random_transfer_pairs(self, num: int) -> list[tuple[tuple[int, int], tuple[int, int]]]:
+    def random_transfer_pairs(
+        self, num: int
+    ) -> list[tuple[tuple[int, int], tuple[int, int]]]:
         """
         Randomly select a list of transfer pairs from the compute nodes.
 
@@ -939,7 +1608,9 @@ class Package:
         """
         return [self.random_transfer_pair() for _ in range(num)]
 
-    def has_no_transfer_path(self, source: tuple[int, int], target: tuple[int, int]) -> bool:
+    def has_no_transfer_path(
+        self, source: tuple[int, int], target: tuple[int, int]
+    ) -> bool:
         """
         Check if there is a path between two physical qubits without transfer chiplet.
 
@@ -954,7 +1625,9 @@ class Package:
         target_area = self.get_node_area(target)
         return isinstance(source_area, ComputeModule) and source_area == target_area
 
-    def get_shortest_no_transfer_path(self, source: tuple[int, int], target: tuple[int, int]) -> tuple[Path, float] | None:
+    def get_shortest_no_transfer_path(
+        self, source: tuple[int, int], target: tuple[int, int]
+    ) -> tuple[Path, float] | None:
         """
         Get the shortest path between two physical qubits without transfer chiplet.
 
@@ -966,13 +1639,17 @@ class Package:
             path (Path): The path with highest fidelity.
             fidelity (float): The fidelity of the path.
         """
-        assert self.has_no_transfer_path(source, target), "No path without transfer chiplet between {} and {}".format(source, target)
+        assert self.has_no_transfer_path(source, target), (
+            "No path without transfer chiplet between {} and {}".format(source, target)
+        )
         source_area = self.get_node_area(source)
         path = Path([IntraComputeRoad(source, target, source_area)])
         fidelity = path.get_fidelity()
         return path, fidelity
-    
-    def get_shortest_transfer_path(self, source: tuple[int, int], target: tuple[int, int]) -> tuple[Path, float]:
+
+    def get_shortest_transfer_path(
+        self, source: tuple[int, int], target: tuple[int, int]
+    ) -> tuple[Path, float]:
         """
         Get the shortest path between two physical qubits with transfer chiplet.
 
@@ -994,7 +1671,9 @@ class Package:
             source_station = self.platform_stations_dict[source_platform][0]
             source_transfer_node = source_station
             source_transfer_chiplet = self.get_node_chiplet(source_station)
-            assert isinstance(source_transfer_chiplet, TransferChiplet), "{} not on a transfer chiplet".format(source_station)
+            assert isinstance(source_transfer_chiplet, TransferChiplet), (
+                "{} not on a transfer chiplet".format(source_station)
+            )
         else:
             source_transfer_node = source
             source_transfer_chiplet = self.get_node_chiplet(source)
@@ -1004,7 +1683,9 @@ class Package:
             target_station = self.platform_stations_dict[target_platform][0]
             target_transfer_node = target_station
             target_transfer_chiplet = self.get_node_chiplet(target_station)
-            assert isinstance(target_transfer_chiplet, TransferChiplet), "{} not on a transfer chiplet".format(target_station)
+            assert isinstance(target_transfer_chiplet, TransferChiplet), (
+                "{} not on a transfer chiplet".format(target_station)
+            )
         else:
             target_transfer_node = target
             target_transfer_chiplet = self.get_node_chiplet(target)
@@ -1012,24 +1693,64 @@ class Package:
         roads: list[Road] = []
         if isinstance(source_area, ComputeModule):
             roads.append(IntraComputeRoad(source, source_platform, source_area))
-            roads.append(InterChipletRoad(source_platform, source_station, self.get_node_chiplet(source_platform), source_transfer_chiplet, self.fab_model.inter_fide))
-        assert target_transfer_chiplet in self.interchange_path_dict[source_transfer_chiplet], "Unlinked transfer chiplet: {} -> {}".format(source_transfer_chiplet, target_transfer_chiplet)
-        interchange_path = self.interchange_path_dict[source_transfer_chiplet][target_transfer_chiplet]
+            roads.append(
+                InterChipletRoad(
+                    source_platform,
+                    source_station,
+                    self.get_node_chiplet(source_platform),
+                    source_transfer_chiplet,
+                    self.fab_model.inter_fide,
+                )
+            )
+        assert (
+            target_transfer_chiplet in self.interchange_path_dict[source_transfer_chiplet]
+        ), "Unlinked transfer chiplet: {} -> {}".format(
+            source_transfer_chiplet, target_transfer_chiplet
+        )
+        interchange_path = self.interchange_path_dict[source_transfer_chiplet][
+            target_transfer_chiplet
+        ]
         if len(interchange_path.roads) == 0:
-            roads.append(IntraTransferRoad(source_transfer_node, target_transfer_node, source_transfer_chiplet))
+            roads.append(
+                IntraTransferRoad(
+                    source_transfer_node, target_transfer_node, source_transfer_chiplet
+                )
+            )
         else:
-            roads.append(IntraTransferRoad(source_transfer_node, interchange_path.roads[0].source, source_transfer_chiplet))
+            roads.append(
+                IntraTransferRoad(
+                    source_transfer_node,
+                    interchange_path.roads[0].source,
+                    source_transfer_chiplet,
+                )
+            )
             roads.extend(interchange_path.roads)
-            roads.append(IntraTransferRoad(interchange_path.roads[-1].target, target_transfer_node, target_transfer_chiplet))
+            roads.append(
+                IntraTransferRoad(
+                    interchange_path.roads[-1].target,
+                    target_transfer_node,
+                    target_transfer_chiplet,
+                )
+            )
         if isinstance(target_area, ComputeModule):
-            roads.append(InterChipletRoad(target_station, target_platform, target_transfer_chiplet, self.get_node_chiplet(target_platform), self.fab_model.inter_fide))
+            roads.append(
+                InterChipletRoad(
+                    target_station,
+                    target_platform,
+                    target_transfer_chiplet,
+                    self.get_node_chiplet(target_platform),
+                    self.fab_model.inter_fide,
+                )
+            )
             roads.append(IntraComputeRoad(target_platform, target, target_area))
-        
+
         path = Path(roads)
         fidelity = path.get_fidelity()
         return path, fidelity
 
-    def get_shortest_path(self, source: tuple[int, int], target: tuple[int, int]) -> tuple[Path, float]:
+    def get_shortest_path(
+        self, source: tuple[int, int], target: tuple[int, int]
+    ) -> tuple[Path, float]:
         """
         Get the shortest path between two physical qubits.
 
@@ -1045,13 +1766,17 @@ class Package:
             return self.get_shortest_no_transfer_path(source, target)
         path, fidelity = self.get_shortest_transfer_path(source, target)
         if self.has_no_transfer_path(source, target):
-            no_transfer_path, no_transfer_fidelity = self.get_shortest_no_transfer_path(source, target)
+            no_transfer_path, no_transfer_fidelity = self.get_shortest_no_transfer_path(
+                source, target
+            )
             if no_transfer_fidelity > fidelity:
                 path = no_transfer_path
                 fidelity = no_transfer_fidelity
         return path, fidelity
 
-    def get_inter_chiplet_distance(self, source: tuple[int, int], target: tuple[int, int]) -> int:
+    def get_inter_chiplet_distance(
+        self, source: tuple[int, int], target: tuple[int, int]
+    ) -> int:
         """
         Get the number of inter-chiplet transfer operations between two physical qubits.
 
@@ -1084,7 +1809,7 @@ class Package:
         for transfer_pair in transfer_pairs:
             _, fidelity = self.get_shortest_path(*transfer_pair)
             fidelity_list.append(fidelity)
-        return np.mean(fidelity_list), np.std(fidelity_list)
+        return np.mean(fidelity_list), np.std(fidelity_list) / np.mean(fidelity_list)
 
     def estimate_cost(self) -> float:
         """
@@ -1110,16 +1835,16 @@ class Package:
 
         Args:
             num (int): The number of transfer pairs selected to estimate the package.
-        
+
         Returns:
             float: The estimated efficiency of the package.
         """
         if num is None:
-            num = int(self.node_num ** 0.8)
+            num = int(self.node_num**0.8)
         fide_avg, fide_std = self.estimate_transfer(num)
-        return -math.log(1 - fide_avg) / fide_std * len(self.compute_nodes) / (self.node_num)
-        cost = self.estimate_cost()
-        return -math.log(1 - fide_avg) / cost
+        return (
+            -math.log(1 - fide_avg) / fide_std * len(self.compute_nodes) / (self.node_num)
+        )
 
     def get_registers(self) -> list[tuple[int, int]]:
         """
@@ -1151,6 +1876,15 @@ class Package:
             self.register_num = len(self.get_registers())
         return self.register_num
 
+    def get_data_qubit_num(self) -> int:
+        """
+        Get the number of data qubits in the package.
+
+        Returns:
+            int: The number of data qubits.
+        """
+        return self.get_register_num()
+
     def get_chiplet_register_num(self, chiplet: Chiplet) -> int:
         """
         Get the number of register qubits in the chiplet.
@@ -1161,7 +1895,11 @@ class Package:
         Returns:
             int: The number of register qubits in the chiplet.
         """
-        return sum(1 for node in chiplet.get_nodes() if self.package_graph.nodes[node]["qubit"].role == QubitRole.Register)
+        return sum(
+            1
+            for node in chiplet.get_nodes()
+            if self.package_graph.nodes[node]["qubit"].role == QubitRole.Register
+        )
 
     def get_node_chiplet(self, node: tuple[int, int]) -> Chiplet:
         """
@@ -1173,7 +1911,7 @@ class Package:
         Returns:
             Chiplet: The chiplet that contains the node.
         """
-        if self.package_graph.nodes[node]["qubit"].chiplet == None:
+        if self.package_graph.nodes[node]["qubit"].chiplet is None:
             raise ValueError("Invalid physical qubit: {}".format(node))
         return self.package_graph.nodes[node]["qubit"].chiplet
 
@@ -1187,11 +1925,13 @@ class Package:
         Returns:
             FuncArea: The function area that contains the node.
         """
-        if self.package_graph.nodes[node]["qubit"].area == None:
+        if self.package_graph.nodes[node]["qubit"].area is None:
             raise ValueError("Invalid physical qubit: {}".format(node))
         return self.package_graph.nodes[node]["qubit"].area
 
-    def get_coupler_fide(self, phy_qubit_u: tuple[int, int], phy_qubit_v: tuple[int, int]) -> float:
+    def get_coupler_fide(
+        self, phy_qubit_u: tuple[int, int], phy_qubit_v: tuple[int, int]
+    ) -> float:
         """
         Get the fidelity of the coupler between two physical qubits.
 
@@ -1207,17 +1947,22 @@ class Package:
         if self.package_graph.edges[(phy_qubit_u, phy_qubit_v)]["type"] == EdgeType.Intra:
             chiplet = self.get_node_chiplet(phy_qubit_u)
             return self.fab_model.get_intra_fide(chiplet.get_capacity())
-        elif self.package_graph.edges[(phy_qubit_u, phy_qubit_v)]["type"] == EdgeType.Inter:
+        elif (
+            self.package_graph.edges[(phy_qubit_u, phy_qubit_v)]["type"] == EdgeType.Inter
+        ):
             return self.fab_model.inter_fide
         else:
-            raise ValueError(f"Invalid edge type between {phy_qubit_u} and {phy_qubit_v}: {self.package_graph.edges[(phy_qubit_u, phy_qubit_v)]['type']}")
+            raise ValueError(
+                f"Invalid edge type between {phy_qubit_u} and {phy_qubit_v}: {self.package_graph.edges[(phy_qubit_u, phy_qubit_v)]['type']}"
+            )
 
-    def draw_qubits(self, 
-        marginrate: float = 0.2, 
-        markersize: float = 4, 
-        linewidth_t: float = 1, 
-        linewidth_b: float = 2, 
-        axis_off: bool = True
+    def draw_qubits(
+        self,
+        marginrate: float = 0.2,
+        markersize: float = 4,
+        linewidth_t: float = 1,
+        linewidth_b: float = 2,
+        axis_off: bool = True,
     ) -> tuple[plt.Figure, plt.Axes]:
         """
         Draw the package graph in qubit level.
@@ -1235,35 +1980,35 @@ class Package:
                 node[0] + np.array([-0.5, 0.5, 0.5, -0.5]),
                 node[1] + np.array([-0.5, -0.5, 0.5, 0.5]),
                 color=color_pool[self.package_graph.nodes[node]["qubit"].type.value],
-            ) # draw the area background
+            )  # draw the area background
         ax.fill(
             -0.5 + np.array([-0.5, 0.5, 0.5, -0.5]) * marginrate,
             np.array(
                 [-0.5, -0.5, self.package_size[1] - 0.5, self.package_size[1] - 0.5]
             ),
             color="white",
-        ) # draw the left margin
+        )  # draw the left margin
         ax.fill(
             self.package_size[0] - 0.5 + np.array([-0.5, 0.5, 0.5, -0.5]) * marginrate,
             np.array(
                 [-0.5, -0.5, self.package_size[1] - 0.5, self.package_size[1] - 0.5]
             ),
             color="white",
-        ) # draw the right margin
+        )  # draw the right margin
         ax.fill(
             np.array(
                 [-0.5, self.package_size[0] - 0.5, self.package_size[0] - 0.5, -0.5]
             ),
             -0.5 + np.array([-0.5, -0.5, 0.5, 0.5]) * marginrate,
             color="white",
-        ) # draw the bottom margin
+        )  # draw the bottom margin
         ax.fill(
             np.array(
                 [-0.5, self.package_size[0] - 0.5, self.package_size[0] - 0.5, -0.5]
             ),
             self.package_size[1] - 0.5 + np.array([-0.5, -0.5, 0.5, 0.5]) * marginrate,
             color="white",
-        ) # draw the top margin
+        )  # draw the top margin
         for edge in self.package_graph.edges:
             if (
                 self.package_graph.edges[edge]["type"] == EdgeType.Inter
@@ -1275,31 +2020,33 @@ class Package:
                         (edge[0][1] + edge[1][1]) / 2
                         + np.array([-0.5, -0.5, 0.5, 0.5]) * marginrate,
                         color="white",
-                    ) # draw the chiplet gap
+                    )  # draw the chiplet gap
                 else:
                     ax.fill(
                         (edge[0][0] + edge[1][0]) / 2
                         + np.array([-0.5, 0.5, 0.5, -0.5]) * marginrate,
                         edge[0][1] + np.array([-0.5, -0.5, 0.5, 0.5]),
                         color="white",
-                    ) # draw the chiplet gap
+                    )  # draw the chiplet gap
             if self.package_graph.edges[edge]["type"] == EdgeType.Intra:
                 ax.plot(
                     [edge[0][0], edge[1][0]],
                     [edge[0][1], edge[1][1]],
                     "k-",
                     linewidth=linewidth_t,
-                ) # draw the intra-chiplet coupler
+                )  # draw the intra-chiplet coupler
             elif self.package_graph.edges[edge]["type"] == EdgeType.Inter:
                 ax.plot(
                     [edge[0][0], edge[1][0]],
                     [edge[0][1], edge[1][1]],
                     "r-",
                     linewidth=linewidth_b,
-                ) # draw the inter-chiplet coupler
+                )  # draw the inter-chiplet coupler
         for node in self.package_graph.nodes:
             if self.package_graph.nodes[node]["type"] != NodeType.Empty:
-                ax.plot(node[0], node[1], "ko", markersize=markersize) # draw the physical qubit
+                ax.plot(
+                    node[0], node[1], "ko", markersize=markersize
+                )  # draw the physical qubit
         if axis_off:
             ax.axis("off")
         else:
@@ -1308,12 +2055,13 @@ class Package:
         plt.close(fig)
         return fig, ax
 
-    def draw_metro(self, 
-        marginrate: float = 0.2, 
-        markersize: float = 4, 
-        linewidth_t: float = 1, 
-        linewidth_b: float = 2, 
-        axis_off: bool = True
+    def draw_metro(
+        self,
+        marginrate: float = 0.2,
+        markersize: float = 4,
+        linewidth_t: float = 1,
+        linewidth_b: float = 2,
+        axis_off: bool = True,
     ) -> tuple[plt.Figure, plt.Axes]:
         """
         Draw the metro topology graph.
@@ -1328,7 +2076,9 @@ class Package:
         for node_u, node_v in self.metro_topology.edges:
             pos_u = node_u.get_coordinate()
             pos_v = node_v.get_coordinate()
-            ax.plot([pos_u[0], pos_v[0]], [pos_u[1], pos_v[1]], "k-", linewidth=linewidth_t)
+            ax.plot(
+                [pos_u[0], pos_v[0]], [pos_u[1], pos_v[1]], "k-", linewidth=linewidth_t
+            )
         if axis_off:
             ax.axis("off")
         else:
@@ -1337,7 +2087,9 @@ class Package:
         plt.close(fig)
         return fig, ax
 
-    def save_design_history(self, save_png: bool = True, save_gif: bool = True, duration: int = 1000):
+    def save_design_history(
+        self, save_png: bool = True, save_gif: bool = True, duration: int = 1000
+    ):
         """
         Save the design history.
 
@@ -1350,15 +2102,32 @@ class Package:
             return
         if save_png:
             os.makedirs(os.path.join(self.result_dir, "design_history"), exist_ok=True)
-            delete_files_with_prefix_and_suffix(os.path.join(self.result_dir, "design_history"), "design_history_", ".png")
+            delete_files_with_prefix_and_suffix(
+                os.path.join(self.result_dir, "design_history"), "design_history_", ".png"
+            )
             for i, fig in enumerate(self.design_history):
-                fig.savefig(os.path.join(self.result_dir, "design_history", f"design_history_{i}.png"), bbox_inches="tight")
+                fig.savefig(
+                    os.path.join(
+                        self.result_dir, "design_history", f"design_history_{i}.png"
+                    ),
+                    bbox_inches="tight",
+                )
         if save_gif:
             try:
                 if save_png:
-                    make_save_gif_file(os.path.join(self.result_dir, "design_history"), "design_history_", ".png", os.path.join(self.result_dir, "design_history.gif"), duration=duration)
+                    make_save_gif_file(
+                        os.path.join(self.result_dir, "design_history"),
+                        "design_history_",
+                        ".png",
+                        os.path.join(self.result_dir, "design_history.gif"),
+                        duration=duration,
+                    )
                 else:
-                    make_save_gif_figure(self.design_history, os.path.join(self.result_dir, "design_history.gif"), duration=duration)
+                    make_save_gif_figure(
+                        self.design_history,
+                        os.path.join(self.result_dir, "design_history.gif"),
+                        duration=duration,
+                    )
             except Exception as e:
                 logging.warning(f"Failed to save design history as GIF: {e}")
 

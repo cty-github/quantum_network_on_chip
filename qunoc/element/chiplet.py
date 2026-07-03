@@ -1,16 +1,18 @@
 import math
-import numpy as np
-import networkx as nx
 from enum import Enum, auto
+
+import networkx as nx
+import numpy as np
 from scipy.optimize import curve_fit
 
-from ..utils.utils import log_decay, get_full_space_tuple
+from ..utils.utils import get_full_space_tuple, log_decay
 
 
 class NodeType(Enum):
     """
     Enumerate of the types of the node in the package graph, each node corresponds to a potential qubit.
     """
+
     Empty = 0
     Compute = auto()
     Transfer = auto()
@@ -18,10 +20,12 @@ class NodeType(Enum):
     def __repr__(self):
         return self.name
 
+
 class EdgeType(Enum):
     """
     Enumerate of the types of the edge between two nodes, each edge corresponds to a potential coupler.
     """
+
     Empty = 0
     Intra = auto()
     Inter = auto()
@@ -34,6 +38,7 @@ class QubitRole(Enum):
     """
     Enumerate of the roles of the qubit in the package for routing.
     """
+
     Register = 0
     Platform = auto()
     Balise = auto()
@@ -43,10 +48,12 @@ class QubitRole(Enum):
     def __repr__(self):
         return self.name
 
+
 class CouplerRole(Enum):
     """
     Enumerate of the roles of the coupler in the package for routing.
     """
+
     Rail = 0
     Interchange = auto()
 
@@ -72,17 +79,18 @@ class FabricateModel:
         yield_decay (float): The decay rate of yield with the qubit number.
     """
 
-    def __init__(self, 
-        max_capacity: int = 100, 
-        max_length: int = 80, 
-        compute_geometry: str = "square", 
-        inter_sparsity: int = 3, 
-        single_fide: float = 0.999, 
-        intra_fide_dict: dict[int, float] = {27: 0.993, 65: 0.989, 127: 0.988}, 
-        enhanced_fide: float = 0.992 ** 0.2, 
-        inter_fide: float = 0.983, 
-        yield_5: float = 0.99, 
-        yield_decay: float = 2, 
+    def __init__(
+        self,
+        max_capacity: int = 100,
+        max_length: int = 80,
+        compute_geometry: str = "square",
+        inter_sparsity: int = 3,
+        single_fide: float = 0.999,
+        intra_fide_dict: dict[int, float] = {27: 0.993, 65: 0.989, 127: 0.988},
+        enhanced_fide: float = 0.992**0.2,
+        inter_fide: float = 0.983,
+        yield_5: float = 0.99,
+        yield_decay: float = 2,
     ):
         """
         Initialize a fabrication model.
@@ -121,10 +129,10 @@ class FabricateModel:
     def get_intra_fide(self, qubit_num: int) -> float:
         """
         Get the fidelity of intra-chiplet CZ according to qubit num in the chiplet.
-        
+
         Args:
             qubit_num (int): The number of qubits in the chiplet.
-        
+
         Returns:
             float: The fidelity of intra-chiplet CZ.
         """
@@ -133,19 +141,23 @@ class FabricateModel:
     def get_yield(self, qubit_num: int) -> float:
         """
         Get the yield of the chiplet according to the qubit num.
-        
+
         Args:
             qubit_num (int): The number of qubits in the chiplet.
-        
+
         Returns:
             float: The yield of the chiplet.
         """
-        return (self.yield_5 * (1 - math.tanh(self.yield_decay * (math.log10(qubit_num) - 2))) / 2)
+        return (
+            self.yield_5
+            * (1 - math.tanh(self.yield_decay * (math.log10(qubit_num) - 2)))
+            / 2
+        )
 
     def get_cost(self, qubit_num: int) -> float:
         """
         Get the cost of the chiplet according to the qubit num.
-        
+
         Args:
             qubit_num (int): The number of qubits in the chiplet.
 
@@ -153,6 +165,7 @@ class FabricateModel:
             float: The cost of the chiplet.
         """
         return qubit_num / self.get_yield(qubit_num)
+
 
 class OperationConfig:
     """
@@ -166,15 +179,19 @@ class OperationConfig:
         measure_time (float): The time of measurement.
         reset_time (float): The time of reset.
     """
-    
-    def __init__(self, 
-            single_time: float = 34, 
-            intra_time: float = 25, 
-            inter_time: float = float(np.mean([152, 148, 164, 128, 176, 116, 284, 108, 468, 116])),
-            qst_time_constant: float = 125 / (5 ** 0.5), 
-            measure_time: float = 2280, 
-            reset_time: float = 220
-        ):
+
+    def __init__(
+        self,
+        single_time: float = 34,
+        intra_time: float = 25,
+        inter_time: float = float(
+            np.mean([152, 148, 164, 128, 176, 116, 284, 108, 468, 116])
+        ),
+        qst_time_constant: float = 125 / 5,
+        # qst_time_constant: float = 125 / (5 ** 0.5),
+        measure_time: float = 2280,
+        reset_time: float = 220,
+    ):
         """
         Initialize the operation configuration.
 
@@ -206,12 +223,13 @@ class Qubit:
         chiplet (Chiplet): The chiplet that the qubit belongs to.
         area (FuncArea): The function area that the qubit belongs to.
     """
-    
-    def __init__(self, 
-        coordinate: tuple[int, int], 
-        type: NodeType, 
-        fide: float, 
-        role: QubitRole = None
+
+    def __init__(
+        self,
+        coordinate: tuple[int, int],
+        type: NodeType,
+        fide: float,
+        role: QubitRole = None,
     ):
         """
         Initialize a physcial qubit.
@@ -232,10 +250,11 @@ class Qubit:
     def __repr__(self):
         return f"{self.__class__.__name__}{self.coordinate}"
 
+
 class Coupler:
     """
     Represents the coupler between two qubits in the package.
-    
+
     Attributes:
         qubit_u (tuple[int, int]): The coordinate of qubit u on one side of the coupler.
         qubit_v (tuple[int, int]): The coordinate of qubit v on the other side of the coupler.
@@ -243,13 +262,14 @@ class Coupler:
         fide (float): The CZ/EQST fidelity of the coupler.
         role (CouplerRole): The role of the coupler.
     """
-    
-    def __init__(self, 
-        qubit_u: tuple[int, int], 
-        qubit_v: tuple[int, int], 
-        type: EdgeType, 
-        fide: float, 
-        role: CouplerRole = None
+
+    def __init__(
+        self,
+        qubit_u: tuple[int, int],
+        qubit_v: tuple[int, int],
+        type: EdgeType,
+        fide: float,
+        role: CouplerRole = None,
     ):
         """
         Initialize a coupler.
@@ -287,7 +307,7 @@ class Chiplet:
             intra_fide (float): The fidelity of intra-chiplet CZ.
         """
         self.intra_fide = intra_fide
-    
+
     def get_coordinate(self) -> tuple[float, float]:
         """
         Get the center coordinate of the chiplet.
@@ -296,7 +316,7 @@ class Chiplet:
             coordinate (tuple[float, float]): The center coordinate of the chiplet.
         """
         raise NotImplementedError("This method should be implemented in subclasses.")
-    
+
     def get_nodes(self) -> list[tuple[int, int]]:
         """
         Get the nodes in the chiplet.
@@ -317,7 +337,7 @@ class Chiplet:
             bool: True if the node is in the function area, False otherwise.
         """
         raise NotImplementedError("This method should be implemented in subclasses.")
-    
+
     def get_edges(self) -> list[tuple[tuple[int, int], tuple[int, int]]]:
         """
         Get the edges in the chiplet.
@@ -326,7 +346,7 @@ class Chiplet:
             edges (list[tuple[tuple[int, int], tuple[int, int]]]): The list of edges in the chiplet.
         """
         raise NotImplementedError("This method should be implemented in subclasses.")
-    
+
     def has_edge(self, edge: tuple[tuple[int, int], tuple[int, int]]) -> bool:
         """
         Check if the edge is in the chiplet.
@@ -338,7 +358,7 @@ class Chiplet:
             bool: True if the edge is in the chiplet, False otherwise.
         """
         raise NotImplementedError("This method should be implemented in subclasses.")
-    
+
     def get_distance(self, source: tuple[int, int], target: tuple[int, int]) -> int:
         """
         Get the distance between two nodes in the chiplet, which is the number of edges in the shortest path.
@@ -361,6 +381,7 @@ class Chiplet:
         """
         raise NotImplementedError("This method should be implemented in subclasses.")
 
+
 class ComputeChiplet(Chiplet):
     """
     Represents the compute chiplet in the package.
@@ -375,7 +396,16 @@ class ComputeChiplet(Chiplet):
         geometry (str): The qubit topology in the chiplet, i.e. "square", "hexagon", "heavy square", "heavy hexagon".
     """
 
-    def __init__(self, intra_fide: float, in_module_coord: tuple[int, int], left: int, top: int, right: int, bottom: int, geometry: str = "square"):
+    def __init__(
+        self,
+        intra_fide: float,
+        in_module_coord: tuple[int, int],
+        left: int,
+        top: int,
+        right: int,
+        bottom: int,
+        geometry: str = "square",
+    ):
         """
         Initialize a compute chiplet.
 
@@ -395,11 +425,13 @@ class ComputeChiplet(Chiplet):
         self.geometry = geometry
 
     def __repr__(self):
-        return f"{self.__class__.__name__}_{self.left}_{self.top}_{self.right}_{self.bottom}"
-    
+        return (
+            f"{self.__class__.__name__}_{self.left}_{self.top}_{self.right}_{self.bottom}"
+        )
+
     def get_coordinate(self) -> tuple[float, float]:
         return ((self.left + self.right) / 2, (self.top + self.bottom) / 2)
-    
+
     def get_nodes(self) -> list[tuple[int, int]]:
         if not hasattr(self, "nodes"):
             self.nodes = []
@@ -408,13 +440,13 @@ class ComputeChiplet(Chiplet):
                     self.nodes.append((i, j))
             if self.geometry == "square":
                 pass
-            elif self.geometry == 'hexagon':
+            elif self.geometry == "hexagon":
                 pass
-            elif self.geometry == 'heavy_square':
+            elif self.geometry == "heavy_square":
                 for i in range(self.left + 1, self.right, 2):
                     for j in range(self.top + 1, self.bottom, 2):
                         self.nodes.remove((i, j))
-            elif self.geometry == 'heavy_hexagon':
+            elif self.geometry == "heavy_hexagon":
                 for i in range(self.left + 1, self.right):
                     for j in range(self.top + 1, self.bottom, 2):
                         if (j - self.top) % 4 == 1:
@@ -429,7 +461,12 @@ class ComputeChiplet(Chiplet):
 
     def has_node(self, node: tuple[int, int]) -> bool:
         if self.geometry == "square":
-            return node[0] >= self.left and node[0] <= self.right and node[1] >= self.top and node[1] <= self.bottom
+            return (
+                node[0] >= self.left
+                and node[0] <= self.right
+                and node[1] >= self.top
+                and node[1] <= self.bottom
+            )
         else:
             return node in self.get_nodes()
 
@@ -443,7 +480,7 @@ class ComputeChiplet(Chiplet):
                     self.edges.append((node, (node[0], node[1] + 1)))
             if self.geometry == "square":
                 pass
-            elif self.geometry == 'hexagon':
+            elif self.geometry == "hexagon":
                 for i in range(self.left + 1, self.right):
                     for j in range(self.top, self.bottom):
                         if (j - self.top) % 2 == 0:
@@ -452,33 +489,39 @@ class ComputeChiplet(Chiplet):
                         elif (j - self.top) % 2 == 1:
                             if (i - self.left) % 2 == 0:
                                 self.edges.remove(((i, j), (i, j + 1)))
-            elif self.geometry == 'heavy_square':
+            elif self.geometry == "heavy_square":
                 pass
-            elif self.geometry == 'heavy_hexagon':
+            elif self.geometry == "heavy_hexagon":
                 pass
         return self.edges
-    
+
     def has_edge(self, edge: tuple[tuple[int, int], tuple[int, int]]) -> bool:
         return edge in self.get_edges() or (edge[1], edge[0]) in self.get_edges()
-    
+
     def get_distance(self, source: tuple[int, int], target: tuple[int, int]) -> int:
-        assert self.has_node(source), f"source {source} is not in the compute chiplet {self}"
-        assert self.has_node(target), f"target {target} is not in the compute chiplet {self}"
+        assert self.has_node(source), (
+            f"source {source} is not in the compute chiplet {self}"
+        )
+        assert self.has_node(target), (
+            f"target {target} is not in the compute chiplet {self}"
+        )
 
         if self.geometry == "square":
             return abs(source[0] - target[0]) + abs(source[1] - target[1])
         else:
             node_graph = self.get_node_graph()
             if not nx.has_path(node_graph, source, target):
-                raise ValueError(f"No path between {source} and {target} in chiplet {self}")
+                raise ValueError(
+                    f"No path between {source} and {target} in chiplet {self}"
+                )
             return nx.shortest_path_length(node_graph, source, target)
-    
+
     def get_capacity(self) -> int:
         if self.geometry == "square":
             return (self.right - self.left + 1) * (self.bottom - self.top + 1)
         else:
             return len(self.get_nodes())
-    
+
     def get_node_graph(self) -> nx.Graph:
         """
         Get the node graph of the chiplet.
@@ -494,10 +537,11 @@ class ComputeChiplet(Chiplet):
                 self.node_graph.add_edge(edge[0], edge[1])
         return self.node_graph
 
+
 class TransferChiplet(Chiplet):
     """
     Represents the transfer chiplet in the package.
-    
+
     Attributes:
         axis (int): The axis of the chiplet.
         pos (int): The position of the chiplet.
@@ -527,7 +571,7 @@ class TransferChiplet(Chiplet):
 
     def get_coordinate(self) -> tuple[float, float]:
         return get_full_space_tuple(self.pos, self.axis, (self.start + self.end) / 2)
-    
+
     def get_nodes(self) -> list[tuple[int, int]]:
         if not hasattr(self, "nodes"):
             self.nodes = []
@@ -536,23 +580,36 @@ class TransferChiplet(Chiplet):
         return self.nodes
 
     def has_node(self, node: tuple[int, int]) -> bool:
-        return node[1-self.axis] == self.pos and node[self.axis] >= self.start and node[self.axis] <= self.end
-    
+        return (
+            node[1 - self.axis] == self.pos
+            and node[self.axis] >= self.start
+            and node[self.axis] <= self.end
+        )
+
     def get_edges(self) -> list[tuple[tuple[int, int], tuple[int, int]]]:
         if not hasattr(self, "edges"):
             self.edges: list[tuple[tuple[int, int], tuple[int, int]]] = []
             for i in range(self.start, self.end):
-                self.edges.append((get_full_space_tuple(self.pos, self.axis, i), get_full_space_tuple(self.pos, self.axis, i + 1)))
+                self.edges.append(
+                    (
+                        get_full_space_tuple(self.pos, self.axis, i),
+                        get_full_space_tuple(self.pos, self.axis, i + 1),
+                    )
+                )
         return self.edges
-    
+
     def has_edge(self, edge: tuple[tuple[int, int], tuple[int, int]]) -> bool:
         return edge in self.get_edges() or (edge[1], edge[0]) in self.get_edges()
-    
+
     def get_distance(self, source: tuple[int, int], target: tuple[int, int]) -> int:
-        assert self.has_node(source), f"source {source} is not in the transfer chiplet {self}"
-        assert self.has_node(target), f"target {target} is not in the transfer chiplet {self}"
+        assert self.has_node(source), (
+            f"source {source} is not in the transfer chiplet {self}"
+        )
+        assert self.has_node(target), (
+            f"target {target} is not in the transfer chiplet {self}"
+        )
         return abs(source[self.axis] - target[self.axis])
-    
+
     def get_capacity(self) -> int:
         return self.end - self.start + 1
 
@@ -569,6 +626,7 @@ class Gap:
         end (int): The end point of the gap.
         edges (dict[int, tuple[tuple[int,int], tuple[int,int]]]): The edges in the gap.
     """
+
     fab_model: FabricateModel = None
 
     def __init__(self, axis: int, pos: tuple[int, int], start: int, end: int):
@@ -585,10 +643,10 @@ class Gap:
         self.pos = pos
         self.start = start
         self.end = end
-    
+
     def __repr__(self):
         return f"{self.__class__.__name__}_{self.axis}_{self.pos}_{self.start}_{self.end}"
-    
+
     def get_couplers(self) -> dict[int, Coupler]:
         """
         Get the couplers in the gap.
@@ -600,12 +658,13 @@ class Gap:
             self.couplers: dict[int, Coupler] = {}
             for i in range(self.start, self.end + 1, Gap.fab_model.inter_sparsity):
                 self.couplers[i] = Coupler(
-                    get_full_space_tuple(self.pos[0], self.axis, i), 
-                    get_full_space_tuple(self.pos[1], self.axis, i), 
+                    get_full_space_tuple(self.pos[0], self.axis, i),
+                    get_full_space_tuple(self.pos[1], self.axis, i),
                     EdgeType.Inter,
                     Gap.fab_model.inter_fide,
                 )
         return self.couplers
+
 
 class IntraComputeGap(Gap):
     """
@@ -623,6 +682,7 @@ class IntraComputeGap(Gap):
             end (int): The end point of the gap.
         """
         super().__init__(axis, pos, start, end)
+
 
 class ComputeTransferGap(Gap):
     """
@@ -652,13 +712,14 @@ class FuncArea:
         chiplets (list[Chiplet]): The list of chiplets in the function area.
         intra_edges (list[tuple[tuple[int, int], tuple[int, int]]]): The list of edges inside the chiplets.
     """
+
     fab_model: FabricateModel = None
 
     def __init__(self):
         """
         Initialize a function area.
         """
-    
+
     def get_nodes(self) -> list[tuple[int, int]]:
         """
         Get the nodes in the function area.
@@ -679,13 +740,13 @@ class FuncArea:
             bool: True if the node is in the function area, False otherwise.
         """
         raise NotImplementedError("This method should be implemented in subclasses.")
-    
+
     def determine_chiplets(self):
         """
         Partition the function area into chiplets.
         """
         self.chiplets: list[Chiplet] = []
-    
+
     def get_chiplets(self) -> list[Chiplet]:
         """
         Get the chiplets in the function area.
@@ -696,7 +757,7 @@ class FuncArea:
         if not hasattr(self, "chiplets"):
             self.determine_chiplets()
         return self.chiplets
-    
+
     def get_intra_edges(self) -> list[tuple[tuple[int, int], tuple[int, int]]]:
         """
         Get the edges inside the chiplets.
@@ -710,6 +771,7 @@ class FuncArea:
                 self.intra_edges.extend(chiplet.get_edges())
         return self.intra_edges
 
+
 class TransferLine(FuncArea):
     """
     Represents the transfer line in the package.
@@ -721,12 +783,13 @@ class TransferLine(FuncArea):
         end (tuple[int, Coupler]): The end coordinate and interchange of the line.
     """
 
-    def __init__(self, 
-            axis: int, 
-            pos: int, 
-            start: tuple[int, bool],
-            end: tuple[int, bool],
-        ):
+    def __init__(
+        self,
+        axis: int,
+        pos: int,
+        start: tuple[int, bool],
+        end: tuple[int, bool],
+    ):
         """
         Initialize a transfer line.
 
@@ -741,21 +804,21 @@ class TransferLine(FuncArea):
         self.pos = pos
         if not start[1]:
             start_interchange = Coupler(
-                get_full_space_tuple(pos, axis, start[0]-1),
+                get_full_space_tuple(pos, axis, start[0] - 1),
                 get_full_space_tuple(pos, axis, start[0]),
                 EdgeType.Inter,
                 FuncArea.fab_model.inter_fide,
-                CouplerRole.Interchange, 
+                CouplerRole.Interchange,
             )
         else:
             start_interchange = None
         if not end[1]:
             end_interchange = Coupler(
                 get_full_space_tuple(pos, axis, end[0]),
-                get_full_space_tuple(pos, axis, end[0]+1),
+                get_full_space_tuple(pos, axis, end[0] + 1),
                 EdgeType.Inter,
                 FuncArea.fab_model.inter_fide,
-                CouplerRole.Interchange, 
+                CouplerRole.Interchange,
             )
         else:
             end_interchange = None
@@ -764,17 +827,21 @@ class TransferLine(FuncArea):
 
     def __repr__(self):
         return f"{self.__class__.__name__}_{self.axis}_{self.pos}_{self.start[0]}_{self.end[0]}"
-    
+
     def get_nodes(self) -> list[tuple[int, int]]:
         if not hasattr(self, "nodes"):
             self.nodes = []
             for i in range(self.start[0], self.end[0] + 1):
                 self.nodes.append(get_full_space_tuple(self.pos, self.axis, i))
         return self.nodes
-    
+
     def has_node(self, node: tuple[int, int]) -> bool:
-        return node[1-self.axis] == self.pos and node[self.axis] >= self.start[0] and node[self.axis] <= self.end[0]
-    
+        return (
+            node[1 - self.axis] == self.pos
+            and node[self.axis] >= self.start[0]
+            and node[self.axis] <= self.end[0]
+        )
+
     def determine_chiplets(self):
         line_length = self.end[0] - self.start[0] + 1
         chiplet_num = (line_length - 1) // FuncArea.fab_model.max_length + 1
@@ -782,27 +849,47 @@ class TransferLine(FuncArea):
         long_chiplet_num = line_length - chiplet_num * chiplet_length
         self.chiplets: list[TransferChiplet] = []
         for i in range(chiplet_num):
-            self.chiplets.append(TransferChiplet(
-                FuncArea.fab_model.enhanced_fide,
-                self.axis,
-                self.pos,
-                self.start[0] + i * chiplet_length + min(i, long_chiplet_num),
-                self.start[0] + (i + 1) * chiplet_length + min(i + 1, long_chiplet_num) - 1,
-            ))
+            self.chiplets.append(
+                TransferChiplet(
+                    FuncArea.fab_model.enhanced_fide,
+                    self.axis,
+                    self.pos,
+                    self.start[0] + i * chiplet_length + min(i, long_chiplet_num),
+                    self.start[0]
+                    + (i + 1) * chiplet_length
+                    + min(i + 1, long_chiplet_num)
+                    - 1,
+                )
+            )
         self.interchanges: set[Coupler] = set()
         if self.start[1]:
             self.interchanges.add(self.start[1])
         if self.end[1]:
             self.interchanges.add(self.end[1])
         for i in range(chiplet_num - 1):
-            self.interchanges.add(Coupler(
-                get_full_space_tuple(self.pos, self.axis, self.start[0] + (i + 1) * chiplet_length + min(i + 1, long_chiplet_num) - 1),
-                get_full_space_tuple(self.pos, self.axis, self.start[0] + (i + 1) * chiplet_length + min(i + 1, long_chiplet_num)),
-                EdgeType.Inter,
-                FuncArea.fab_model.inter_fide,
-                CouplerRole.Interchange,
-            ))
-    
+            self.interchanges.add(
+                Coupler(
+                    get_full_space_tuple(
+                        self.pos,
+                        self.axis,
+                        self.start[0]
+                        + (i + 1) * chiplet_length
+                        + min(i + 1, long_chiplet_num)
+                        - 1,
+                    ),
+                    get_full_space_tuple(
+                        self.pos,
+                        self.axis,
+                        self.start[0]
+                        + (i + 1) * chiplet_length
+                        + min(i + 1, long_chiplet_num),
+                    ),
+                    EdgeType.Inter,
+                    FuncArea.fab_model.inter_fide,
+                    CouplerRole.Interchange,
+                )
+            )
+
     def get_chiplets(self) -> list[TransferChiplet]:
         if not hasattr(self, "chiplets"):
             self.determine_chiplets()
@@ -819,6 +906,7 @@ class TransferLine(FuncArea):
             self.determine_chiplets()
         return self.interchanges
 
+
 class ComputeModule(FuncArea):
     """
     Represents the compute module in the package.
@@ -834,12 +922,13 @@ class ComputeModule(FuncArea):
         chiplet_matrix (dict[tuple[int, int], ComputeChiplet]): The dictionary of chiplets in the module.
         intra_gaps (list[IntraComputeGap]): The list of intra-chiplet gaps in the module.
     """
-    
-    def __init__(self, 
-        left: int | TransferLine, 
-        top: int | TransferLine, 
-        right: int | TransferLine, 
-        bottom: int | TransferLine, 
+
+    def __init__(
+        self,
+        left: int | TransferLine,
+        top: int | TransferLine,
+        right: int | TransferLine,
+        bottom: int | TransferLine,
     ):
         """
         Initialize a compute module.
@@ -875,38 +964,58 @@ class ComputeModule(FuncArea):
         else:
             bottom_coord = bottom
             bottom_line = None
-        left_gap = ComputeTransferGap(
-            left_line.axis, 
-            (left_line.pos, left_coord), 
-            top_coord, 
-            bottom_coord
-        ) if left_line else None
-        top_gap = ComputeTransferGap(
-            top_line.axis, 
-            (top_line.pos, top_coord), 
-            left_coord, 
-            right_coord
-        ) if top_line else None
-        right_gap = ComputeTransferGap(
-            right_line.axis, 
-            (right_coord, right_line.pos), 
-            top_coord, 
-            bottom_coord
-        ) if right_line else None
-        bottom_gap = ComputeTransferGap(
-            bottom_line.axis, 
-            (bottom_coord, bottom_line.pos), 
-            left_coord, 
-            right_coord
-        ) if bottom_line else None
-        self.left: tuple[int, TransferLine, ComputeTransferGap] = (left_coord, left_line, left_gap)
-        self.top: tuple[int, TransferLine, ComputeTransferGap] = (top_coord, top_line, top_gap)
-        self.right: tuple[int, TransferLine, ComputeTransferGap] = (right_coord, right_line, right_gap)
-        self.bottom: tuple[int, TransferLine, ComputeTransferGap] = (bottom_coord, bottom_line, bottom_gap)
+        left_gap = (
+            ComputeTransferGap(
+                left_line.axis, (left_line.pos, left_coord), top_coord, bottom_coord
+            )
+            if left_line
+            else None
+        )
+        top_gap = (
+            ComputeTransferGap(
+                top_line.axis, (top_line.pos, top_coord), left_coord, right_coord
+            )
+            if top_line
+            else None
+        )
+        right_gap = (
+            ComputeTransferGap(
+                right_line.axis, (right_coord, right_line.pos), top_coord, bottom_coord
+            )
+            if right_line
+            else None
+        )
+        bottom_gap = (
+            ComputeTransferGap(
+                bottom_line.axis, (bottom_coord, bottom_line.pos), left_coord, right_coord
+            )
+            if bottom_line
+            else None
+        )
+        self.left: tuple[int, TransferLine, ComputeTransferGap] = (
+            left_coord,
+            left_line,
+            left_gap,
+        )
+        self.top: tuple[int, TransferLine, ComputeTransferGap] = (
+            top_coord,
+            top_line,
+            top_gap,
+        )
+        self.right: tuple[int, TransferLine, ComputeTransferGap] = (
+            right_coord,
+            right_line,
+            right_gap,
+        )
+        self.bottom: tuple[int, TransferLine, ComputeTransferGap] = (
+            bottom_coord,
+            bottom_line,
+            bottom_gap,
+        )
 
     def __repr__(self):
         return f"{self.__class__.__name__}_{self.left[0]}_{self.top[0]}_{self.right[0]}_{self.bottom[0]}"
-    
+
     def get_nodes(self) -> list[tuple[int, int]]:
         if not hasattr(self, "nodes"):
             self.nodes = []
@@ -918,13 +1027,18 @@ class ComputeModule(FuncArea):
                 for chiplet in self.get_chiplets():
                     self.nodes.extend(chiplet.get_nodes())
         return self.nodes
-    
+
     def has_node(self, node: tuple[int, int]) -> bool:
         if FuncArea.fab_model.compute_geometry == "square":
-            return node[0] >= self.left[0] and node[0] <= self.right[0] and node[1] >= self.top[0] and node[1] <= self.bottom[0]
+            return (
+                node[0] >= self.left[0]
+                and node[0] <= self.right[0]
+                and node[1] >= self.top[0]
+                and node[1] <= self.bottom[0]
+            )
         else:
             return node in self.get_nodes()
-    
+
     def determine_chiplets(self):
         module_x_size = self.right[0] - self.left[0] + 1
         module_y_size = self.bottom[0] - self.top[0] + 1
@@ -940,45 +1054,68 @@ class ComputeModule(FuncArea):
         self.chiplet_matrix: dict[tuple[int, int], ComputeChiplet] = {}
         for i in range(self.chiplet_x_num):
             for j in range(self.chiplet_y_num):
-                self.chiplets.append(ComputeChiplet(
-                    FuncArea.fab_model.get_intra_fide(
-                        (chiplet_x_size + int(i < large_chiplet_x_num)) * (chiplet_y_size + int(j < large_chiplet_y_num))
-                    ),
-                    (i, j),
-                    self.left[0] + i * chiplet_x_size + min(i, large_chiplet_x_num),
-                    self.top[0] + j * chiplet_y_size + min(j, large_chiplet_y_num),
-                    self.left[0] + (i + 1) * chiplet_x_size + min(i + 1, large_chiplet_x_num) - 1,
-                    self.top[0] + (j + 1) * chiplet_y_size + min(j + 1, large_chiplet_y_num) - 1,
-                    FuncArea.fab_model.compute_geometry,
-                ))
+                self.chiplets.append(
+                    ComputeChiplet(
+                        FuncArea.fab_model.get_intra_fide(
+                            (chiplet_x_size + int(i < large_chiplet_x_num))
+                            * (chiplet_y_size + int(j < large_chiplet_y_num))
+                        ),
+                        (i, j),
+                        self.left[0] + i * chiplet_x_size + min(i, large_chiplet_x_num),
+                        self.top[0] + j * chiplet_y_size + min(j, large_chiplet_y_num),
+                        self.left[0]
+                        + (i + 1) * chiplet_x_size
+                        + min(i + 1, large_chiplet_x_num)
+                        - 1,
+                        self.top[0]
+                        + (j + 1) * chiplet_y_size
+                        + min(j + 1, large_chiplet_y_num)
+                        - 1,
+                        FuncArea.fab_model.compute_geometry,
+                    )
+                )
                 self.chiplet_matrix[(i, j)] = self.chiplets[-1]
         self.intra_gaps: list[IntraComputeGap] = []
         for i in range(self.chiplet_x_num - 1):
-            self.intra_gaps.append(IntraComputeGap(
-                1, 
-                (
-                    self.left[0] + (i + 1) * chiplet_x_size + min(i + 1, large_chiplet_x_num) - 1, 
-                    self.left[0] + (i + 1) * chiplet_x_size + min(i + 1, large_chiplet_x_num)
-                ), 
-                self.top[0], 
-                self.bottom[0],
-            ))
+            self.intra_gaps.append(
+                IntraComputeGap(
+                    1,
+                    (
+                        self.left[0]
+                        + (i + 1) * chiplet_x_size
+                        + min(i + 1, large_chiplet_x_num)
+                        - 1,
+                        self.left[0]
+                        + (i + 1) * chiplet_x_size
+                        + min(i + 1, large_chiplet_x_num),
+                    ),
+                    self.top[0],
+                    self.bottom[0],
+                )
+            )
         for j in range(self.chiplet_y_num - 1):
-            self.intra_gaps.append(IntraComputeGap(
-                0,
-                (
-                    self.top[0] + (j + 1) * chiplet_y_size + min(j + 1, large_chiplet_y_num) - 1, 
-                    self.top[0] + (j + 1) * chiplet_y_size + min(j + 1, large_chiplet_y_num)
-                ),
-                self.left[0],
-                self.right[0],
-            ))
-    
+            self.intra_gaps.append(
+                IntraComputeGap(
+                    0,
+                    (
+                        self.top[0]
+                        + (j + 1) * chiplet_y_size
+                        + min(j + 1, large_chiplet_y_num)
+                        - 1,
+                        self.top[0]
+                        + (j + 1) * chiplet_y_size
+                        + min(j + 1, large_chiplet_y_num),
+                    ),
+                    self.left[0],
+                    self.right[0],
+                )
+            )
+
     def get_chiplets(self) -> list[ComputeChiplet]:
         if not hasattr(self, "chiplets"):
             self.determine_chiplets()
         return self.chiplets
-    
+
     def get_intra_gaps(self) -> list[IntraComputeGap]:
         """
         Get the gaps in the compute module.
@@ -1017,7 +1154,9 @@ class ComputeModule(FuncArea):
             platforms_and_stations (list[tuple[tuple[int, int], tuple[int, int]]]): The list of platforms and stations in the compute module.
         """
         if not hasattr(self, "platforms_and_stations"):
-            self.platforms_and_stations: list[tuple[tuple[int, int], tuple[int, int]]] = []
+            self.platforms_and_stations: list[
+                tuple[tuple[int, int], tuple[int, int]]
+            ] = []
             if self.left[2]:
                 for coupler in self.left[2].get_couplers().values():
                     self.platforms_and_stations.append((coupler.qubit_v, coupler.qubit_u))
@@ -1058,7 +1197,9 @@ class ComputeModule(FuncArea):
         for chiplet in self.get_chiplets():
             if chiplet.has_node(node):
                 return chiplet
-        raise ValueError(f"Node {node} is not in any chiplet in the compute module {self}")
+        raise ValueError(
+            f"Node {node} is not in any chiplet in the compute module {self}"
+        )
 
     def get_chiplet_platforms(self, chiplet: ComputeChiplet) -> set[tuple[int, int]]:
         """
@@ -1070,13 +1211,15 @@ class ComputeModule(FuncArea):
         Returns:
             platforms (set[tuple[int, int]]): The set of platforms in the compute chiplet.
         """
-        assert chiplet in self.get_chiplets(), f"chiplet {chiplet} is not in the compute module {self}"
+        assert chiplet in self.get_chiplets(), (
+            f"chiplet {chiplet} is not in the compute module {self}"
+        )
         platforms: set[tuple[int, int]] = set()
         for platform, _ in self.get_platform_station_pairs():
             if chiplet.has_node(platform):
                 platforms.add(platform)
         return platforms
-    
+
     def get_node_graph(self) -> nx.Graph:
         """
         Get the node graph of the compute module.
@@ -1105,17 +1248,23 @@ class ComputeModule(FuncArea):
         Returns:
             distance (int): The distance between the two nodes, which is the number of edges in the shortest path.
         """
-        assert self.has_node(source), f"source {source} is not in the compute module {self}"
-        assert self.has_node(target), f"target {target} is not in the compute module {self}"
+        assert self.has_node(source), (
+            f"source {source} is not in the compute module {self}"
+        )
+        assert self.has_node(target), (
+            f"target {target} is not in the compute module {self}"
+        )
 
         if FuncArea.fab_model.compute_geometry == "square":
             return abs(source[0] - target[0]) + abs(source[1] - target[1])
         else:
             node_graph = self.get_node_graph()
             if not nx.has_path(node_graph, source, target):
-                raise ValueError(f"No path between {source} and {target} in compute module {self}")
+                raise ValueError(
+                    f"No path between {source} and {target} in compute module {self}"
+                )
             return nx.shortest_path_length(node_graph, source, target)
-    
+
     def get_inter_distance(self, source: tuple[int, int], target: tuple[int, int]) -> int:
         """
         Get the number of inter-chiplet coupler in the shortest path between two nodes in the compute module.
@@ -1127,13 +1276,19 @@ class ComputeModule(FuncArea):
         Returns:
             distance (int): The number of inter-chiplet coupler in the shortest path between the two nodes.
         """
-        assert self.has_node(source), f"source {source} is not in the compute module {self}"
-        assert self.has_node(target), f"target {target} is not in the compute module {self}"
+        assert self.has_node(source), (
+            f"source {source} is not in the compute module {self}"
+        )
+        assert self.has_node(target), (
+            f"target {target} is not in the compute module {self}"
+        )
         source_chiplet = self.get_node_chiplet(source)
         target_chiplet = self.get_node_chiplet(target)
         source_chiplet_coord = source_chiplet.in_module_coord
         target_chiplet_coord = target_chiplet.in_module_coord
-        return abs(source_chiplet_coord[0] - target_chiplet_coord[0]) + abs(source_chiplet_coord[1] - target_chiplet_coord[1])
+        return abs(source_chiplet_coord[0] - target_chiplet_coord[0]) + abs(
+            source_chiplet_coord[1] - target_chiplet_coord[1]
+        )
 
     def get_nearest_platform(self, node: tuple[int, int]) -> tuple[int, int]:
         """
@@ -1149,18 +1304,35 @@ class ComputeModule(FuncArea):
         chiplet = self.get_node_chiplet(node)
         left_inter_distance = chiplet.in_module_coord[0] if self.left[2] else math.inf
         top_inter_distance = chiplet.in_module_coord[1] if self.top[2] else math.inf
-        right_inter_distance = self.chiplet_x_num - chiplet.in_module_coord[0] - 1 if self.right[2] else math.inf
-        bottom_inter_distance = self.chiplet_y_num - chiplet.in_module_coord[1] - 1 if self.bottom[2] else math.inf
-        min_inter_distance = min(left_inter_distance, top_inter_distance, right_inter_distance, bottom_inter_distance)
+        right_inter_distance = (
+            self.chiplet_x_num - chiplet.in_module_coord[0] - 1
+            if self.right[2]
+            else math.inf
+        )
+        bottom_inter_distance = (
+            self.chiplet_y_num - chiplet.in_module_coord[1] - 1
+            if self.bottom[2]
+            else math.inf
+        )
+        min_inter_distance = min(
+            left_inter_distance,
+            top_inter_distance,
+            right_inter_distance,
+            bottom_inter_distance,
+        )
         nearest_chiplets: set[ComputeChiplet] = set()
         if left_inter_distance == min_inter_distance:
             nearest_chiplets.add(self.chiplet_matrix[(0, chiplet.in_module_coord[1])])
         if top_inter_distance == min_inter_distance:
             nearest_chiplets.add(self.chiplet_matrix[(chiplet.in_module_coord[0], 0)])
         if right_inter_distance == min_inter_distance:
-            nearest_chiplets.add(self.chiplet_matrix[(self.chiplet_x_num - 1, chiplet.in_module_coord[1])])
+            nearest_chiplets.add(
+                self.chiplet_matrix[(self.chiplet_x_num - 1, chiplet.in_module_coord[1])]
+            )
         if bottom_inter_distance == min_inter_distance:
-            nearest_chiplets.add(self.chiplet_matrix[(chiplet.in_module_coord[0], self.chiplet_y_num - 1)])
+            nearest_chiplets.add(
+                self.chiplet_matrix[(chiplet.in_module_coord[0], self.chiplet_y_num - 1)]
+            )
 
         min_distance = math.inf
         nearest_platform = None
@@ -1170,10 +1342,12 @@ class ComputeModule(FuncArea):
                 if distance < min_distance:
                     min_distance = distance
                     nearest_platform = platform
-        assert nearest_platform is not None, f"No metro system in the package!!!"
+        assert nearest_platform is not None, "No metro system in the package!!!"
         return nearest_platform
 
-    def get_swap_path(self, source: tuple[int, int], target: tuple[int, int]) -> list[tuple[int, int]]:
+    def get_swap_path(
+        self, source: tuple[int, int], target: tuple[int, int]
+    ) -> list[tuple[int, int]]:
         """
         Get the swap path between two nodes in the compute module.
 
@@ -1184,8 +1358,12 @@ class ComputeModule(FuncArea):
         Returns:
             path (list[tuple[int, int]]): The list of nodes in the swap path.
         """
-        assert self.has_node(source), f"source {source} is not in the compute module {self}"
-        assert self.has_node(target), f"target {target} is not in the compute module {self}"
+        assert self.has_node(source), (
+            f"source {source} is not in the compute module {self}"
+        )
+        assert self.has_node(target), (
+            f"target {target} is not in the compute module {self}"
+        )
 
         if FuncArea.fab_model.compute_geometry == "square":
             path = [source]
@@ -1193,7 +1371,7 @@ class ComputeModule(FuncArea):
             if source == target:
                 path.extend(append_path)
                 return path
-            
+
             if source[0] == self.left[0]:
                 if source[1] == self.top[0]:
                     if (source[0] + 1, source[1]) not in self.get_platforms():
@@ -1202,7 +1380,9 @@ class ComputeModule(FuncArea):
                         source = (source[0], source[1] + 1)
                         path.append(source)
                     else:
-                        assert (source[0], source[1] + 1) not in self.get_platforms(), f"Data qubit in the top left corner {source} can not get out."
+                        assert (source[0], source[1] + 1) not in self.get_platforms(), (
+                            f"Data qubit in the top left corner {source} can not get out."
+                        )
                         source = (source[0], source[1] + 1)
                         path.append(source)
                         source = (source[0] + 1, source[1])
@@ -1214,7 +1394,9 @@ class ComputeModule(FuncArea):
                         source = (source[0], source[1] - 1)
                         path.append(source)
                     else:
-                        assert (source[0], source[1] - 1) not in self.get_platforms(), f"Data qubit in the bottom left corner {source} can not get out."
+                        assert (source[0], source[1] - 1) not in self.get_platforms(), (
+                            f"Data qubit in the bottom left corner {source} can not get out."
+                        )
                         source = (source[0], source[1] - 1)
                         path.append(source)
                         source = (source[0] + 1, source[1])
@@ -1230,7 +1412,9 @@ class ComputeModule(FuncArea):
                         source = (source[0], source[1] + 1)
                         path.append(source)
                     else:
-                        assert (source[0], source[1] + 1) not in self.get_platforms(), f"Data qubit in the top right corner {source} can not get out."
+                        assert (source[0], source[1] + 1) not in self.get_platforms(), (
+                            f"Data qubit in the top right corner {source} can not get out."
+                        )
                         source = (source[0], source[1] + 1)
                         path.append(source)
                         source = (source[0] - 1, source[1])
@@ -1242,7 +1426,9 @@ class ComputeModule(FuncArea):
                         source = (source[0], source[1] - 1)
                         path.append(source)
                     else:
-                        assert (source[0], source[1] - 1) not in self.get_platforms(), f"Data qubit in the bottom right corner {source} can not get out."
+                        assert (source[0], source[1] - 1) not in self.get_platforms(), (
+                            f"Data qubit in the bottom right corner {source} can not get out."
+                        )
                         source = (source[0], source[1] - 1)
                         path.append(source)
                         source = (source[0] - 1, source[1])
@@ -1257,7 +1443,7 @@ class ComputeModule(FuncArea):
                 elif source[1] == self.bottom[0]:
                     source = (source[0], source[1] - 1)
                     path.append(source)
-                
+
             if target[0] == self.left[0]:
                 if target[1] == self.top[0]:
                     if (target[0] + 1, target[1]) not in self.get_platforms():
@@ -1266,7 +1452,9 @@ class ComputeModule(FuncArea):
                         append_path.insert(0, target)
                         target = (target[0], target[1] + 1)
                     else:
-                        assert (target[0], target[1] + 1) not in self.get_platforms(), f"Data qubit in the top left corner {target} can not get in."
+                        assert (target[0], target[1] + 1) not in self.get_platforms(), (
+                            f"Data qubit in the top left corner {target} can not get in."
+                        )
                         append_path.insert(0, target)
                         target = (target[0], target[1] + 1)
                         append_path.insert(0, target)
@@ -1278,7 +1466,9 @@ class ComputeModule(FuncArea):
                         append_path.insert(0, target)
                         target = (target[0], target[1] - 1)
                     else:
-                        assert (target[0], target[1] - 1) not in self.get_platforms(), f"Data qubit in the bottom left corner {target} can not get in."
+                        assert (target[0], target[1] - 1) not in self.get_platforms(), (
+                            f"Data qubit in the bottom left corner {target} can not get in."
+                        )
                         append_path.insert(0, target)
                         target = (target[0], target[1] - 1)
                         append_path.insert(0, target)
@@ -1294,7 +1484,9 @@ class ComputeModule(FuncArea):
                         append_path.insert(0, target)
                         target = (target[0], target[1] + 1)
                     else:
-                        assert (target[0], target[1] + 1) not in self.get_platforms(), f"Data qubit in the top right corner {target} can not get in."
+                        assert (target[0], target[1] + 1) not in self.get_platforms(), (
+                            f"Data qubit in the top right corner {target} can not get in."
+                        )
                         append_path.insert(0, target)
                         target = (target[0], target[1] + 1)
                         append_path.insert(0, target)
@@ -1306,7 +1498,9 @@ class ComputeModule(FuncArea):
                         append_path.insert(0, target)
                         target = (target[0], target[1] - 1)
                     else:
-                        assert (target[0], target[1] - 1) not in self.get_platforms(), f"Data qubit in the bottom right corner {target} can not get in."
+                        assert (target[0], target[1] - 1) not in self.get_platforms(), (
+                            f"Data qubit in the bottom right corner {target} can not get in."
+                        )
                         append_path.insert(0, target)
                         target = (target[0], target[1] - 1)
                         append_path.insert(0, target)
@@ -1321,9 +1515,11 @@ class ComputeModule(FuncArea):
                 elif target[1] == self.bottom[0]:
                     append_path.insert(0, target)
                     target = (target[0], target[1] - 1)
-                
+
             if source == target:
-                while len(path) > 1 and len(append_path) > 0 and path[-2] == append_path[0]:
+                while (
+                    len(path) > 1 and len(append_path) > 0 and path[-2] == append_path[0]
+                ):
                     path.pop()
                     append_path.pop(0)
                 path.extend(append_path)
@@ -1349,14 +1545,27 @@ class ComputeModule(FuncArea):
                 if source_chiplet.in_module_coord[1] == target_chiplet.in_module_coord[1]:
                     inter_coupler_x = source[0]
                 elif source[0] < target[0]:
-                    inter_coupler_x = self.left[0] + ((source[0] - self.left[0] - 1) // FuncArea.fab_model.inter_sparsity + 1) * FuncArea.fab_model.inter_sparsity
+                    inter_coupler_x = (
+                        self.left[0]
+                        + (
+                            (source[0] - self.left[0] - 1)
+                            // FuncArea.fab_model.inter_sparsity
+                            + 1
+                        )
+                        * FuncArea.fab_model.inter_sparsity
+                    )
                     if inter_coupler_x >= self.right[0]:
                         inter_coupler_x -= FuncArea.fab_model.inter_sparsity
                     x_chiplet = self.get_node_chiplet((inter_coupler_x, source[1]))
                     if x_chiplet.in_module_coord[0] > source_chiplet.in_module_coord[0]:
                         inter_coupler_x -= FuncArea.fab_model.inter_sparsity
                 else:
-                    inter_coupler_x = self.left[0] + (source[0] - self.left[0]) // FuncArea.fab_model.inter_sparsity * FuncArea.fab_model.inter_sparsity
+                    inter_coupler_x = (
+                        self.left[0]
+                        + (source[0] - self.left[0])
+                        // FuncArea.fab_model.inter_sparsity
+                        * FuncArea.fab_model.inter_sparsity
+                    )
                     if inter_coupler_x == self.left[0]:
                         inter_coupler_x += FuncArea.fab_model.inter_sparsity
                     x_chiplet = self.get_node_chiplet((inter_coupler_x, source[1]))
@@ -1366,20 +1575,33 @@ class ComputeModule(FuncArea):
                 if source_chiplet.in_module_coord[0] == target_chiplet.in_module_coord[0]:
                     inter_coupler_y = target[1]
                 elif source[1] < target[1]:
-                    inter_coupler_y = self.top[0] + (target[1] - self.top[0]) // FuncArea.fab_model.inter_sparsity * FuncArea.fab_model.inter_sparsity
+                    inter_coupler_y = (
+                        self.top[0]
+                        + (target[1] - self.top[0])
+                        // FuncArea.fab_model.inter_sparsity
+                        * FuncArea.fab_model.inter_sparsity
+                    )
                     if inter_coupler_y == self.top[0]:
                         inter_coupler_y += FuncArea.fab_model.inter_sparsity
                     y_chiplet = self.get_node_chiplet((target[0], inter_coupler_y))
                     if y_chiplet.in_module_coord[1] < target_chiplet.in_module_coord[1]:
                         inter_coupler_y += FuncArea.fab_model.inter_sparsity
                 else:
-                    inter_coupler_y = self.top[0] + ((target[1] - self.top[0] - 1) // FuncArea.fab_model.inter_sparsity + 1) * FuncArea.fab_model.inter_sparsity
+                    inter_coupler_y = (
+                        self.top[0]
+                        + (
+                            (target[1] - self.top[0] - 1)
+                            // FuncArea.fab_model.inter_sparsity
+                            + 1
+                        )
+                        * FuncArea.fab_model.inter_sparsity
+                    )
                     if inter_coupler_y >= self.bottom[0]:
                         inter_coupler_y -= FuncArea.fab_model.inter_sparsity
                     y_chiplet = self.get_node_chiplet((target[0], inter_coupler_y))
                     if y_chiplet.in_module_coord[1] > target_chiplet.in_module_coord[1]:
                         inter_coupler_y -= FuncArea.fab_model.inter_sparsity
-                        
+
                 if source[0] < inter_coupler_x:
                     for i in range(source[0] + 1, inter_coupler_x + 1):
                         path.append((i, source[1]))
@@ -1410,7 +1632,9 @@ class ComputeModule(FuncArea):
         else:
             node_graph = self.get_node_graph()
             if not nx.has_path(node_graph, source, target):
-                raise ValueError(f"No path between {source} and {target} in compute module {self}")
+                raise ValueError(
+                    f"No path between {source} and {target} in compute module {self}"
+                )
             path = nx.shortest_path(node_graph, source, target)
             return path
 
@@ -1425,40 +1649,80 @@ class ComputeModule(FuncArea):
         Returns:
             fidelity (float): The fidelity of the shortest path between the two nodes.
         """
-        assert self.has_node(source), f"source {source} is not in the compute module {self}"
-        assert self.has_node(target), f"target {target} is not in the compute module {self}"
+        assert self.has_node(source), (
+            f"source {source} is not in the compute module {self}"
+        )
+        assert self.has_node(target), (
+            f"target {target} is not in the compute module {self}"
+        )
 
         fidelity = 1.0
         if FuncArea.fab_model.compute_geometry == "square":
-            left_node, right_node = (source, target) if source[0] < target[0] else (target, source)
-            left_chiplet, right_chiplet = self.get_node_chiplet(left_node), self.get_node_chiplet(right_node)
+            left_node, right_node = (
+                (source, target) if source[0] < target[0] else (target, source)
+            )
+            left_chiplet, right_chiplet = (
+                self.get_node_chiplet(left_node),
+                self.get_node_chiplet(right_node),
+            )
             if left_chiplet.in_module_coord[0] == right_chiplet.in_module_coord[0]:
-                fidelity *= (left_chiplet.intra_fide ** 3) ** (right_node[0] - left_node[0])
+                fidelity *= (left_chiplet.intra_fide**3) ** (right_node[0] - left_node[0])
             else:
-                for i in range(left_chiplet.in_module_coord[0], right_chiplet.in_module_coord[0] + 1):
+                for i in range(
+                    left_chiplet.in_module_coord[0], right_chiplet.in_module_coord[0] + 1
+                ):
                     if i == left_chiplet.in_module_coord[0]:
-                        fidelity *= (left_chiplet.intra_fide ** 3) ** (left_chiplet.right - left_node[0])
+                        fidelity *= (left_chiplet.intra_fide**3) ** (
+                            left_chiplet.right - left_node[0]
+                        )
                     elif i == right_chiplet.in_module_coord[0]:
-                        curr_chiplet = self.chiplet_matrix[(i, left_chiplet.in_module_coord[1])]
-                        fidelity *= (curr_chiplet.intra_fide ** 3) ** (right_node[0] - curr_chiplet.left)
+                        curr_chiplet = self.chiplet_matrix[
+                            (i, left_chiplet.in_module_coord[1])
+                        ]
+                        fidelity *= (curr_chiplet.intra_fide**3) ** (
+                            right_node[0] - curr_chiplet.left
+                        )
                     else:
-                        curr_chiplet = self.chiplet_matrix[(i, left_chiplet.in_module_coord[1])]
-                        fidelity *= (curr_chiplet.intra_fide ** 3) ** (curr_chiplet.right - curr_chiplet.left)
+                        curr_chiplet = self.chiplet_matrix[
+                            (i, left_chiplet.in_module_coord[1])
+                        ]
+                        fidelity *= (curr_chiplet.intra_fide**3) ** (
+                            curr_chiplet.right - curr_chiplet.left
+                        )
             moved_left_node = (right_node[0], left_node[1])
-            top_node, bottom_node = (moved_left_node, right_node) if moved_left_node[1] < right_node[1] else (right_node, moved_left_node)
-            top_chiplet, bottom_chiplet = self.get_node_chiplet(top_node), self.get_node_chiplet(bottom_node)
+            top_node, bottom_node = (
+                (moved_left_node, right_node)
+                if moved_left_node[1] < right_node[1]
+                else (right_node, moved_left_node)
+            )
+            top_chiplet, bottom_chiplet = (
+                self.get_node_chiplet(top_node),
+                self.get_node_chiplet(bottom_node),
+            )
             if top_chiplet.in_module_coord[1] == bottom_chiplet.in_module_coord[1]:
-                fidelity *= (top_chiplet.intra_fide ** 3) ** (bottom_node[1] - top_node[1])
+                fidelity *= (top_chiplet.intra_fide**3) ** (bottom_node[1] - top_node[1])
             else:
-                for i in range(top_chiplet.in_module_coord[1], bottom_chiplet.in_module_coord[1] + 1):
+                for i in range(
+                    top_chiplet.in_module_coord[1], bottom_chiplet.in_module_coord[1] + 1
+                ):
                     if i == top_chiplet.in_module_coord[1]:
-                        fidelity *= (top_chiplet.intra_fide ** 3) ** (top_chiplet.bottom - top_node[1])
+                        fidelity *= (top_chiplet.intra_fide**3) ** (
+                            top_chiplet.bottom - top_node[1]
+                        )
                     elif i == bottom_chiplet.in_module_coord[1]:
-                        fidelity *= (bottom_chiplet.intra_fide ** 3) ** (bottom_node[1] - bottom_chiplet.top)
+                        fidelity *= (bottom_chiplet.intra_fide**3) ** (
+                            bottom_node[1] - bottom_chiplet.top
+                        )
                     else:
-                        curr_chiplet = self.chiplet_matrix[(top_chiplet.in_module_coord[0], i)]
-                        fidelity *= (curr_chiplet.intra_fide ** 3) ** (curr_chiplet.bottom - curr_chiplet.top)
-            fidelity *= (FuncArea.fab_model.inter_fide ** 3) ** self.get_inter_distance(source, target)
+                        curr_chiplet = self.chiplet_matrix[
+                            (top_chiplet.in_module_coord[0], i)
+                        ]
+                        fidelity *= (curr_chiplet.intra_fide**3) ** (
+                            curr_chiplet.bottom - curr_chiplet.top
+                        )
+            fidelity *= (FuncArea.fab_model.inter_fide**3) ** self.get_inter_distance(
+                source, target
+            )
         else:
             path = self.get_swap_path(source, target)
             for i in range(len(path) - 1):
@@ -1467,7 +1731,8 @@ class ComputeModule(FuncArea):
                 source_chiplet = self.get_node_chiplet(source_node)
                 target_chiplet = self.get_node_chiplet(target_node)
                 if source_chiplet == target_chiplet:
-                    fidelity *= source_chiplet.intra_fide ** 3
+                    fidelity *= source_chiplet.intra_fide**3
                 else:
-                    fidelity *= FuncArea.fab_model.inter_fide ** 3
+                    fidelity *= FuncArea.fab_model.inter_fide**3
+        return fidelity
         return fidelity

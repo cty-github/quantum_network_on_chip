@@ -9,7 +9,7 @@ class OpNode:
         self.depth = None
         self.qargs = qargs
         self.qubit_num = len(qargs)
-        assert self.qubit_num <=2, 'OpNodes should not have more than 2 qubits'
+        # assert self.qubit_num <=2, 'OpNodes should not have more than 2 qubits'
         if self.qubit_num == 1:
             self.q = self.qargs[0]
         elif self.qubit_num == 2:
@@ -48,6 +48,9 @@ class Circuit:
     def __init__(self, qubit_num):
         self.qubit_num = qubit_num
         self.circuit_lines = defaultdict(list) # each line contains a list of (node, role)
+        self.eqst_depths = defaultdict(int)
+        self.eqst_dist = 0
+
     def __copy__(self):
         new_instance = copy.deepcopy(self)
         return new_instance
@@ -154,7 +157,11 @@ class Circuit:
             elif not auto_commuting or c_role not in {None, 'c', 'mc'} or t_role not in {None, 't', 'mt'}:
                 break # not commutable
         return earliest_idx
-        
+
+    def get_earliest_index_for_lines(self, lines):
+        max_idx = max([self.get_line_depth(line) for line in lines])
+        return max_idx
+
     @property
     def depth(self):
         if not self.circuit_lines:
@@ -225,6 +232,14 @@ class Circuit:
             assert mop.shared == op.control, "Failed to update {} with {} because their control qubits are different {}".format(mop, op)
             mop.add_indiv(op.target)
             self.add_node_with_role(op.target, earliest_depth-1, mop, 'mt')
+    
+    def add_eqst_op(self, eqst_op, depth=None):
+        if depth is None:
+            depth = max([self.get_line_depth(qubit) for qubit in eqst_op.qargs]) + 1
+        for qubit in eqst_op.qargs:
+            self.add_node_with_role(qubit, depth-1, eqst_op, 'eqst')
+        self.eqst_depths[depth-1] = max(self.eqst_depths[depth-1], len(eqst_op.qargs))
+        self.eqst_dist += len(eqst_op.qargs) - 1
 
 
     def __repr__(self):
