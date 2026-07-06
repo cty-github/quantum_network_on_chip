@@ -548,6 +548,9 @@ class Package:
         module_x_size = old_module.right[0] - old_module.left[0] + 1
         module_y_size = old_module.bottom[0] - old_module.top[0] + 1
 
+        if x_interval < 1 or y_interval < 1:
+            return False
+
         if template == DesignTemplate.Stripe:
             if orient == DesignOrientation.X:
                 if module_y_size < 2 * stripe_interval + 1:
@@ -556,15 +559,9 @@ class Package:
                 if module_x_size < 2 * stripe_interval + 1:
                     return False
         elif template == DesignTemplate.Radial:
-            if module_x_size < 3 or module_y_size < 3:
-                return False
             if module_y_size < 2 * y_interval + 3:
                 return False
             if module_x_size < 2 * x_interval + 3:
-                return False
-            if module_x_size - 2 * x_interval - 1 < 1:
-                return False
-            if module_y_size - 2 * y_interval - 1 < 1:
                 return False
         elif template == DesignTemplate.Grid:
             if module_y_size < 2 * y_interval + 1:
@@ -1225,7 +1222,7 @@ class Package:
                     main_dir,
                     interval,
                 )
-            else:
+            elif min(x_size, y_size) >= 4 * self.fab_model.max_square_size + 1:
                 self.design_module_top_down(
                     old_compute_module,
                     DesignTemplate.Stripe,
