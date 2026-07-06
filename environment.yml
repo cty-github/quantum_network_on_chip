@@ -4,10 +4,14 @@ channels:
   - defaults
 dependencies:
   - python=3.10
+  - pip
   - ipykernel
   - ipython
+  - jupyter
   - jupyter_client
   - jupyter_core
+  - jupyterlab
+  - notebook
   - matplotlib-inline
   - psutil
   - pyzmq
@@ -16,6 +20,6 @@ dependencies:
   - debugpy
   - prompt-toolkit
   - setuptools
-  - pip
+  - wheel
   - pip:
-      - -r requirements.txt
+      - -r requirements_cuda.txt
