@@ -1050,6 +1050,10 @@ class ComputeModule(FuncArea):
         chiplet_y_size = module_y_size // self.chiplet_y_num
         large_chiplet_x_num = module_x_size - self.chiplet_x_num * chiplet_x_size
         large_chiplet_y_num = module_y_size - self.chiplet_y_num * chiplet_y_size
+        self.chiplet_x_size = chiplet_x_size
+        self.chiplet_y_size = chiplet_y_size
+        self.large_chiplet_x_num = large_chiplet_x_num
+        self.large_chiplet_y_num = large_chiplet_y_num
         self.chiplets: list[ComputeChiplet] = []
         self.chiplet_matrix: dict[tuple[int, int], ComputeChiplet] = {}
         for i in range(self.chiplet_x_num):
@@ -1184,6 +1188,28 @@ class ComputeModule(FuncArea):
                 self.platforms.add(platform)
         return self.platforms
 
+    @staticmethod
+    def _get_chiplet_axis_index(
+        coordinate: int,
+        module_start: int,
+        chiplet_size: int,
+        large_chiplet_num: int,
+    ) -> int:
+        offset = coordinate - module_start
+        large_chiplet_size = chiplet_size + 1
+        large_chiplet_extent = large_chiplet_num * large_chiplet_size
+        if offset < large_chiplet_extent:
+            return offset // large_chiplet_size
+        return large_chiplet_num + (
+            offset - large_chiplet_extent
+        ) // chiplet_size
+
+    def _build_node_chiplet_dict(self):
+        self.node_chiplet_dict: dict[tuple[int, int], ComputeChiplet] = {}
+        for chiplet in self.get_chiplets():
+            for chiplet_node in chiplet.get_nodes():
+                self.node_chiplet_dict[chiplet_node] = chiplet
+
     def get_node_chiplet(self, node: tuple[int, int]) -> ComputeChiplet:
         """
         Get the compute chiplet that contains the node.
@@ -1194,9 +1220,31 @@ class ComputeModule(FuncArea):
         Returns:
             ComputeChiplet: The compute chiplet that contains the node.
         """
-        for chiplet in self.get_chiplets():
-            if chiplet.has_node(node):
-                return chiplet
+        if not self.has_node(node):
+            raise ValueError(
+                f"Node {node} is not in any chiplet in the compute module {self}"
+            )
+
+        if FuncArea.fab_model.compute_geometry == "square":
+            self.get_chiplets()
+            chiplet_x = self._get_chiplet_axis_index(
+                node[0],
+                self.left[0],
+                self.chiplet_x_size,
+                self.large_chiplet_x_num,
+            )
+            chiplet_y = self._get_chiplet_axis_index(
+                node[1],
+                self.top[0],
+                self.chiplet_y_size,
+                self.large_chiplet_y_num,
+            )
+            return self.chiplet_matrix[(chiplet_x, chiplet_y)]
+
+        if not hasattr(self, "node_chiplet_dict"):
+            self._build_node_chiplet_dict()
+        if node in self.node_chiplet_dict:
+            return self.node_chiplet_dict[node]
         raise ValueError(
             f"Node {node} is not in any chiplet in the compute module {self}"
         )
@@ -1290,6 +1338,71 @@ class ComputeModule(FuncArea):
             source_chiplet_coord[1] - target_chiplet_coord[1]
         )
 
+    def _get_nearest_platform_by_scan(
+        self,
+        node: tuple[int, int],
+        nearest_chiplets: list[ComputeChiplet],
+    ) -> tuple[int, int]:
+        min_distance = math.inf
+        nearest_platform = None
+        visited_chiplets: set[ComputeChiplet] = set()
+        for nearest_chiplet in nearest_chiplets:
+            if nearest_chiplet in visited_chiplets:
+                continue
+            visited_chiplets.add(nearest_chiplet)
+            for platform in self.get_chiplet_platforms(nearest_chiplet):
+                distance = self.get_distance(node, platform)
+                if distance < min_distance:
+                    min_distance = distance
+                    nearest_platform = platform
+        assert nearest_platform is not None, "No metro system in the package!!!"
+        return nearest_platform
+
+    @staticmethod
+    def _get_gap_candidate_indices(
+        gap: ComputeTransferGap,
+        chiplet: ComputeChiplet,
+        target_index: int,
+    ) -> list[int]:
+        step = FuncArea.fab_model.inter_sparsity
+        if step <= 0:
+            return []
+
+        if gap.axis == 0:
+            span_start = max(gap.start, chiplet.left)
+            span_end = min(gap.end, chiplet.right)
+        else:
+            span_start = max(gap.start, chiplet.top)
+            span_end = min(gap.end, chiplet.bottom)
+        if span_start > span_end:
+            return []
+
+        first_k = max(0, (span_start - gap.start + step - 1) // step)
+        last_k = (span_end - gap.start) // step
+        if first_k > last_k:
+            return []
+
+        base_k = (target_index - gap.start) // step
+        candidate_ks = {
+            min(max(base_k, first_k), last_k),
+            min(max(base_k + 1, first_k), last_k),
+        }
+        return [gap.start + k * step for k in sorted(candidate_ks)]
+
+    def _get_chiplet_gap_platform_candidates(
+        self,
+        gap: ComputeTransferGap,
+        platform_pos: int,
+        chiplet: ComputeChiplet,
+        node: tuple[int, int],
+    ) -> list[tuple[int, int]]:
+        return [
+            get_full_space_tuple(platform_pos, gap.axis, index)
+            for index in self._get_gap_candidate_indices(
+                gap, chiplet, node[gap.axis]
+            )
+        ]
+
     def get_nearest_platform(self, node: tuple[int, int]) -> tuple[int, int]:
         """
         Get the nearest platform to the node in the compute module.
@@ -1320,24 +1433,56 @@ class ComputeModule(FuncArea):
             right_inter_distance,
             bottom_inter_distance,
         )
-        nearest_chiplets: set[ComputeChiplet] = set()
-        if left_inter_distance == min_inter_distance:
-            nearest_chiplets.add(self.chiplet_matrix[(0, chiplet.in_module_coord[1])])
-        if top_inter_distance == min_inter_distance:
-            nearest_chiplets.add(self.chiplet_matrix[(chiplet.in_module_coord[0], 0)])
-        if right_inter_distance == min_inter_distance:
-            nearest_chiplets.add(
-                self.chiplet_matrix[(self.chiplet_x_num - 1, chiplet.in_module_coord[1])]
+        boundary_choices: list[
+            tuple[ComputeChiplet, ComputeTransferGap, int]
+        ] = []
+        if self.left[2] and left_inter_distance == min_inter_distance:
+            boundary_choices.append(
+                (
+                    self.chiplet_matrix[(0, chiplet.in_module_coord[1])],
+                    self.left[2],
+                    self.left[0],
+                )
             )
-        if bottom_inter_distance == min_inter_distance:
-            nearest_chiplets.add(
-                self.chiplet_matrix[(chiplet.in_module_coord[0], self.chiplet_y_num - 1)]
+        if self.top[2] and top_inter_distance == min_inter_distance:
+            boundary_choices.append(
+                (
+                    self.chiplet_matrix[(chiplet.in_module_coord[0], 0)],
+                    self.top[2],
+                    self.top[0],
+                )
             )
+        if self.right[2] and right_inter_distance == min_inter_distance:
+            boundary_choices.append(
+                (
+                    self.chiplet_matrix[
+                        (self.chiplet_x_num - 1, chiplet.in_module_coord[1])
+                    ],
+                    self.right[2],
+                    self.right[0],
+                )
+            )
+        if self.bottom[2] and bottom_inter_distance == min_inter_distance:
+            boundary_choices.append(
+                (
+                    self.chiplet_matrix[
+                        (chiplet.in_module_coord[0], self.chiplet_y_num - 1)
+                    ],
+                    self.bottom[2],
+                    self.bottom[0],
+                )
+            )
+
+        nearest_chiplets = [choice[0] for choice in boundary_choices]
+        if FuncArea.fab_model.compute_geometry != "square":
+            return self._get_nearest_platform_by_scan(node, nearest_chiplets)
 
         min_distance = math.inf
         nearest_platform = None
-        for nearest_chiplet in nearest_chiplets:
-            for platform in self.get_chiplet_platforms(nearest_chiplet):
+        for nearest_chiplet, gap, platform_pos in boundary_choices:
+            for platform in self._get_chiplet_gap_platform_candidates(
+                gap, platform_pos, nearest_chiplet, node
+            ):
                 distance = self.get_distance(node, platform)
                 if distance < min_distance:
                     min_distance = distance

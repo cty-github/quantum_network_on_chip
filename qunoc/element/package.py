@@ -1,6 +1,7 @@
 import copy
 import logging
 import math
+import multiprocessing as mp
 import os
 import pickle
 import random
@@ -8,7 +9,6 @@ from enum import Enum, auto
 from itertools import product
 from numbers import Integral
 
-import torch
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
@@ -37,6 +37,41 @@ from .chiplet import (
     TransferLine,
     get_full_space_tuple,
 )
+
+
+_TRANSFER_ESTIMATE_PACKAGE = None
+
+
+def _init_transfer_estimate_worker(package):
+    global _TRANSFER_ESTIMATE_PACKAGE
+    _TRANSFER_ESTIMATE_PACKAGE = package
+    FuncArea.fab_model = package.fab_model
+    Gap.fab_model = package.fab_model
+
+
+def _estimate_transfer_pair_chunk(
+    transfer_pairs: list[tuple[tuple[int, int], tuple[int, int]]]
+) -> list[float]:
+    assert _TRANSFER_ESTIMATE_PACKAGE is not None
+    fidelity_list = []
+    for transfer_pair in transfer_pairs:
+        _, fidelity = _TRANSFER_ESTIMATE_PACKAGE.get_shortest_path(*transfer_pair)
+        fidelity_list.append(fidelity)
+    return fidelity_list
+
+
+def _chunk_transfer_pairs(
+    transfer_pairs: list[tuple[tuple[int, int], tuple[int, int]]],
+    num_workers: int,
+) -> list[list[tuple[tuple[int, int], tuple[int, int]]]]:
+    if len(transfer_pairs) == 0:
+        return []
+    task_count = min(len(transfer_pairs), max(1, num_workers * 4))
+    chunk_size = math.ceil(len(transfer_pairs) / task_count)
+    return [
+        transfer_pairs[start : start + chunk_size]
+        for start in range(0, len(transfer_pairs), chunk_size)
+    ]
 
 
 class DesignTemplate(Enum):
@@ -1532,42 +1567,47 @@ class Package:
             self.metro_topology.add_edge(
                 transfer_chiplet_u, transfer_chiplet_v, coupler=interchange
             )
-        all_pairs_shortest_path_dict = dict(
-            nx.all_pairs_shortest_path(self.metro_topology)
-        )
         self.interchange_path_dict: dict[
             TransferChiplet, dict[TransferChiplet, Path]
         ] = {}
-        for transfer_chiplet_u, all_targets_dict in all_pairs_shortest_path_dict.items():
-            self.interchange_path_dict[transfer_chiplet_u] = {}
-            for transfer_chiplet_v, shortest_path in all_targets_dict.items():
-                nodes: list[tuple[int, int]] = []
-                for i in range(len(shortest_path) - 1):
-                    interchange: Coupler = self.metro_topology.edges[
-                        (shortest_path[i], shortest_path[i + 1])
-                    ]["coupler"]
-                    if shortest_path[i].has_node(interchange.qubit_u):
-                        nodes.extend([interchange.qubit_u, interchange.qubit_v])
-                    elif shortest_path[i].has_node(interchange.qubit_v):
-                        nodes.extend([interchange.qubit_v, interchange.qubit_u])
-                roads: list[Road] = []
-                for i in range(len(nodes) - 1):
-                    if i % 2 == 0:
-                        road = InterChipletRoad(
-                            nodes[i],
-                            nodes[i + 1],
-                            shortest_path[i // 2],
-                            shortest_path[i // 2 + 1],
-                            self.fab_model.inter_fide,
-                        )
-                    else:
-                        road = IntraTransferRoad(
-                            nodes[i], nodes[i + 1], shortest_path[i // 2 + 1]
-                        )
-                    roads.append(road)
-                self.interchange_path_dict[transfer_chiplet_u][transfer_chiplet_v] = Path(
-                    roads
+        for source_transfer_chiplet, shortest_paths in nx.all_pairs_shortest_path(
+            self.metro_topology
+        ):
+            self.interchange_path_dict[source_transfer_chiplet] = {}
+            for target_transfer_chiplet, shortest_path in shortest_paths.items():
+                self.interchange_path_dict[source_transfer_chiplet][
+                    target_transfer_chiplet
+                ] = self._build_interchange_path(shortest_path)
+
+    def _build_interchange_path(
+        self, shortest_path: list[TransferChiplet]
+    ) -> Path:
+        nodes: list[tuple[int, int]] = []
+        for i in range(len(shortest_path) - 1):
+            interchange: Coupler = self.metro_topology.edges[
+                (shortest_path[i], shortest_path[i + 1])
+            ]["coupler"]
+            if shortest_path[i].has_node(interchange.qubit_u):
+                nodes.extend([interchange.qubit_u, interchange.qubit_v])
+            elif shortest_path[i].has_node(interchange.qubit_v):
+                nodes.extend([interchange.qubit_v, interchange.qubit_u])
+
+        roads: list[Road] = []
+        for i in range(len(nodes) - 1):
+            if i % 2 == 0:
+                road = InterChipletRoad(
+                    nodes[i],
+                    nodes[i + 1],
+                    shortest_path[i // 2],
+                    shortest_path[i // 2 + 1],
+                    self.fab_model.inter_fide,
                 )
+            else:
+                road = IntraTransferRoad(
+                    nodes[i], nodes[i + 1], shortest_path[i // 2 + 1]
+                )
+            roads.append(road)
+        return Path(roads)
 
     def complete_package(self):
         """
@@ -1700,7 +1740,9 @@ class Package:
                 )
             )
         assert (
-            target_transfer_chiplet in self.interchange_path_dict[source_transfer_chiplet]
+            source_transfer_chiplet in self.interchange_path_dict
+            and target_transfer_chiplet
+            in self.interchange_path_dict[source_transfer_chiplet]
         ), "Unlinked transfer chiplet: {} -> {}".format(
             source_transfer_chiplet, target_transfer_chiplet
         )
@@ -1787,7 +1829,55 @@ class Package:
         path, _ = self.get_shortest_path(source, target)
         return (len(path.roads) - 1) // 2
 
-    def estimate_transfer(self, num: int = None) -> tuple[float, float]:
+    def _estimate_transfer_fidelities(
+        self, transfer_pairs: list[tuple[tuple[int, int], tuple[int, int]]]
+    ) -> list[float]:
+        fidelity_list = []
+        for transfer_pair in transfer_pairs:
+            _, fidelity = self.get_shortest_path(*transfer_pair)
+            fidelity_list.append(fidelity)
+        return fidelity_list
+
+    def _estimate_transfer_fidelities_parallel(
+        self,
+        transfer_pairs: list[tuple[tuple[int, int], tuple[int, int]]],
+        num_workers: int,
+    ) -> list[float]:
+        if "fork" not in mp.get_all_start_methods():
+            logging.warning(
+                "Parallel transfer estimation requires fork; falling back to serial."
+            )
+            return self._estimate_transfer_fidelities(transfer_pairs)
+
+        worker_count = min(max(1, int(num_workers)), len(transfer_pairs))
+        chunks = _chunk_transfer_pairs(transfer_pairs, worker_count)
+        if worker_count <= 1 or len(chunks) <= 1:
+            return self._estimate_transfer_fidelities(transfer_pairs)
+
+        try:
+            context = mp.get_context("fork")
+            with context.Pool(
+                processes=worker_count,
+                initializer=_init_transfer_estimate_worker,
+                initargs=(self,),
+            ) as pool:
+                fidelity_chunks = pool.map(_estimate_transfer_pair_chunk, chunks)
+        except (OSError, RuntimeError) as error:
+            logging.warning(
+                "Parallel transfer estimation failed; falling back to serial: %s",
+                error,
+            )
+            return self._estimate_transfer_fidelities(transfer_pairs)
+
+        return [
+            fidelity
+            for fidelity_chunk in fidelity_chunks
+            for fidelity in fidelity_chunk
+        ]
+
+    def estimate_transfer(
+        self, num: int = None, num_workers: int = 1
+    ) -> tuple[float, float]:
         """
         Estimate the transfer fidelity of the package.
 
@@ -1795,6 +1885,7 @@ class Package:
 
         Args:
             num (int): The number of transfer pairs to select.
+            num_workers (int): Number of worker processes used for pair scoring.
 
         Returns:
             tuple[float, float]: The mean and standard deviation of the transfer fidelity.
@@ -1802,10 +1893,12 @@ class Package:
         if num is None:
             num = int(math.sqrt(self.node_num))
         transfer_pairs = self.random_transfer_pairs(num)
-        fidelity_list = []
-        for transfer_pair in transfer_pairs:
-            _, fidelity = self.get_shortest_path(*transfer_pair)
-            fidelity_list.append(fidelity)
+        if num_workers is not None and int(num_workers) > 1:
+            fidelity_list = self._estimate_transfer_fidelities_parallel(
+                transfer_pairs, int(num_workers)
+            )
+        else:
+            fidelity_list = self._estimate_transfer_fidelities(transfer_pairs)
         return np.mean(fidelity_list), np.std(fidelity_list) / np.mean(fidelity_list)
 
     def estimate_cost(self) -> float:
@@ -1824,7 +1917,7 @@ class Package:
             cost += self.fab_model.get_cost(transfer_chiplet.get_capacity())
         return cost
 
-    def estimate_score(self, num: int = None) -> float:
+    def estimate_score(self, num: int = None, num_workers: int = 1) -> float:
         """
         Estimate the efficiency of package considering the yield cost.
 
@@ -1832,13 +1925,14 @@ class Package:
 
         Args:
             num (int): The number of transfer pairs selected to estimate the package.
+            num_workers (int): Number of worker processes used for pair scoring.
 
         Returns:
             float: The estimated efficiency of the package.
         """
         if num is None:
             num = int(self.node_num**0.8)
-        fide_avg, fide_std = self.estimate_transfer(num)
+        fide_avg, fide_std = self.estimate_transfer(num, num_workers=num_workers)
         return (
             -math.log(1 - fide_avg) / fide_std * len(self.compute_nodes) / (self.node_num)
         )

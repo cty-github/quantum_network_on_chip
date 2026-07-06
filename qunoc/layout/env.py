@@ -17,6 +17,7 @@ class QuNoCEnv(gym.Env):
         fab_model (FabricateModel): Fabrication model for the quantum chiplet.
         result_dir (str): Directory to save the results.
         patience (int): Number of steps to wait before stopping if no improvement.
+        estimate_workers (int): Number of worker processes used for scoring sampled pairs.
 
         package (Package): The package to perform training.
         last_score (float): The last score of the package.
@@ -40,6 +41,7 @@ class QuNoCEnv(gym.Env):
         fab_model: FabricateModel = FabricateModel(),
         result_dir: str = None,
         patience: int = 10,
+        estimate_workers: int = 1,
     ):
         """
         Initialize the quantum network-on-chip (NoC) layout environment.
@@ -49,12 +51,14 @@ class QuNoCEnv(gym.Env):
             fab_model (FabricateModel): Fabrication model for the quantum chiplet.
             result_dir (str): Directory to save the results.
             patience (int): Number of steps to wait before stopping if no improvement.
+            estimate_workers (int): Number of worker processes used for scoring sampled pairs.
         """
         super(QuNoCEnv, self).__init__()
         self.package_size = package_size
         self.fab_model = fab_model
         self.result_dir = result_dir
         self.patience = patience
+        self.estimate_workers = estimate_workers
 
         low_per_channel = np.array([0, 0, 0, 0, 0], dtype=np.int32)
         high_per_channel = np.array(
@@ -110,7 +114,7 @@ class QuNoCEnv(gym.Env):
     ) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
         action = self.deserialize_action(action)
         if action is None:
-            reward = -1e8
+            reward = -2
         else:
             self.package.design_module_top_down(**action, record=record)
             score = self.estimate()
@@ -150,7 +154,7 @@ class QuNoCEnv(gym.Env):
         Returns:
             float: The evaluation score of the package.
         """
-        return self.package.estimate_score()
+        return self.package.estimate_score(num_workers=self.estimate_workers)
 
     def deserialize_action(self, action_vector: list) -> dict | None:
         """

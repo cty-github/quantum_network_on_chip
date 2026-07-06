@@ -3,8 +3,9 @@ import os
 import torch
 import torch.nn as nn
 from stable_baselines3 import PPO
-from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
+from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.policies import ActorCriticPolicy
+from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
 from .env import *
 
@@ -74,6 +75,62 @@ class LayoutPolicy(ActorCriticPolicy):
         )
 
 
+class RolloutProgressCallback(BaseCallback):
+    """
+    Print PPO rollout collection progress before each policy update.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.progress_interval = 8
+        self.rollout_index = 0
+        self.rollout_steps = 0
+        self.rollout_target_steps = 0
+        self.rollout_episodes = 0
+
+    def _on_rollout_start(self) -> None:
+        self.rollout_index += 1
+        self.rollout_steps = 0
+        self.rollout_episodes = 0
+        num_envs = getattr(self.training_env, "num_envs", 1)
+        self.rollout_target_steps = self.model.n_steps * num_envs
+        print(
+            f"[PPO collect] rollout={self.rollout_index} "
+            f"start target={self.rollout_target_steps} env_steps",
+            flush=True,
+        )
+
+    def _on_step(self) -> bool:
+        dones = self.locals.get("dones")
+        if dones is None:
+            num_envs = getattr(self.training_env, "num_envs", 1)
+        else:
+            num_envs = len(dones)
+            self.rollout_episodes += sum(bool(done) for done in dones)
+
+        self.rollout_steps += num_envs
+        should_print = (
+            self.rollout_steps % self.progress_interval == 0
+            or self.rollout_steps >= self.rollout_target_steps
+        )
+        if should_print:
+            print(
+                f"[PPO collect] rollout={self.rollout_index} "
+                f"collected={self.rollout_steps}/{self.rollout_target_steps} "
+                f"total_timesteps={self.num_timesteps} "
+                f"episodes_done={self.rollout_episodes}",
+                flush=True,
+            )
+        return True
+
+    def _on_rollout_end(self) -> None:
+        print(
+            f"[PPO collect] rollout={self.rollout_index} complete; "
+            "PPO update starts",
+            flush=True,
+        )
+
+
 class LayoutAgent:
     """
     A reinforcement learning agent for the QuNoCEnv environment.
@@ -94,7 +151,12 @@ class LayoutAgent:
             result_dir (str): Directory to save the results.
         """
         self.env = env
-        self.model = PPO(LayoutPolicy, env, verbose = 1)
+        self.model = PPO(
+            LayoutPolicy,
+            env,
+            verbose=1,
+            n_steps=256
+        )
         if pre_trained_model_path:
             self.load_model(pre_trained_model_path)
         self.result_dir = result_dir
@@ -107,7 +169,10 @@ class LayoutAgent:
             total_timesteps (int): Total timesteps for training.
         """
         print("Training agent...")
-        self.model.learn(total_timesteps = total_timesteps)
+        self.model.learn(
+            total_timesteps=total_timesteps,
+            callback=RolloutProgressCallback(),
+        )
         self.save_model()
     
     def design(self) -> Package:
