@@ -8,8 +8,8 @@ import math
 from itertools import product
 
 sys.path.append("..")
-from baseline.utils.utils import get_mech_highway_proportion
-from baseline.utils.utils import duration_modify_const
+from baseline.mech_utils import get_mech_highway_proportion
+from baseline.mech_utils import duration_modify_const
 from qunoc.element.chiplet import FabricateModel
 from qunoc.element.package import Package
 from qunoc.routing.circuit import Circuit

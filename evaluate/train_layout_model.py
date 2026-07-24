@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import copy
 import logging
 import subprocess
@@ -27,6 +28,40 @@ from qunoc.layout.training import (
 DEFAULT_TRAIN_CANVAS_SIZE = (1000, 200)
 DEFAULT_TRAIN_MAX_MODULE_SLOTS = 2048
 DEFAULT_TRAIN_RELATIVE_INTERVAL_BINS = (0.08, 0.12, 0.16, 0.22, 0.30, 0.40)
+
+
+class _TeeStream:
+    def __init__(self, *streams):
+        self._streams = streams
+
+    @property
+    def encoding(self):
+        return getattr(self._streams[0], "encoding", "utf-8")
+
+    @property
+    def errors(self):
+        return getattr(self._streams[0], "errors", "replace")
+
+    def write(self, data):
+        for stream in self._streams:
+            stream.write(data)
+        return len(data)
+
+    def flush(self):
+        for stream in self._streams:
+            stream.flush()
+
+    def isatty(self):
+        return any(getattr(stream, "isatty", lambda: False)() for stream in self._streams)
+
+
+@contextlib.contextmanager
+def _tee_training_output(log_path: Path):
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a", encoding="utf-8", buffering=1) as log_file:
+        with contextlib.redirect_stdout(_TeeStream(sys.stdout, log_file)):
+            with contextlib.redirect_stderr(_TeeStream(sys.stderr, log_file)):
+                yield
 
 
 def _read_config(config_path: Path) -> dict[str, Any]:
@@ -199,131 +234,135 @@ def run_training(config_path: Path) -> None:
 
     output_model_path, initial_model_path = _resolve_model_paths(config, config_path)
     output_model_path.parent.mkdir(parents=True, exist_ok=True)
-    run_manifest_path = output_model_path.with_name("run_manifest.json")
-    source_model_path = _resolve_source_model(output_model_path, initial_model_path, resume)
+    training_log_path = output_model_path.with_name("training.log")
+    with _tee_training_output(training_log_path):
+        print(f"Training log: {training_log_path}", flush=True)
+        run_manifest_path = output_model_path.with_name("run_manifest.json")
+        source_model_path = _resolve_source_model(output_model_path, initial_model_path, resume)
 
-    env_kwargs = _build_env_kwargs(config, tasks)
-    reference_env = QuNoCEnv(**env_kwargs)
+        env_kwargs = _build_env_kwargs(config, tasks)
+        reference_env = QuNoCEnv(**env_kwargs)
 
-    prepare_subprocess_thread_limits()
-    memory_per_worker_mb = workers.get("memory_per_worker_mb")
-    memory_per_worker_bytes = (
-        int(memory_per_worker_mb) * 1024 * 1024
-        if memory_per_worker_mb is not None
-        else None
-    )
-    requested_envs = workers.get("num_envs", "auto")
-    if isinstance(requested_envs, str) and requested_envs.lower() != "auto":
-        requested_envs = int(requested_envs)
-    allocation = resolve_cpu_allocation(
-        requested=requested_envs,
-        minimum=int(workers.get("num_envs_min", 1)),
-        maximum=(
-            int(workers["num_envs_max"])
-            if workers.get("num_envs_max") is not None
+        prepare_subprocess_thread_limits()
+        memory_per_worker_mb = workers.get("memory_per_worker_mb")
+        memory_per_worker_bytes = (
+            int(memory_per_worker_mb) * 1024 * 1024
+            if memory_per_worker_mb is not None
             else None
-        ),
-        reserve=int(workers.get("cpu_reserve", 2)),
-        sample_seconds=float(workers.get("cpu_sample_seconds", 0.25)),
-        memory_per_worker_bytes=memory_per_worker_bytes,
-    )
-
-    n_steps = int(ppo.get("n_steps", 16))
-    batch_size = int(ppo.get("batch_size", 32))
-    rollout_size = allocation.num_envs * n_steps
-    if batch_size > rollout_size:
-        raise ValueError(f"batch_size={batch_size} exceeds rollout size {rollout_size}.")
-    if rollout_size % batch_size:
-        logging.warning(
-            "PPO rollout size %s is not divisible by batch size %s.",
-            rollout_size,
-            batch_size,
+        )
+        requested_envs = workers.get("num_envs", "auto")
+        if isinstance(requested_envs, str) and requested_envs.lower() != "auto":
+            requested_envs = int(requested_envs)
+        allocation = resolve_cpu_allocation(
+            requested=requested_envs,
+            minimum=int(workers.get("num_envs_min", 1)),
+            maximum=(
+                int(workers["num_envs_max"])
+                if workers.get("num_envs_max") is not None
+                else None
+            ),
+            reserve=int(workers.get("cpu_reserve", 2)),
+            sample_seconds=float(workers.get("cpu_sample_seconds", 0.25)),
+            memory_per_worker_bytes=memory_per_worker_bytes,
         )
 
-    run_manifest = {
-        "artifact_type": "qunoc-layout-training-run",
-        "artifact_version": 1,
-        "status": "running",
-        "started_at": datetime.now(timezone.utc).isoformat(),
-        "config_path": str(config_path.resolve()),
-        "output_model_path": str(output_model_path),
-        "source_model_path": str(source_model_path) if source_model_path else None,
-        "task_domain": serialized_tasks,
-        "schema": {
-            "canvas_size": list(canvas_size),
-            "max_module_slots": int(env_kwargs["max_module_slots"]),
-            "relative_interval_bins": list(env_kwargs["relative_interval_bins"]),
-        },
-        "ppo": copy.deepcopy(ppo),
-        "cpu_allocation": allocation.to_dict(),
-        "code_provenance": _git_provenance(),
-    }
-    write_json_atomic(run_manifest_path, run_manifest)
-
-    training_env = reference_env
-    if allocation.num_envs > 1:
-        worker_env_kwargs = copy.deepcopy(env_kwargs)
-        factories = [
-            LayoutEnvFactory(
-                env_kwargs=worker_env_kwargs,
-                tasks=tasks,
-                worker_index=worker_index,
-                worker_count=allocation.num_envs,
-                cpu_id=cpu_id,
-                seed=int(ppo.get("seed", 42)),
+        n_steps = int(ppo.get("n_steps", 16))
+        batch_size = int(ppo.get("batch_size", 32))
+        rollout_size = allocation.num_envs * n_steps
+        if batch_size > rollout_size:
+            raise ValueError(f"batch_size={batch_size} exceeds rollout size {rollout_size}.")
+        if rollout_size % batch_size:
+            logging.warning(
+                "PPO rollout size %s is not divisible by batch size %s.",
+                rollout_size,
+                batch_size,
             )
-            for worker_index, cpu_id in enumerate(allocation.selected_cpu_ids)
-        ]
-        training_env = SubprocVecEnv(
-            factories,
-            start_method=str(workers.get("start_method", "forkserver")),
-        )
 
-    try:
-        agent = LayoutAgent(
-            training_env,
-            pre_trained_model_path=str(source_model_path) if source_model_path else None,
-            design_env=reference_env,
-            seed=int(ppo.get("seed", 42)),
-            learning_rate=float(ppo.get("learning_rate", 3e-4)),
-            n_steps=n_steps,
-            batch_size=batch_size,
-            ent_coef=float(ppo.get("ent_coef", 0.01)),
-            allow_legacy_model=False,
-            training_config=copy.deepcopy(config),
-            output_model_path=str(output_model_path),
-            run_manifest_path=str(run_manifest_path),
-            task_domain=serialized_tasks,
-            resource_provenance={"cpu_allocation": allocation.to_dict()},
-        )
-        target_timesteps = int(ppo.get("target_timesteps", 32768))
-        if source_model_path is None:
-            agent.train(total_timesteps=target_timesteps)
-        else:
-            agent.train_until(target_timesteps)
-        run_manifest.update(
-            {
-                "status": "completed",
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-                "trained_timesteps": agent.trained_timesteps,
-                "target_timesteps": target_timesteps,
-            }
-        )
-    except Exception as error:
-        run_manifest.update(
-            {
-                "status": "failed",
-                "failed_at": datetime.now(timezone.utc).isoformat(),
-                "error": str(error),
-                "error_type": type(error).__name__,
-            }
-        )
-        raise
-    finally:
-        if training_env is not reference_env:
-            training_env.close()
-        reference_env.close()
+        run_manifest = {
+            "artifact_type": "qunoc-layout-training-run",
+            "artifact_version": 1,
+            "status": "running",
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "config_path": str(config_path.resolve()),
+            "output_model_path": str(output_model_path),
+            "training_log_path": str(training_log_path),
+            "source_model_path": str(source_model_path) if source_model_path else None,
+            "task_domain": serialized_tasks,
+            "schema": {
+                "canvas_size": list(canvas_size),
+                "max_module_slots": int(env_kwargs["max_module_slots"]),
+                "relative_interval_bins": list(env_kwargs["relative_interval_bins"]),
+            },
+            "ppo": copy.deepcopy(ppo),
+            "cpu_allocation": allocation.to_dict(),
+            "code_provenance": _git_provenance(),
+        }
         write_json_atomic(run_manifest_path, run_manifest)
+
+        training_env = reference_env
+        if allocation.num_envs > 1:
+            worker_env_kwargs = copy.deepcopy(env_kwargs)
+            factories = [
+                LayoutEnvFactory(
+                    env_kwargs=worker_env_kwargs,
+                    tasks=tasks,
+                    worker_index=worker_index,
+                    worker_count=allocation.num_envs,
+                    cpu_id=cpu_id,
+                    seed=int(ppo.get("seed", 42)),
+                )
+                for worker_index, cpu_id in enumerate(allocation.selected_cpu_ids)
+            ]
+            training_env = SubprocVecEnv(
+                factories,
+                start_method=str(workers.get("start_method", "forkserver")),
+            )
+
+        try:
+            agent = LayoutAgent(
+                training_env,
+                pre_trained_model_path=str(source_model_path) if source_model_path else None,
+                design_env=reference_env,
+                seed=int(ppo.get("seed", 42)),
+                learning_rate=float(ppo.get("learning_rate", 3e-4)),
+                n_steps=n_steps,
+                batch_size=batch_size,
+                ent_coef=float(ppo.get("ent_coef", 0.01)),
+                allow_legacy_model=False,
+                training_config=copy.deepcopy(config),
+                output_model_path=str(output_model_path),
+                run_manifest_path=str(run_manifest_path),
+                task_domain=serialized_tasks,
+                resource_provenance={"cpu_allocation": allocation.to_dict()},
+            )
+            target_timesteps = int(ppo.get("target_timesteps", 32768))
+            if source_model_path is None:
+                agent.train(total_timesteps=target_timesteps)
+            else:
+                agent.train_until(target_timesteps)
+            run_manifest.update(
+                {
+                    "status": "completed",
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "trained_timesteps": agent.trained_timesteps,
+                    "target_timesteps": target_timesteps,
+                }
+            )
+        except Exception as error:
+            run_manifest.update(
+                {
+                    "status": "failed",
+                    "failed_at": datetime.now(timezone.utc).isoformat(),
+                    "error": str(error),
+                    "error_type": type(error).__name__,
+                }
+            )
+            raise
+        finally:
+            if training_env is not reference_env:
+                training_env.close()
+            reference_env.close()
+            write_json_atomic(run_manifest_path, run_manifest)
 
 
 if __name__ == "__main__":

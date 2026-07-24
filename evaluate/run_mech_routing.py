@@ -1,24 +1,31 @@
 import argparse
+import csv
+import json
+import sys
+from pathlib import Path
 
-try:
-    from .mech_routing_common import (
-        CHIPLET_LENGTH,
-        Case,
-        data_qubit_num,
-        exact_mech_shape,
-        sensate_spacing_case_fields,
-        write_rows,
-    )
-except ImportError:
-    from mech_routing_common import (
-        CHIPLET_LENGTH,
-        Case,
-        data_qubit_num,
-        exact_mech_shape,
-        sensate_spacing_case_fields,
-        write_rows,
-    )
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
+from baseline.mech_utils import (
+    CHIPLET_LENGTH,
+    Case,
+    aligned_logic_gate_fidelity,
+    DEFAULT_INTER_FIDE,
+    DEFAULT_INTER_SPARSITY,
+    comparison_fab_model,
+    data_qubit_num,
+    exact_mech_shape,
+    get_field,
+    get_mech_circuit_duration,
+    run_mech,
+    sensate_spacing_case_fields,
+)
+
+
+ALGORITHMS = ["vqe", "qft", "qaoa", "bv"]
+BASE_OUT = PROJECT_ROOT / "evaluate" / "result" / "mechbaseline"
 
 EXPERIMENT_HEADERS = {
     "package_size": ["PackageSize"],
@@ -141,6 +148,83 @@ CASE_BUILDERS = {
     "inter_fidelity": build_inter_fidelity_cases,
     "chiplet_sparsity": build_chiplet_sparsity_cases,
 }
+
+
+def write_rows(
+    exp_name: str,
+    headers: list[str],
+    cases: list[Case],
+) -> None:
+    out_dir = BASE_OUT / exp_name
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_csv = out_dir / "output.csv"
+
+    with out_csv.open("w", newline="", encoding="utf-8") as output_file:
+        writer = csv.writer(output_file)
+        writer.writerow(
+            ["Baseline"]
+            + headers
+            + [
+                "Algorithm",
+                "#DataQubit",
+                "#LogicGate",
+                "CircuitDuration",
+                "GateFidelity",
+                "IntraGate",
+                "InterGate",
+                "QSTDist",
+                "MeasNum",
+                "TotalFide",
+            ]
+        )
+
+        for case_index, case in enumerate(cases, start=1):
+            print(
+                f"[{exp_name}] running case {case_index}/{len(cases)}: "
+                f"axis={case['axis_values']}",
+                flush=True,
+            )
+            result = run_mech(
+                case["structure"],
+                case["package_size"],
+                case["chiplet_array_dim"],
+                case["chiplet_size"],
+                ALGORITHMS,
+                case["cross_link_sparsity"],
+                case["data_qubits"],
+            )
+
+            raw_path = out_dir / f"{case['raw_name']}.json"
+            with raw_path.open("w", encoding="utf-8") as raw_file:
+                json.dump(result, raw_file, ensure_ascii=False, indent=2)
+
+            model = comparison_fab_model(
+                geometry=case.get("geometry", case["structure"]),
+                inter_sparsity=case.get("inter_sparsity", DEFAULT_INTER_SPARSITY),
+                inter_fide=case.get("inter_fide", DEFAULT_INTER_FIDE),
+            )
+
+            for algorithm in ALGORITHMS:
+                algorithm_result = result[algorithm]
+                writer.writerow(
+                    [
+                        "mech",
+                        *case["axis_values"],
+                        algorithm,
+                        case["data_qubits"],
+                        get_field(algorithm_result, "logic_gate_num", default=""),
+                        get_mech_circuit_duration(algorithm_result),
+                        aligned_logic_gate_fidelity(algorithm_result, model),
+                        get_field(algorithm_result, "on_chip", "on-chip"),
+                        get_field(algorithm_result, "cross_chip", "cross-chip"),
+                        get_field(algorithm_result, "eqst_dist", default=0),
+                        get_field(algorithm_result, "meas_num"),
+                        "",
+                    ]
+                )
+            output_file.flush()
+
+    print(out_csv, flush=True)
 
 
 def run_experiment(experiment: str) -> None:

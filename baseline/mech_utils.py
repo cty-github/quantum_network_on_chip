@@ -1,34 +1,130 @@
 from __future__ import annotations
 
-import csv
-import json
 import math
-import sys
-from pathlib import Path
 from typing import Any
 
-
-EVALUATE_ROOT = Path(__file__).resolve().parent
-PROJECT_ROOT = EVALUATE_ROOT.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
+from baseline.MECH.Chiplet import (
+    custom_highway_layout,
+    gen_chiplet_array,
+    gen_highway_layout,
+    get_highway_qubits,
+)
 from baseline.MECH.MECHBenchmarks import MECH_experiments
-from baseline.utils.utils import get_mech_circuit_duration
-from qunoc.element.package import FabricateModel
+from qunoc.element.package import FabricateModel, OperationConfig
 
 
-ALGORITHMS = ["vqe", "qft", "qaoa", "bv"]
 CHIPLET_LENGTH = 10
 DEFAULT_INTER_SPARSITY = 3
 DEFAULT_INTER_FIDE = 0.983
 SENSATE_MAX_CAPACITY = 100
 SENSATE_MAX_LENGTH = 80
-BASE_OUT = EVALUATE_ROOT / "result" / "mechbaseline"
 
 Case = dict[str, Any]
 
 cache: dict[tuple[Any, ...], dict[str, dict[str, Any]]] = {}
+
+
+def get_mech_data_qubit_num(
+    structure,
+    chiplet_array_dim,
+    chiplet_size,
+    custom_highway_qubits=None,
+    custom_highway_edges=None,
+    cross_link_sparsity=1,
+):
+    graph = gen_chiplet_array(
+        structure,
+        chiplet_array_dim[0],
+        chiplet_array_dim[1],
+        chiplet_size[0],
+        chiplet_size[1],
+        cross_link_sparsity=cross_link_sparsity,
+    )
+    if custom_highway_qubits is not None:
+        if custom_highway_edges is None:
+            custom_highway_edges = []
+        custom_highway_layout(graph, custom_highway_qubits, custom_highway_edges)
+    else:
+        gen_highway_layout(graph)
+    return len(graph.nodes) - len(get_highway_qubits(graph))
+
+
+def get_mech_highway_proportion(
+    structure,
+    chiplet_array_dim,
+    chiplet_size,
+    custom_highway_qubits=None,
+    custom_highway_edges=None,
+    cross_link_sparsity=1,
+):
+    graph = gen_chiplet_array(
+        structure,
+        chiplet_array_dim[0],
+        chiplet_array_dim[1],
+        chiplet_size[0],
+        chiplet_size[1],
+        cross_link_sparsity=cross_link_sparsity,
+    )
+    if custom_highway_qubits is not None:
+        if custom_highway_edges is None:
+            custom_highway_edges = []
+        custom_highway_layout(graph, custom_highway_qubits, custom_highway_edges)
+    else:
+        gen_highway_layout(graph)
+    return len(get_highway_qubits(graph)) / len(graph.nodes)
+
+
+def get_mech_circuit_duration(
+    exp_result: dict, op_config: OperationConfig = OperationConfig()
+):
+    return (
+        exp_result["prep_exec_depth"]
+        * max(
+            op_config.reset_time,
+            op_config.single_time,
+            op_config.intra_time,
+            op_config.inter_time,
+        )
+        + exp_result["meas_depth"] * op_config.measure_time
+    )
+
+
+def get_mech_eqst_circuit_duration(exp_result: dict):
+    return exp_result["circuit_duration"]
+
+
+def get_mech_logic_gate_fide(
+    exp_result: dict,
+    chiplet_size: tuple[int, int],
+    fab_model: FabricateModel = FabricateModel(),
+):
+    logic_gate_num = exp_result["logic_gate_num"]
+    average_on_chip_num = exp_result["on_chip"] / logic_gate_num
+    average_cross_chip_num = exp_result["cross_chip"] / logic_gate_num
+    average_eqst_dist = exp_result.get("eqst_dist", 0) / logic_gate_num
+    return (
+        fab_model.get_intra_fide(chiplet_size[0] * chiplet_size[1])
+        ** average_on_chip_num
+    ) * (fab_model.inter_fide ** average_cross_chip_num) * (
+        fab_model.enhanced_fide ** average_eqst_dist
+    )
+
+
+op_config = OperationConfig()
+duration_modify_const = (
+    (
+        op_config.intra_time
+        + op_config.inter_time
+        + (op_config.measure_time + op_config.reset_time + op_config.single_time)
+    )
+    / 3
+) / max(
+    op_config.reset_time,
+    op_config.single_time,
+    op_config.intra_time,
+    op_config.inter_time,
+    op_config.measure_time,
+)
 
 
 def data_qubit_num(package_size: tuple[int, int]) -> int:
@@ -183,82 +279,3 @@ def run_mech(
         )
         cache[key] = result
     return cache[key]
-
-
-def write_rows(
-    exp_name: str,
-    headers: list[str],
-    cases: list[Case],
-) -> None:
-    out_dir = Path(BASE_OUT) / exp_name
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_csv = out_dir / "output.csv"
-
-    with out_csv.open("w", newline="", encoding="utf-8") as output_file:
-        writer = csv.writer(output_file)
-        writer.writerow(
-            ["Baseline"]
-            + headers
-            + [
-                "Algorithm",
-                "#DataQubit",
-                "#LogicGate",
-                "CircuitDuration",
-                "GateFidelity",
-                "IntraGate",
-                "InterGate",
-                "QSTDist",
-                "MeasNum",
-                "TotalFide",
-            ]
-        )
-
-        for case_index, case in enumerate(cases, start=1):
-            print(
-                f"[{exp_name}] running case {case_index}/{len(cases)}: "
-                f"axis={case['axis_values']}",
-                flush=True,
-            )
-            result = run_mech(
-                case["structure"],
-                case["package_size"],
-                case["chiplet_array_dim"],
-                case["chiplet_size"],
-                ALGORITHMS,
-                case["cross_link_sparsity"],
-                case["data_qubits"],
-            )
-
-            raw_path = out_dir / f"{case['raw_name']}.json"
-            with raw_path.open("w", encoding="utf-8") as raw_file:
-                json.dump(result, raw_file, ensure_ascii=False, indent=2)
-
-            model = comparison_fab_model(
-                geometry=case.get("geometry", case["structure"]),
-                inter_sparsity=case.get(
-                    "inter_sparsity", DEFAULT_INTER_SPARSITY
-                ),
-                inter_fide=case.get("inter_fide", DEFAULT_INTER_FIDE),
-            )
-
-            for algorithm in ALGORITHMS:
-                algorithm_result = result[algorithm]
-                writer.writerow(
-                    [
-                        "mech",
-                        *case["axis_values"],
-                        algorithm,
-                        case["data_qubits"],
-                        get_field(algorithm_result, "logic_gate_num", default=""),
-                        get_mech_circuit_duration(algorithm_result),
-                        aligned_logic_gate_fidelity(algorithm_result, model),
-                        get_field(algorithm_result, "on_chip", "on-chip"),
-                        get_field(algorithm_result, "cross_chip", "cross-chip"),
-                        get_field(algorithm_result, "eqst_dist", default=0),
-                        get_field(algorithm_result, "meas_num"),
-                        "",
-                    ]
-                )
-            output_file.flush()
-
-    print(out_csv, flush=True)

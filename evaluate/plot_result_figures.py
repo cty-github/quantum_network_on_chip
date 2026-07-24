@@ -360,7 +360,7 @@ def load_mech_scalability(root: Path, name: str, spec: dict) -> pd.DataFrame:
         # complete. Derive the same persisted metrics for the available cases.
         if str(root) not in sys.path:
             sys.path.insert(0, str(root))
-        from baseline.utils.utils import get_mech_circuit_duration, get_mech_logic_gate_fide
+        from baseline.mech_utils import get_mech_circuit_duration, get_mech_logic_gate_fide
         from qunoc.element.package import FabricateModel
 
         rows = []

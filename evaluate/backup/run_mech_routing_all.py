@@ -6,7 +6,7 @@ import math
 import os
 
 from baseline.MECH.MECHBenchmarks import MECH_experiments
-from baseline.utils.utils import get_mech_circuit_duration, get_mech_logic_gate_fide
+from baseline.mech_utils import get_mech_circuit_duration, get_mech_logic_gate_fide
 from qunoc.element.package import FabricateModel
 
 

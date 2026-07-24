@@ -37,6 +37,7 @@ Training output is a model-only artifact under `evaluate/result/layout_models/<r
 - `model.zip`
 - `model_manifest.json`
 - `run_manifest.json`
+- `training.log`
 
 The training script must not write package pickles, figures, or scalability CSVs.
 
@@ -98,7 +99,7 @@ Canonical files:
 - `evaluate/test_routing_scalability.py`
 - `evaluate/test_routing_scalability.yaml`
 - `evaluate/run_mech_routing.py`
-- `evaluate/mech_routing_common.py`
+- `baseline/mech_utils.py`
 - `baseline/MECH/`
 
 QuNoC routing consumes exact `package.pkl` paths from Step 2. If a required package is missing, run the matching layout scalability experiment first.

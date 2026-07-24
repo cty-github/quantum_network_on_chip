@@ -43,8 +43,7 @@ try:
         MECH_EQST_experiments,
         get_benchmark_program,
     )
-    from baseline.utils.utils import get_mech_eqst_circuit_duration
-    from evaluate.mech_routing_common import (
+    from baseline.mech_utils import (
         CHIPLET_LENGTH,
         DEFAULT_INTER_FIDE,
         DEFAULT_INTER_SPARSITY,
@@ -54,6 +53,7 @@ try:
         comparison_fab_model,
         data_qubit_num,
         exact_mech_shape,
+        get_mech_eqst_circuit_duration,
         sensate_spacing_case_fields,
     )
     from qunoc.element.benchmark import Control, get_program
