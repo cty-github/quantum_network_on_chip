@@ -8,7 +8,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from stable_baselines3 import PPO
-from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 from stable_baselines3.common.distributions import CategoricalDistribution
 from stable_baselines3.common.policies import ActorCriticPolicy
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
@@ -191,6 +191,61 @@ class RolloutProgressCallback(BaseCallback):
         )
 
 
+class CheckpointCallback(BaseCallback):
+    """Save resumable PPO checkpoints at a fixed timestep interval."""
+
+    def __init__(
+        self,
+        checkpoint_path: str | os.PathLike[str],
+        save_freq: int,
+        on_save=None,
+    ):
+        super().__init__()
+        self.checkpoint_path = Path(checkpoint_path)
+        self.save_freq = max(1, int(save_freq))
+        self.on_save = on_save
+        self.last_saved_timesteps = 0
+
+    def _save_checkpoint(self) -> None:
+        if self.num_timesteps <= self.last_saved_timesteps:
+            return
+        self.checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_fd, temporary_name = tempfile.mkstemp(
+            prefix=f".{self.checkpoint_path.stem}.",
+            suffix=self.checkpoint_path.suffix or ".zip",
+            dir=self.checkpoint_path.parent,
+        )
+        os.close(temporary_fd)
+        temporary_path = Path(temporary_name)
+        try:
+            self.model.save(str(temporary_path))
+            saved_temporary_path = temporary_path
+            if not saved_temporary_path.exists() and Path(
+                f"{temporary_path}.zip"
+            ).exists():
+                saved_temporary_path = Path(f"{temporary_path}.zip")
+            os.replace(saved_temporary_path, self.checkpoint_path)
+        finally:
+            temporary_path.unlink(missing_ok=True)
+            Path(f"{temporary_path}.zip").unlink(missing_ok=True)
+        self.last_saved_timesteps = int(self.num_timesteps)
+        print(
+            f"[PPO checkpoint] saved {self.checkpoint_path} "
+            f"at {self.last_saved_timesteps} timesteps",
+            flush=True,
+        )
+        if self.on_save is not None:
+            self.on_save(self.checkpoint_path, self.last_saved_timesteps)
+
+    def _on_step(self) -> bool:
+        if self.num_timesteps - self.last_saved_timesteps >= self.save_freq:
+            self._save_checkpoint()
+        return True
+
+    def _on_training_end(self) -> None:
+        self._save_checkpoint()
+
+
 class LayoutAgent:
     """PPO agent for fixed-schema package layout environments."""
 
@@ -239,15 +294,57 @@ class LayoutAgent:
     def trained_timesteps(self) -> int:
         return int(getattr(self.model, "num_timesteps", 0) or 0)
 
-    def train(self, total_timesteps: int = 10000, reset_num_timesteps: bool = True):
+    def write_checkpoint_manifest(
+        self,
+        checkpoint_path: str | os.PathLike[str],
+        trained_timesteps: int,
+    ) -> None:
+        checkpoint_path = Path(checkpoint_path)
+        manifest = build_model_manifest(
+            self.env,
+            trained_timesteps,
+            self.source_model_path,
+            self.training_config,
+            output_model_path=str(checkpoint_path.resolve()),
+            run_manifest_path=self.run_manifest_path,
+            task_domain=self.task_domain,
+            resource_provenance=self.resource_provenance,
+        )
+        manifest["artifact_role"] = "checkpoint"
+        write_model_manifest(checkpoint_path, manifest)
+
+    def train(
+        self,
+        total_timesteps: int = 10000,
+        reset_num_timesteps: bool = True,
+        checkpoint_path: str | os.PathLike[str] | None = None,
+        checkpoint_interval: int | None = None,
+        checkpoint_on_save=None,
+    ):
+        callbacks = [RolloutProgressCallback()]
+        if checkpoint_path is not None and checkpoint_interval is not None:
+            callbacks.append(
+                CheckpointCallback(
+                    checkpoint_path,
+                    checkpoint_interval,
+                    on_save=checkpoint_on_save or self.write_checkpoint_manifest,
+                )
+            )
+        callback = callbacks[0] if len(callbacks) == 1 else CallbackList(callbacks)
         self.model.learn(
             total_timesteps=total_timesteps,
-            callback=RolloutProgressCallback(),
+            callback=callback,
             reset_num_timesteps=reset_num_timesteps,
         )
         self.save_model()
 
-    def train_until(self, target_timesteps: int):
+    def train_until(
+        self,
+        target_timesteps: int,
+        checkpoint_path: str | os.PathLike[str] | None = None,
+        checkpoint_interval: int | None = None,
+        checkpoint_on_save=None,
+    ):
         remaining_timesteps = int(target_timesteps) - self.trained_timesteps
         if remaining_timesteps <= 0:
             print(
@@ -259,7 +356,13 @@ class LayoutAgent:
         print(
             f"Continue training from {self.trained_timesteps} to {target_timesteps} timesteps."
         )
-        self.train(remaining_timesteps, reset_num_timesteps=False)
+        self.train(
+            remaining_timesteps,
+            reset_num_timesteps=False,
+            checkpoint_path=checkpoint_path,
+            checkpoint_interval=checkpoint_interval,
+            checkpoint_on_save=checkpoint_on_save,
+        )
 
     def design(self, env: QuNoCEnv = None, seed: int = None) -> Package:
         design_env = env if env is not None else self.env

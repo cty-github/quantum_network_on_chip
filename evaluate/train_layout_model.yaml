@@ -73,5 +73,8 @@ workers:
 
 resume:
   continue_training: true
+  resume_from_checkpoint: true
+  checkpoint_enabled: true
+  checkpoint_interval_timesteps: 4096
   initial_model_path: null
   overwrite: false

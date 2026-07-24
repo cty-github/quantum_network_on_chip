@@ -114,6 +114,8 @@ def build_model_manifest(
 
 def manifest_path_for_model(model_path: str | os.PathLike[str]) -> Path:
     model_path = Path(model_path)
+    if model_path.stem == "checkpoint":
+        return model_path.with_name("checkpoint_manifest.json")
     return model_path.with_name("model_manifest.json")
 
 
@@ -153,8 +155,9 @@ def validate_model_manifest(model_path: str, env, allow_legacy: bool = True) -> 
     if manifest is None:
         if allow_legacy:
             return
+        manifest_name = manifest_path_for_model(model_path).name
         raise IncompatibleLayoutModelError(
-            f"Layout model {model_path} has no model_manifest.json. "
+            f"Layout model {model_path} has no {manifest_name}. "
             "Legacy models may only be loaded with explicit legacy compatibility."
         )
 

@@ -16,6 +16,7 @@ from stable_baselines3.common.vec_env import SubprocVecEnv
 from qunoc.layout.agent import LayoutAgent
 from qunoc.layout.artifacts import shared_layout_model_paths, write_json_atomic
 from qunoc.layout.env import QuNoCEnv
+from qunoc.layout.schema import manifest_path_for_model
 from qunoc.layout.training import (
     LayoutEnvFactory,
     build_layout_tasks,
@@ -185,10 +186,26 @@ def _resolve_source_model(
     output_model_path: Path,
     initial_model_path: Path | None,
     resume_config: dict[str, Any],
-) -> Path | None:
+) -> tuple[Path | None, bool]:
     output_exists = output_model_path.exists()
+    checkpoint_path = output_model_path.with_name("checkpoint.zip")
+    checkpoint_exists = checkpoint_path.exists()
     continue_training = bool(resume_config.get("continue_training", True))
+    resume_from_checkpoint = bool(resume_config.get("resume_from_checkpoint", True))
     overwrite = bool(resume_config.get("overwrite", False))
+
+    if checkpoint_exists and resume_from_checkpoint:
+        if initial_model_path is not None and checkpoint_path.resolve() != initial_model_path.resolve():
+            raise ValueError(
+                "Both checkpoint.zip and initial_model_path exist but point to different "
+                "checkpoints. Remove checkpoint.zip or unset resume.initial_model_path."
+            )
+        if output_exists and not continue_training:
+            raise FileExistsError(
+                f"Model already exists at {output_model_path}; set resume.continue_training "
+                "or resume.overwrite explicitly."
+            )
+        return checkpoint_path, True
 
     if output_exists and initial_model_path is not None:
         if output_model_path.resolve() != initial_model_path.resolve():
@@ -200,15 +217,15 @@ def _resolve_source_model(
 
     if output_exists:
         if continue_training:
-            return output_model_path
+            return output_model_path, False
         if not overwrite:
             raise FileExistsError(
                 f"Model already exists at {output_model_path}; set resume.continue_training "
                 "or resume.overwrite explicitly."
             )
-        return initial_model_path
+        return initial_model_path, False
 
-    return initial_model_path
+    return initial_model_path, False
 
 
 def run_training(config_path: Path) -> None:
@@ -238,7 +255,22 @@ def run_training(config_path: Path) -> None:
     with _tee_training_output(training_log_path):
         print(f"Training log: {training_log_path}", flush=True)
         run_manifest_path = output_model_path.with_name("run_manifest.json")
-        source_model_path = _resolve_source_model(output_model_path, initial_model_path, resume)
+        checkpoint_path = output_model_path.with_name("checkpoint.zip")
+        checkpoint_manifest_path = manifest_path_for_model(checkpoint_path)
+        checkpoint_interval = int(
+            resume.get(
+                "checkpoint_interval_timesteps",
+                ppo.get("checkpoint_interval_timesteps", 4096),
+            )
+        )
+        checkpoint_enabled = bool(resume.get("checkpoint_enabled", True))
+        if checkpoint_enabled and checkpoint_interval <= 0:
+            raise ValueError("resume.checkpoint_interval_timesteps must be positive.")
+        source_model_path, source_is_checkpoint = _resolve_source_model(
+            output_model_path,
+            initial_model_path,
+            resume,
+        )
 
         env_kwargs = _build_env_kwargs(config, tasks)
         reference_env = QuNoCEnv(**env_kwargs)
@@ -285,8 +317,12 @@ def run_training(config_path: Path) -> None:
             "started_at": datetime.now(timezone.utc).isoformat(),
             "config_path": str(config_path.resolve()),
             "output_model_path": str(output_model_path),
+            "checkpoint_path": str(checkpoint_path),
+            "checkpoint_manifest_path": str(checkpoint_manifest_path),
+            "checkpoint_interval_timesteps": checkpoint_interval if checkpoint_enabled else None,
             "training_log_path": str(training_log_path),
             "source_model_path": str(source_model_path) if source_model_path else None,
+            "source_is_checkpoint": source_is_checkpoint,
             "task_domain": serialized_tasks,
             "schema": {
                 "canvas_size": list(canvas_size),
@@ -335,11 +371,36 @@ def run_training(config_path: Path) -> None:
                 task_domain=serialized_tasks,
                 resource_provenance={"cpu_allocation": allocation.to_dict()},
             )
+
+            def record_checkpoint(checkpoint_file: Path, checkpoint_timesteps: int) -> None:
+                agent.write_checkpoint_manifest(checkpoint_file, checkpoint_timesteps)
+                run_manifest.update(
+                    {
+                        "last_checkpoint_path": str(checkpoint_file),
+                        "last_checkpoint_manifest_path": str(
+                            manifest_path_for_model(checkpoint_file)
+                        ),
+                        "last_checkpoint_timesteps": int(checkpoint_timesteps),
+                        "last_checkpoint_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+                write_json_atomic(run_manifest_path, run_manifest)
+
             target_timesteps = int(ppo.get("target_timesteps", 32768))
             if source_model_path is None:
-                agent.train(total_timesteps=target_timesteps)
+                agent.train(
+                    total_timesteps=target_timesteps,
+                    checkpoint_path=checkpoint_path if checkpoint_enabled else None,
+                    checkpoint_interval=checkpoint_interval if checkpoint_enabled else None,
+                    checkpoint_on_save=record_checkpoint if checkpoint_enabled else None,
+                )
             else:
-                agent.train_until(target_timesteps)
+                agent.train_until(
+                    target_timesteps,
+                    checkpoint_path=checkpoint_path if checkpoint_enabled else None,
+                    checkpoint_interval=checkpoint_interval if checkpoint_enabled else None,
+                    checkpoint_on_save=record_checkpoint if checkpoint_enabled else None,
+                )
             run_manifest.update(
                 {
                     "status": "completed",
@@ -348,6 +409,9 @@ def run_training(config_path: Path) -> None:
                     "target_timesteps": target_timesteps,
                 }
             )
+            if checkpoint_enabled:
+                checkpoint_path.unlink(missing_ok=True)
+                checkpoint_manifest_path.unlink(missing_ok=True)
         except Exception as error:
             run_manifest.update(
                 {

@@ -39,6 +39,13 @@ Training output is a model-only artifact under `evaluate/result/layout_models/<r
 - `run_manifest.json`
 - `training.log`
 
+During an unfinished training run, the same directory may also contain resumable checkpoint artifacts:
+
+- `checkpoint.zip`
+- `checkpoint_manifest.json`
+
+With the default `resume.resume_from_checkpoint: true`, rerunning the same command resumes from `checkpoint.zip` when it exists. After training reaches `ppo.target_timesteps` and writes the final `model.zip`, transient checkpoint files are removed.
+
 The training script must not write package pickles, figures, or scalability CSVs.
 
 ## 2. Layout scalability / package design
