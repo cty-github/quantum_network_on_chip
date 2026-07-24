@@ -1,4 +1,5 @@
 import logging
+import random as stdlib_random
 from collections import Counter, defaultdict
 from random import sample
 
@@ -15,7 +16,7 @@ def VQE(data_qubit_num, num_pauli_terms=4):
     paulis = []
     pauli_options = ["I", "X", "Y", "Z"]
     for _ in range(num_pauli_terms):
-        pauli_str = "".join(random.choice(pauli_options) for _ in range(data_qubit_num))
+        pauli_str = "".join(stdlib_random.choice(pauli_options) for _ in range(data_qubit_num))
         paulis.append(pauli_str)
     hamiltonian = SparsePauliOp(paulis)
     ansatz = hamiltonian_variational_ansatz(hamiltonian)

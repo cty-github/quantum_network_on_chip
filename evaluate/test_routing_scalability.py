@@ -11,7 +11,7 @@ from itertools import product
 from pathlib import Path
 from typing import Any
 
-sys.path.append("..")
+sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 import yaml
 
@@ -159,6 +159,14 @@ def _format_value(value: Any) -> str:
     return str(value)
 
 
+def _resolve_output_path(path_value: str | os.PathLike[str], *, base_dir: Path) -> str:
+    path = Path(path_value)
+    if not path.is_absolute():
+        path = base_dir / path
+    return str(path.resolve())
+
+
+
 def _set_nested(config: dict[str, Any], key_path: str, value: Any) -> None:
     parts = key_path.split(".")
     current = config
@@ -170,8 +178,10 @@ def _set_nested(config: dict[str, Any], key_path: str, value: Any) -> None:
 def load_experiment_config(path: str | Path | None) -> ExperimentConfig:
     default_raw = copy.deepcopy(DEFAULT_CONFIG)
     raw = default_raw
+    config_dir = Path(__file__).resolve().parent
     if path is not None:
-        config_path = Path(path)
+        config_path = Path(path).resolve()
+        config_dir = config_path.parent
         with config_path.open("r", encoding="utf-8") as file:
             if config_path.suffix.lower() in {".yaml", ".yml"}:
                 user_raw = yaml.safe_load(file) or {}
@@ -187,18 +197,28 @@ def load_experiment_config(path: str | Path | None) -> ExperimentConfig:
         if user_exps is not None:
             raw["experiments"] = copy.deepcopy(user_exps)
 
+    root_exp_dir = _resolve_output_path(
+        raw.get("exp_dir", DEFAULT_CONFIG["exp_dir"]),
+        base_dir=config_dir,
+    )
+    defaults = copy.deepcopy(raw.get("defaults", {}))
+    if "layout_root_dir" in defaults:
+        defaults["layout_root_dir"] = _resolve_output_path(
+            defaults["layout_root_dir"],
+            base_dir=config_dir,
+        )
+
     experiments: dict[str, ExperimentSpec] = {}
     for experiment_name, experiment_raw in raw.get("experiments", {}).items():
         if not isinstance(experiment_raw, dict):
             continue
+        experiment_exp_dir = experiment_raw.get(
+            "exp_dir",
+            os.path.join(root_exp_dir, experiment_name),
+        )
         experiments[experiment_name] = ExperimentSpec(
             name=experiment_name,
-            exp_dir=str(
-                experiment_raw.get(
-                    "exp_dir",
-                    os.path.join(raw.get("exp_dir", DEFAULT_CONFIG["exp_dir"]), experiment_name),
-                )
-            ),
+            exp_dir=_resolve_output_path(experiment_exp_dir, base_dir=config_dir),
             log_filename=str(experiment_raw.get("log_filename", raw.get("log_filename", DEFAULT_CONFIG["log_filename"]))),
             output_csv=str(experiment_raw.get("output_csv", raw.get("output_csv", DEFAULT_CONFIG["output_csv"]))),
             defaults=copy.deepcopy(experiment_raw.get("defaults", {})),
@@ -206,10 +226,10 @@ def load_experiment_config(path: str | Path | None) -> ExperimentConfig:
         )
 
     return ExperimentConfig(
-        exp_dir=str(raw.get("exp_dir", DEFAULT_CONFIG["exp_dir"])),
+        exp_dir=root_exp_dir,
         log_filename=str(raw.get("log_filename", DEFAULT_CONFIG["log_filename"])),
         output_csv=str(raw.get("output_csv", DEFAULT_CONFIG["output_csv"])),
-        defaults=copy.deepcopy(raw.get("defaults", {})),
+        defaults=defaults,
         experiments=experiments,
     )
 
@@ -273,12 +293,10 @@ def _build_layout_package_path(common_defaults: dict[str, Any], spec_name: str, 
     layout_root_dir = common_defaults.get("layout_root_dir", "./result/layout_scalability")
     layout_dir = os.path.join(layout_root_dir, spec_name)
     layout_strategy = str(run_config.get("layout_design_strategy", common_defaults.get("layout_design_strategy", "greedy")))
-
+    package_size = _resolve_package_size(run_config)
     if spec_name == "package_size":
-        package_size = _resolve_package_size(run_config)
         return os.path.join(layout_dir, f"{package_size[0]}_{layout_strategy}", "package.pkl")
     if spec_name == "package_shape":
-        package_size = _resolve_package_size(run_config)
         return os.path.join(layout_dir, f"{package_size[0]}_{package_size[1]}_{layout_strategy}", "package.pkl")
     if spec_name == "geometry":
         geometry = str(run_config.get("fab_model", {}).get("compute_geometry", "square"))
@@ -295,11 +313,10 @@ def _build_layout_package_path(common_defaults: dict[str, Any], spec_name: str, 
 
 def _build_result_dir_name(spec_name: str, run_config: dict[str, Any], algorithm: str) -> str:
     layout_strategy = str(run_config.get("layout_design_strategy", "greedy"))
+    package_size = _resolve_package_size(run_config)
     if spec_name == "package_size":
-        package_size = _resolve_package_size(run_config)
         return f"{package_size[0]}_{layout_strategy}_{algorithm}"
     if spec_name == "package_shape":
-        package_size = _resolve_package_size(run_config)
         return f"{package_size[0]}_{package_size[1]}_{layout_strategy}_{algorithm}"
     if spec_name == "geometry":
         geometry = str(run_config.get("fab_model", {}).get("compute_geometry", "square"))
@@ -316,19 +333,10 @@ def _build_result_dir_name(spec_name: str, run_config: dict[str, Any], algorithm
 def _route_once(common_defaults: dict[str, Any], spec: ExperimentSpec, run_config: dict[str, Any]) -> dict[str, Any]:
     package_path = _build_layout_package_path(common_defaults, spec.name, run_config)
     if not os.path.exists(package_path):
-        # try to find any available package under the layout root for this experiment
-        layout_root = common_defaults.get("layout_root_dir", "./result/layout_scalability")
-        candidates = list(Path(layout_root).joinpath(spec.name).rglob("package.pkl"))
-        if candidates:
-            # prefer greedy if present
-            greedy = [c for c in candidates if "greedy" in str(c.parent.name)]
-            chosen = greedy[0] if greedy else candidates[0]
-            logging.warning("Missing expected package %s, using fallback %s", package_path, chosen)
-            package_path = str(chosen)
-        else:
-            raise FileNotFoundError(
-                f"Missing layout package: {package_path}. Run evaluate/layout_scalability.py first."
-            )
+        raise FileNotFoundError(
+            f"Missing exact layout package: {package_path}. "
+            "Run evaluate/test_layout_scalability.py with matching layout parameters first."
+        )
 
     package = Package.from_pickle(filepath=package_path)
     package_size = package.package_size
@@ -451,7 +459,7 @@ def main() -> None:
     parser.add_argument(
         "--config",
         type=str,
-        default=str(Path(__file__).with_name("routing_scalability.yaml")),
+        default=str(Path(__file__).with_name("test_routing_scalability.yaml")),
         help="Path to a JSON/YAML config file.",
     )
     args = parser.parse_args()

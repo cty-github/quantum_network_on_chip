@@ -4,19 +4,20 @@ import csv
 import json
 import logging
 import os
+import random
 import sys
 from dataclasses import dataclass, field
 from itertools import product
 from pathlib import Path
 from typing import Any
 
-sys.path.append("..")
+sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 import yaml
-
 from qunoc.element.package import FabricateModel, Package, np
 from qunoc.layout.agent import LayoutAgent
 from qunoc.layout.env import QuNoCEnv
+from qunoc.layout.schema import read_model_manifest
 
 
 @dataclass
@@ -36,6 +37,7 @@ class ExperimentConfig:
     output_csv: str = "output.csv"
     defaults: dict[str, Any] = field(default_factory=dict)
     experiments: dict[str, ExperimentSpec] = field(default_factory=dict)
+    config_dir: Path = field(default_factory=lambda: Path(__file__).resolve().parent)
 
 
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -48,11 +50,18 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "design_strategy": "greedy",
         "compute_ratio": 0.8,
         "rl_patience": 5,
-        "rl_train_timesteps": None,
+        "rl_model_path": None,
+        "rl_estimate_workers": 1,
+        "rl_seed": None,
+        "rl_inference_seed": 1042,
+        "rl_score_seeds": [0],
+        "rl_canvas_size": None,
+        "rl_max_module_slots": None,
+        "rl_relative_interval_bins": None,
+        "rl_allow_legacy_model": False,
         "reuse_package": True,
         "save_package": True,
         "save_figure": True,
-        "reuse_agent": True,
         "fab_model": {
             "compute_geometry": "square",
             "inter_sparsity": 3,
@@ -174,6 +183,23 @@ def _format_value(value: Any) -> str:
     return str(value)
 
 
+def _resolve_path(path_value: str | None, *, base_dir: Path) -> Path | None:
+    if path_value is None:
+        return None
+    path = Path(path_value)
+    if not path.is_absolute():
+        path = base_dir / path
+    return path.resolve()
+
+
+def _resolve_output_path(path_value: str | os.PathLike[str], *, base_dir: Path) -> str:
+    path = Path(path_value)
+    if not path.is_absolute():
+        path = base_dir / path
+    return str(path.resolve())
+
+
+
 def _set_nested(config: dict[str, Any], key_path: str, value: Any) -> None:
     parts = key_path.split(".")
     current = config
@@ -227,25 +253,38 @@ def load_experiment_config(path: str | Path | None) -> ExperimentConfig:
     if "init_mapping" in raw and "init_mapping" not in raw["defaults"]:
         raw["defaults"]["init_mapping"] = raw["init_mapping"]
 
+    config_dir = Path(path).resolve().parent if path is not None else Path(__file__).resolve().parent
+    root_exp_dir = _resolve_output_path(
+        raw.get("exp_dir", DEFAULT_CONFIG["exp_dir"]),
+        base_dir=config_dir,
+    )
+
     experiments: dict[str, ExperimentSpec] = {}
     for experiment_name, experiment_raw in raw.get("experiments", {}).items():
         if not isinstance(experiment_raw, dict):
             continue
+        experiment_exp_dir = experiment_raw.get(
+            "exp_dir",
+            os.path.join(root_exp_dir, experiment_name),
+        )
         experiments[experiment_name] = ExperimentSpec(
             name=experiment_name,
-            exp_dir=str(experiment_raw.get("exp_dir", os.path.join(raw.get("exp_dir", DEFAULT_CONFIG["exp_dir"]), experiment_name))),
+            exp_dir=_resolve_output_path(experiment_exp_dir, base_dir=config_dir),
             log_filename=str(experiment_raw.get("log_filename", raw.get("log_filename", DEFAULT_CONFIG["log_filename"]))),
             output_csv=str(experiment_raw.get("output_csv", raw.get("output_csv", DEFAULT_CONFIG["output_csv"]))),
             defaults=copy.deepcopy(experiment_raw.get("defaults", {})),
             scalability=copy.deepcopy(experiment_raw.get("scalability", {})),
         )
 
+    defaults = copy.deepcopy(raw.get("defaults", {}))
+    defaults["_config_dir"] = str(config_dir)
     return ExperimentConfig(
-        exp_dir=str(raw.get("exp_dir", DEFAULT_CONFIG["exp_dir"])),
+        exp_dir=root_exp_dir,
         log_filename=str(raw.get("log_filename", DEFAULT_CONFIG["log_filename"])),
         output_csv=str(raw.get("output_csv", DEFAULT_CONFIG["output_csv"])),
-        defaults=copy.deepcopy(raw.get("defaults", {})),
+        defaults=defaults,
         experiments=experiments,
+        config_dir=config_dir,
     )
 
 
@@ -332,6 +371,40 @@ def _resolve_package_size(run_config: dict[str, Any]) -> tuple[int, int]:
     raise KeyError("run_config must define package_size or package_x_size.")
 
 
+def _build_rl_env_kwargs(
+    run_config: dict[str, Any],
+    fab_model: FabricateModel,
+    package_size: tuple[int, int],
+    result_dir: str | None,
+) -> dict[str, Any]:
+    seed = run_config.get("rl_seed")
+    seed = int(seed) if seed is not None else 0
+    score_seed = run_config.get("rl_score_seed")
+    score_seed = int(score_seed) if score_seed is not None else seed
+    score_seeds = run_config.get("rl_score_seeds") or [score_seed]
+    canvas_value = run_config.get("rl_canvas_size") or package_size
+    slot_value = run_config.get("rl_max_module_slots") or 256
+    interval_value = run_config.get("rl_relative_interval_bins") or [0.08, 0.12, 0.16, 0.22, 0.30, 0.40]
+    return {
+        "package_size": package_size,
+        "fab_model": fab_model,
+        "patience": int(run_config.get("rl_patience", 5)),
+        "result_dir": result_dir,
+        "estimate_workers": int(run_config.get("rl_estimate_workers", 1)),
+        "compute_ratio": float(run_config.get("compute_ratio", 0.8)),
+        "score_seed": score_seed,
+        "score_seeds": [int(value) for value in score_seeds],
+        "invalid_action_penalty": float(
+            run_config.get("rl_invalid_action_penalty", -2.0)
+        ),
+        "canvas_size": _normalize_package_size(canvas_value),
+        "max_module_slots": int(slot_value),
+        "relative_interval_bins": tuple(float(value) for value in interval_value),
+        "base_seed": seed,
+        "record_design_history": bool(run_config.get("rl_record_design_history", False)),
+    }
+
+
 def _build_package(
     run_config: dict[str, Any],
     fab_model: FabricateModel,
@@ -367,37 +440,73 @@ def _build_package(
             result_dir=result_dir,
         )
     if design_strategy == "rl":
-        env = QuNoCEnv(
-            package_size=package_size,
-            fab_model=fab_model,
-            patience=int(run_config.get("rl_patience", 5)),
-            result_dir=result_dir,
+        model_path = _resolve_path(
+            run_config.get("rl_model_path"),
+            base_dir=Path(run_config.get("_config_dir", Path(__file__).resolve().parent)),
         )
-        model_path = os.path.join(result_dir, "layout_agent.pth")
-        if run_config.get("reuse_agent", True) and os.path.exists(model_path):
-            agent = LayoutAgent(env, pre_trained_model_path=model_path, result_dir=result_dir)
-        else:
-            agent = LayoutAgent(env, result_dir=result_dir)
-            total_timesteps = run_config.get("rl_train_timesteps")
-            if total_timesteps is None:
-                total_timesteps = 100 * package_size[0] * package_size[1]
-            agent.train(total_timesteps=int(total_timesteps))
-        return agent.design()
+        if model_path is None:
+            raise ValueError(
+                "RL layout inference requires rl_model_path. Train first with "
+                "evaluate/train_layout_model.py; test_layout_scalability.py no longer trains models."
+            )
+        if not model_path.exists():
+            raise FileNotFoundError(f"Missing RL layout model: {model_path}")
+        model_manifest = read_model_manifest(model_path)
+        if model_manifest is None:
+            raise ValueError(
+                f"RL layout model {model_path} has no model_manifest.json. "
+                "Inference-only scalability does not load legacy checkpoints."
+            )
+        schema = model_manifest.get("schema", {})
+        run_config = copy.deepcopy(run_config)
+        run_config["rl_canvas_size"] = schema.get(
+            "canvas_size", run_config.get("rl_canvas_size", package_size)
+        )
+        run_config["rl_max_module_slots"] = schema.get(
+            "max_module_slots", run_config.get("rl_max_module_slots", 256)
+        )
+        run_config["rl_relative_interval_bins"] = schema.get(
+            "relative_interval_bins",
+            run_config.get("rl_relative_interval_bins", [0.08, 0.12, 0.16, 0.22, 0.30, 0.40]),
+        )
+        run_config["rl_record_design_history"] = False
+        design_env = QuNoCEnv(
+            **_build_rl_env_kwargs(
+                run_config,
+                fab_model,
+                package_size,
+                result_dir,
+            )
+        )
+        try:
+            agent = LayoutAgent(
+                design_env,
+                pre_trained_model_path=str(model_path),
+                design_env=design_env,
+                allow_legacy_model=bool(run_config.get("rl_allow_legacy_model", False)),
+            )
+            return agent.design(
+                env=design_env,
+                seed=int(run_config.get("rl_inference_seed", run_config.get("rl_seed") or 1042)),
+            )
+        finally:
+            design_env.close()
 
     raise ValueError(f"Unsupported design strategy: {design_strategy}")
 
 
 def _maybe_load_cached_package(result_dir: str, reuse_package: bool) -> Package | None:
     package_path = os.path.join(result_dir, "package.pkl")
-    if reuse_package and os.path.exists(package_path):
-        return Package.from_pickle(package_path)
-    return None
+    if not reuse_package or not os.path.exists(package_path):
+        return None
+    return Package.from_pickle(package_path)
 
 
 def _persist_package(package: Package, result_dir: str, save_package: bool, save_figure: bool) -> None:
     if save_package:
         package.to_pickle()
-        package.save_design_history()
+        if getattr(package, "record_design_history", True):
+            package.save_design_history()
     if save_figure:
         try:
             figure, _ = package.draw_qubits(axis_off=False)
@@ -407,6 +516,27 @@ def _persist_package(package: Package, result_dir: str, save_package: bool, save
             logging.warning(f"Failed to draw qubits: {error}")
 
 
+def _evaluate_package(
+    package: Package, score_seed: int | None = None
+) -> tuple[float, float, float]:
+    if score_seed is None:
+        score = package.estimate_score()
+        fidelity, fide_std = package.estimate_transfer()
+        return score, fidelity, fide_std
+
+    python_random_state = random.getstate()
+    numpy_random_state = np.random.get_state()
+    random.seed(score_seed)
+    np.random.seed(score_seed)
+    try:
+        score = package.estimate_score()
+        fidelity, fide_std = package.estimate_transfer()
+        return score, fidelity, fide_std
+    finally:
+        random.setstate(python_random_state)
+        np.random.set_state(numpy_random_state)
+
+
 def _record_design_failure(result_dir: str, error: Exception) -> None:
     failure_path = os.path.join(result_dir, "design_failed.json")
     try:
@@ -414,6 +544,7 @@ def _record_design_failure(result_dir: str, error: Exception) -> None:
             json.dump({"error": str(error), "type": type(error).__name__}, file, ensure_ascii=False, indent=2)
     except Exception as write_error:
         logging.warning("Failed to write design failure file for %s: %s", result_dir, write_error)
+
 
 
 def _run_experiment(common_defaults: dict[str, Any], spec: ExperimentSpec) -> None:
@@ -454,10 +585,12 @@ def _run_experiment(common_defaults: dict[str, Any], spec: ExperimentSpec) -> No
 
         fab_model = _build_fab_model(run_config)
         try:
-            package = _maybe_load_cached_package(
-                result_dir,
-                bool(run_config.get("reuse_package", True)),
-            )
+            package = None
+            if run_config.get("design_strategy") != "rl":
+                package = _maybe_load_cached_package(
+                    result_dir,
+                    bool(run_config.get("reuse_package", True)),
+                )
             if package is None:
                 package = _build_package(run_config, fab_model, result_dir)
                 _persist_package(
@@ -471,8 +604,14 @@ def _run_experiment(common_defaults: dict[str, Any], spec: ExperimentSpec) -> No
             _record_design_failure(result_dir, error)
             continue
 
-        score = package.estimate_score()
-        fidelity, fide_std = package.estimate_transfer()
+        score_seed = None
+        if run_config.get("design_strategy") == "rl":
+            rl_score_seed = run_config.get("rl_score_seed")
+            if rl_score_seed is None:
+                score_seeds = run_config.get("rl_score_seeds") or []
+                rl_score_seed = score_seeds[0] if score_seeds else None
+            score_seed = int(rl_score_seed) if rl_score_seed is not None else None
+        score, fidelity, fide_std = _evaluate_package(package, score_seed)
         with open(output_path, mode="a", newline="", encoding="utf-8") as file:
             writer = csv.writer(file)
             writer.writerow([
@@ -491,13 +630,27 @@ def _run_experiment(common_defaults: dict[str, Any], spec: ExperimentSpec) -> No
         )
 
 
+def _run_shared_rl(config_path: Path) -> None:
+    raise RuntimeError(
+        "--mode shared-rl has been removed from test_layout_scalability.py. "
+        "Use `python evaluate/train_layout_model.py --config evaluate/train_layout_model.yaml` "
+        "to train a model, then run test_layout_scalability.py with rl_model_path for design."
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Unified layout generation test runner.")
     parser.add_argument(
         "--config",
         type=str,
-        default=str(Path(__file__).with_name("layout_scalability.yaml")),
+        default=str(Path(__file__).with_name("test_layout_scalability.yaml")),
         help="Path to a JSON/YAML config file.",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=("sweep", "shared-rl"),
+        default="sweep",
+        help="Run sweeps. The legacy shared-rl mode now raises with migration instructions.",
     )
     args = parser.parse_args()
 
@@ -506,6 +659,12 @@ def main() -> None:
         fallback = Path(__file__).with_name(config_path.name)
         if fallback.is_file():
             config_path = fallback
+
+    if args.mode == "shared-rl":
+        if not config_path.is_file():
+            raise FileNotFoundError(f"Missing shared RL config: {config_path}")
+        _run_shared_rl(config_path)
+        return
 
     cfg = load_experiment_config(config_path if config_path.is_file() else None)
     if not cfg.experiments:

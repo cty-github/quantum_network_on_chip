@@ -1,8 +1,13 @@
 *.pyc
 *.pkl
+*.log
+*.console.log
 .vscode
 __pycache__
+.pytest_cache/
 setup.py
 test.py
 Dockerfile
 result
+evaluate/logs/
+evaluate/figure/

@@ -299,6 +299,7 @@ class Package:
         top_down_max_step: int = 10,
         bottom_up_init_type: np.ndarray = None,
         result_dir: str = None,
+        record_design_history: bool = True,
     ):
         """
         Initialize a package.
@@ -313,6 +314,7 @@ class Package:
             top_down_max_step (int): The max number of steps for top down design.
             bottom_up_init_type (np.ndarray): The initial type of nodes used for bottom up design.
             result_dir (str): The directory to save the design results.
+            record_design_history (bool): Whether to retain layout figures while designing.
         """
         self.package_size = package_size
         self.node_num = package_size[0] * package_size[1]
@@ -324,6 +326,7 @@ class Package:
         self.design_strategy = design_strategy
         self.top_down_max_step = top_down_max_step
         self.result_dir = result_dir
+        self.record_design_history = bool(record_design_history)
 
         self.design_history: list[plt.Figure] = []
 
@@ -399,11 +402,12 @@ class Package:
             for area in self.compute_modules + self.transfer_lines:
                 self.complete_area(area)
             self.complete_package()
-            try:
-                fig, _ = self.draw_qubits()
-                self.design_history.append(fig)
-            except Exception as e:
-                logging.warning(f"Failed to draw qubits: {e}")
+            if self.record_design_history:
+                try:
+                    fig, _ = self.draw_qubits()
+                    self.design_history.append(fig)
+                except Exception as e:
+                    logging.warning(f"Failed to draw qubits: {e}")
             if self.design_strategy == "stripe":
                 self.stripe_design()
             elif self.design_strategy == "grid":
@@ -604,6 +608,37 @@ class Package:
             if module_x_size < 2 * x_interval + 1:
                 return False
         return True
+
+    @staticmethod
+    def count_modules_after_top_down_design(
+        old_module: ComputeModule,
+        template: DesignTemplate,
+        orient: DesignOrientation,
+        interval: tuple[int, int],
+    ) -> int:
+        """Return the replacement module count without mutating a package."""
+        if not Package.is_valid_to_design(old_module, template, orient, interval):
+            return 0
+        x_interval, y_interval = interval
+        module_x_size = old_module.right[0] - old_module.left[0] + 1
+        module_y_size = old_module.bottom[0] - old_module.top[0] + 1
+        if template == DesignTemplate.Stripe:
+            stripe_interval = (
+                y_interval if orient == DesignOrientation.X else x_interval
+            )
+            module_size = (
+                module_y_size if orient == DesignOrientation.X else module_x_size
+            )
+            return (module_size + 1) // (stripe_interval + 1)
+        if template == DesignTemplate.Radial:
+            return 5
+        if template == DesignTemplate.Grid:
+            return (
+                (module_y_size + 1) // (y_interval + 1)
+            ) * (
+                (module_x_size + 1) // (x_interval + 1)
+            )
+        raise ValueError(f"Unsupported design template: {template}")
 
     def complete_area(self, func_area: FuncArea):
         """
@@ -1097,7 +1132,7 @@ class Package:
             )
             self.complete_area(func_area)
         self.complete_package()
-        if record:
+        if record and self.record_design_history:
             try:
                 fig, _ = self.draw_qubits()
                 self.design_history.append(fig)
@@ -1265,132 +1300,6 @@ class Package:
                     (2 * self.fab_model.max_square_size, 2 * self.fab_model.max_square_size),
                 )
             old_compute_module_idx += 1
-
-        # if min(self.package_size) <= 100:
-        #     old_compute_module = self.compute_modules[0]
-        #     radial_round = (
-        #         min(self.package_size) - 2 * self.fab_model.max_square_size
-        #     ) // (4 * self.fab_model.max_square_size)
-        #     if radial_round == 0:
-        #         if min(self.package_size) >= 4 * self.fab_model.max_square_size:
-        #             self.design_module_top_down(
-        #                 old_compute_module,
-        #                 DesignTemplate.Grid,
-        #                 DesignOrientation.X
-        #                 if self.package_size[0] > self.package_size[1]
-        #                 else DesignOrientation.Y,
-        #                 2 * self.fab_model.max_square_size - 1,
-        #             )
-        #     else:
-        #         for _ in range(radial_round):
-        #             if len(self.compute_nodes) / (len(self.compute_nodes) + len(self.transfer_nodes)) <= compute_ratio:
-        #                 self.complete_package()
-        #                 break
-        #             self.design_module_top_down(
-        #                 old_compute_module,
-        #                 DesignTemplate.Radial,
-        #                 DesignOrientation.X,
-        #                 2 * self.fab_model.max_square_size - 1,
-        #             )
-        #             old_compute_center_module = self.compute_modules[-1]
-        #             old_compute_round_module = self.compute_modules[-5:-1]
-        #             for old_compute_module in old_compute_round_module:
-        #                 if self.is_valid_to_design(
-        #                     old_compute_module,
-        #                     DesignTemplate.Stripe,
-        #                     DesignOrientation.Y
-        #                     if (old_compute_module.right[0] - old_compute_module.left[0])
-        #                     > (old_compute_module.bottom[0] - old_compute_module.top[0])
-        #                     else DesignOrientation.X,
-        #                     2 * self.fab_model.max_square_size - 1,
-        #                 ):
-        #                     self.design_module_top_down(
-        #                         old_compute_module,
-        #                         DesignTemplate.Stripe,
-        #                         DesignOrientation.Y
-        #                         if (
-        #                             old_compute_module.right[0]
-        #                             - old_compute_module.left[0]
-        #                         )
-        #                         > (
-        #                             old_compute_module.bottom[0]
-        #                             - old_compute_module.top[0]
-        #                         )
-        #                         else DesignOrientation.X,
-        #                         2 * self.fab_model.max_square_size - 1,
-        #                     )
-        #             old_compute_module = old_compute_center_module
-        # else:
-        #     i = 0
-        #     while i < len(self.compute_modules):
-        #         old_compute_module = self.compute_modules[i]
-        #         left_coord = old_compute_module.left[0]
-        #         top_coord = old_compute_module.top[0]
-        #         right_coord = old_compute_module.right[0]
-        #         bottom_coord = old_compute_module.bottom[0]
-        #         module_x_size = right_coord - left_coord + 1
-        #         module_y_size = bottom_coord - top_coord + 1
-        #         if (
-        #             max(module_x_size, module_y_size)
-        #             < 3 * self.fab_model.max_square_size + 2
-        #         ):
-        #             i += 1
-        #             continue
-        #         if (
-        #             min(module_x_size, module_y_size)
-        #             >= 3 * self.fab_model.max_square_size + 2
-        #         ):
-        #             self.design_module_top_down(
-        #                 old_compute_module,
-        #                 DesignTemplate.Radial,
-        #                 DesignOrientation.X,
-        #                 (min(module_x_size, module_y_size) - 2)
-        #                 // 3
-        #                 // self.fab_model.max_square_size
-        #                 * self.fab_model.max_square_size,
-        #             )
-        #         elif (
-        #             min(module_x_size, module_y_size)
-        #             >= 2 * self.fab_model.max_square_size + 1
-        #         ):
-        #             self.design_module_top_down(
-        #                 old_compute_module,
-        #                 DesignTemplate.Stripe,
-        #                 DesignOrientation.X
-        #                 if module_x_size > module_y_size
-        #                 else DesignOrientation.Y,
-        #                 self.fab_model.max_square_size - 1,
-        #             )
-        #         else:
-        #             i += 1
-        #             continue
-        # else:
-        #     old_compute_module = self.compute_modules[0]
-        #     self.design_module_top_down(
-        #         old_compute_module,
-        #         DesignTemplate.Grid,
-        #         DesignOrientation.X,
-        #         self.fab_model.max_square_size,
-        #     )
-        # i = 0
-        # while i < len(self.compute_modules):
-        #     old_compute_module = self.compute_modules[i]
-        #     left_coord = old_compute_module.left[0]
-        #     top_coord = old_compute_module.top[0]
-        #     right_coord = old_compute_module.right[0]
-        #     bottom_coord = old_compute_module.bottom[0]
-        #     module_x_size = right_coord - left_coord + 1
-        #     module_y_size = bottom_coord - top_coord + 1
-        #     if min(module_x_size, module_y_size) >= 3 * self.fab_model.max_square_size + 2:
-        #         self.design_module_top_down(
-        #             old_compute_module,
-        #             DesignTemplate.Radial,
-        #             DesignOrientation.X,
-        #             self.fab_model.max_square_size,
-        #         )
-        #     else:
-        #         i += 1
-        #         continue
 
     def greedy_design(self, compute_ratio: float = 0.8):
         """

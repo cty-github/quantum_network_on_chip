@@ -1,0 +1,77 @@
+artifact:
+  # One train-only PPO checkpoint. Package artifacts are produced later by
+  # evaluate/test_layout_scalability.py after loading this model.
+  run_name: layout-rl-1000x200_seed42
+  model_root: ./result/layout_models
+  output_model_path: null
+
+schema:
+  # Keep this canvas in the training config, not in QuNoCEnv's global defaults.
+  # It covers the default 40x40-160x160 training shapes and leaves room for
+  # long rectangular shapes that can be appended in domain.package_shapes.
+  canvas_size: [1000, 200]
+  max_module_slots: 2048
+  relative_interval_bins: [0.08, 0.12, 0.16, 0.22, 0.30, 0.40]
+
+environment:
+  chiplet_length: 10
+  compute_ratio: 0.8
+  patience: 5
+  invalid_action_penalty: -2.0
+
+scoring:
+  score_seed: 42
+  score_seeds: [42]
+  estimate_workers_per_env: 1
+
+domain:
+  # Default simple training/evaluation domain: square packages from 40x40 to
+  # 160x160. Add extra target shapes here as needed, for example [1000, 40].
+  package_shapes: [40, 60, 80, 100, 120, 140, 160]
+  chiplet_length: 10
+  fab_model:
+    compute_geometry: square
+    inter_sparsity: 3
+    inter_fide: 0.983
+    single_fide: 0.999
+    enhanced_fide: 0.9983913300169101
+    yield_5: 0.99
+    yield_decay: 2
+    intra_fide_dict:
+      27: 0.993
+      65: 0.989
+      127: 0.988
+
+  # Optional one-factor training conditions. Each entry overrides fab_model and
+  # becomes one additional fabrication case; entries are not combined with each
+  # other. Use domain.fab_models instead when you need full explicit models.
+  fab_model_variants: []
+  # Example:
+  # fab_model_variants:
+  #   - compute_geometry: hexagon
+  #   - inter_sparsity: 5
+  #   - inter_fide: 0.99
+
+ppo:
+  seed: 42
+  target_timesteps: 65536
+  learning_rate: 0.0003
+  # With one worker the rollout size is n_steps, so keep n_steps >= batch_size
+  # to make the default config runnable even when auto CPU allocation picks 1 env.
+  n_steps: 32
+  batch_size: 32
+  ent_coef: 0.01
+
+workers:
+  num_envs: auto
+  num_envs_min: 1
+  num_envs_max: 8
+  cpu_reserve: 32
+  cpu_sample_seconds: 0.25
+  memory_per_worker_mb: 2048
+  start_method: forkserver
+
+resume:
+  continue_training: true
+  initial_model_path: null
+  overwrite: false

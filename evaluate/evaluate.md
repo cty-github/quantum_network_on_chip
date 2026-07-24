@@ -1,69 +1,166 @@
-# Evaluation of QuNoC
+# Evaluation Workflow
 
-## Experiment Setup
+本目录保留四个推荐入口，对应项目的完整实验流程：
 
-**Simulation method**
+1. 训练 package layout 的 RL 模型。
+2. 使用训练好的模型完成 package layout design / scalability，并与其他 layout 策略比较。
+3. 基于已设计好的 package 运行 program routing，对比 QuNoC routing 与 baseline MECH。
+4. 运行 ablation 实验。
 
-默认设置下，测试100\*100的NoC，最大计算芯粒尺寸为10\*10，最长传输芯粒为80，片间耦合器稀疏度为3，片间耦合器保真度为0.983，延迟为200\,ns，片内耦合器保真度为0.990，延迟为25\,ns。测量操作的保真度为0.990，延迟为2280\,ns。EQST的保真度和延迟分别根据距离进行建模，保真度呈指数衰减，延迟为25d\,ns，其中d为源物理量子比特和目标物理量子比特之间的拓扑距离。
+旧的 shared-RL、单独 RL 训练配置、notebook 和 monolithic MECH runner 仅作为历史参考，不再作为推荐入口。
 
-**Baseline**
+## 1. Train RL layout model
 
-MECH，保证相同NoC尺寸下，用于计算的比特区域数量相同。
+```bash
+python evaluate/train_layout_model.py --config evaluate/train_layout_model.yaml
+```
 
-**Benchmarks**
+Canonical files:
 
-QFT、VQE、QAOA和BV算法，分别代表不同类型的量子程序，包含不同的量子门结构和连接模式。对于不同规模的NoC，按计算区域的比例测试不同规模的量子程序，在100\*100的NoC包，默认配置为220个量子比特的程序。
+- `evaluate/train_layout_model.py`
+- `evaluate/train_layout_model.yaml`
+- `qunoc/layout/training.py`
+- `qunoc/layout/env.py`
+- `qunoc/layout/agent.py`
+- `qunoc/layout/schema.py`
+- `qunoc/layout/artifacts.py`
 
-**Metric**
+`train_layout_model.yaml` controls the training domain:
 
-- 平均门保真度：程序编译后，每个原始两量子比特门的平均保真度，反映了长距离通信引入的退化程度，提供了程序可靠性的实际指标。
-- 电路执行时间：整个程序的执行时间，反映了在理想调度下的延迟。
+- `domain.package_shapes`: default square packages from `40x40` to `160x160`; append `[x, y]` entries for additional target shapes.
+- `domain.fab_model`: default fabrication parameters.
+- `domain.fab_model_variants`: optional one-factor variations. Each entry overrides `fab_model` and becomes one additional training case. Entries are not combined with each other.
+- `domain.fab_models`: optional explicit full fabrication model list; if present, it takes precedence over `fab_model_variants`.
 
-## Overall Result
+Training output is a model-only artifact under `evaluate/result/layout_models/<run_name>/` by default:
 
-先用template/greedy/heuristic/rl策略设计40\*40到120\*120的NoC包。
+- `model.zip`
+- `model_manifest.json`
+- `run_manifest.json`
 
-template：使用预定义strip/radial/grid三种的NoC包设计模板，选取最优的一个。
+The training script must not write package pickles, figures, or scalability CSVs.
 
-再测试在该架构上QuNoC编译的效果，对比MECH，在40\*40到120\*120的5种不同规模的NoC上测试4种不同类型的量子程序。
+## 2. Layout scalability / package design
 
-## Scalability Analysis
+```bash
+python evaluate/test_layout_scalability.py --config evaluate/test_layout_scalability.yaml
+```
 
-先用heuristic策略设计不同规模的NoC包，再测试编译结果的变化趋势。
+Canonical files:
 
-**Quantum NoC package shape**
+- `evaluate/test_layout_scalability.py`
+- `evaluate/test_layout_scalability.yaml`
 
-测试不同长宽比的NoC对编译结果的影响，保持总量子比特数10000不变，长宽比从1:1到1:100。
+The script designs packages with `template`, `heuristic`, `greedy`, and optionally `rl`.
 
-**Qubit capacity of quantum chiplet**
+RL is inference-only in this step:
 
-测试不同最大量子芯粒尺寸对编译结果的影响，最大量子芯粒的尺寸从5\*5到25\*25，传输芯粒的长度按比例缩放。
+1. Train first with `evaluate/train_layout_model.py`.
+2. Set `defaults.rl_model_path` in `test_layout_scalability.yaml` to the generated `model.zip`.
+3. Add `rl` to the desired `design_strategy_to_test` list.
 
-**Qubit topology in compute die**
+If `design_strategy: rl` is used without `rl_model_path`, the script fails instead of silently training.
 
-测试不同量子芯粒内量子比特拓扑结构对编译结果的影响，量子芯粒内部拓扑结构类型：Square、Hexagon、Heavy-square和Heavy-hexagon。
+Outputs are written under `evaluate/result/layout_scalability/<experiment>/`:
 
-**Inter-die coupler sparsity**
+- `output.csv` with layout metrics (`Score`, `Fidelity`, `FideStd`)
+- `<case>/package.pkl`
+- optional `<case>/package.png`
 
-测试不同稀疏度的片间耦合器对编译结果的影响，片间耦合器稀疏度从1到5。
+These package paths are the inputs for routing experiments.
 
-**Inter-die coupler fidelity**
+## 3. Routing and MECH baseline
 
-测试不同片间耦合器保真度对编译结果的影响，片间耦合器保真度从0.96到0.99。
+Run QuNoC routing on the packages produced by Step 2:
 
-## Ablation Study
+```bash
+python evaluate/test_routing_scalability.py --config evaluate/test_routing_scalability.yaml
+```
 
-**Necessity of Sensate for quantum NoC**
+Run the MECH baseline sweeps:
 
-在40\*40至120\*120的NoC上，对比 MECH with EQST 和 Sensate without optimization，来验证EQST和协调编译机制对于性能提升的贡献。
+```bash
+python evaluate/run_mech_routing.py --experiment all
+```
 
-MECH with EQST：将highway上构建GHZ态，替换为沿highway依次传输量子比特来构建GHZ态，EQST只在片内进行，需要片间通信时，仍然使用传统的片间通信方式，即多跳通信。
-Sensate without optimization：不使用编译优化，所有传输操作贪心发射。
+Or run one MECH axis:
 
-**Decomposition of compiled hardware operations**
+```bash
+python evaluate/run_mech_routing.py --experiment package_size
+python evaluate/run_mech_routing.py --experiment package_shape
+python evaluate/run_mech_routing.py --experiment geometry
+python evaluate/run_mech_routing.py --experiment inter_fidelity
+python evaluate/run_mech_routing.py --experiment chiplet_sparsity
+```
 
-对Overall Result中40\*40至120\*120的NoC上编译结果进行分解，统计不同类型的硬件操作数量，来验证EQST在替代传统片间通信方式方面的作用。
+Canonical files:
 
-**Initial qubit placement strategy**
+- `evaluate/test_routing_scalability.py`
+- `evaluate/test_routing_scalability.yaml`
+- `evaluate/run_mech_routing.py`
+- `evaluate/mech_routing_common.py`
+- `baseline/MECH/`
 
-对比不同初始量子比特放置策略的编译结果，来验证初始量子比特放置对于编译性能的影响。
+QuNoC routing consumes exact `package.pkl` paths from Step 2. If a required package is missing, run the matching layout scalability experiment first.
+
+QuNoC routing outputs are written under `evaluate/result/routing_scalability/<experiment>/`:
+
+- `output.csv`
+- `<case>/exp_result.json`
+- `<case>/qunoc_circuit.pkl`
+
+MECH outputs are written under `evaluate/result/mechbaseline/<experiment>/`:
+
+- `output.csv`
+- `<case>_mech.json`
+
+The old per-axis MECH wrappers remain as compatibility shims, but the recommended entry is now `evaluate/run_mech_routing.py`.
+
+## 4. Ablation
+
+```bash
+python evaluate/run_ablation.py
+```
+
+Canonical file:
+
+- `evaluate/run_ablation.py`
+
+Ablation is intentionally separate from routing scalability. It reuses package artifacts from layout scalability and writes resumable case outputs plus a merged CSV under `evaluate/result/ablation/package_size/output.csv` by default.
+
+## Plotting
+
+Use the scripted plotting entry instead of the old notebook workflow:
+
+```bash
+python evaluate/plot_result_figures.py
+```
+
+Figures are written under `evaluate/figure/` by default, at the same level as `evaluate/result/`. The old notebook is kept under `evaluate/backup/plot_results.ipynb` as historical reference only.
+
+## Legacy files
+
+These files are retained under `evaluate/backup/` for reference or compatibility, but are not recommended as primary workflow entrypoints:
+
+- `evaluate/backup/shared_rl_layout.yaml`: legacy shared-RL config replaced by train-only + inference-only layout flow.
+- `evaluate/backup/RL_only_layout.yaml`: legacy inline-RL layout config; migrate to `train_layout_model.yaml` and `test_layout_scalability.yaml`.
+- `evaluate/backup/main_exp.py`: legacy overall summary script; prefer canonical routing/MECH CSVs and `plot_result_figures.py`.
+- `evaluate/backup/plot_results.ipynb`: legacy plotting notebook.
+- `evaluate/backup/run_mech_routing_all.py`: legacy monolithic MECH runner replaced by `evaluate/run_mech_routing.py --experiment all`.
+- `evaluate/backup/run_mech_routing_package_size.py`, `evaluate/backup/run_mech_routing_package_shape.py`, `evaluate/backup/run_mech_routing_geometry.py`, `evaluate/backup/run_mech_routing_inter_fidelity.py`: compatibility wrappers for the consolidated MECH CLI.
+
+## Generated files
+
+Generated local runtime files should not be committed:
+
+- `evaluate/result/`
+- `evaluate/figure/`
+- `demo/result/`
+- `logs/`
+- `evaluate/logs/`
+- `*.log`
+- `*.console.log`
+- `__pycache__/`
+- `.pytest_cache/`
+
+The `tests/` directory is source and should remain separate from `qunoc/`.

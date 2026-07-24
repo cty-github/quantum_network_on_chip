@@ -498,7 +498,7 @@ class HighwayManager:
             self.idx_qubit_dict[v1], self.idx_qubit_dict[v2] = eqst_path[-1], eqst_path[0]
             self.qubit_idx_dict[eqst_path[0]], self.qubit_idx_dict[eqst_path[-1]] = v2, v1
         
-        ops.append(OpNode(path[-2], path[-1]))
+        ops.append(OpNode(self.qubit_idx_dict[path[-2]], self.qubit_idx_dict[path[-1]]))
 
         eqst_path = [path[-2]]
         for idx in range(len(path)-2, 0, -1):

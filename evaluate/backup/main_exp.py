@@ -1,3 +1,5 @@
+# Legacy summary script. Prefer the four-step workflow in evaluate/evaluate.md
+# and scripted figure generation through evaluate/plot_result_figures.py.
 import os
 import sys
 import csv
