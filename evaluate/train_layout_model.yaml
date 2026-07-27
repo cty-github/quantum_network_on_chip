@@ -54,7 +54,7 @@ domain:
 
 ppo:
   seed: 42
-  target_timesteps: 65536
+  target_timesteps: 98304
   learning_rate: 0.0003
   # With one worker the rollout size is n_steps, so keep n_steps >= batch_size
   # to make the default config runnable even when auto CPU allocation picks 1 env.

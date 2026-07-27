@@ -38,6 +38,9 @@ Training output is a model-only artifact under `evaluate/result/layout_models/<r
 - `model_manifest.json`
 - `run_manifest.json`
 - `training.log`
+- `training_domain_inference.csv`
+
+`training_domain_inference.csv` records deterministic policy inference over the configured training task domain whenever the training script writes a checkpoint or final model. It stores `score`, `fide_avg`, `fide_std`, and `compute_ratio` for each training task.
 
 During an unfinished training run, the same directory may also contain resumable checkpoint artifacts:
 

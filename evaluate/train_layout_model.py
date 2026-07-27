@@ -1,7 +1,10 @@
 import argparse
 import contextlib
 import copy
+import csv
 import logging
+import math
+import random
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -11,6 +14,7 @@ from typing import Any
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 import yaml
+import numpy as np
 from stable_baselines3.common.vec_env import SubprocVecEnv
 
 from qunoc.layout.agent import LayoutAgent
@@ -182,6 +186,135 @@ def _resolve_model_paths(config: dict[str, Any], config_path: Path) -> tuple[Pat
     return output_model_path, initial_model_path
 
 
+def _package_compute_ratio(package) -> float:
+    designed_nodes = len(package.compute_nodes) + len(package.transfer_nodes)
+    if designed_nodes == 0:
+        return 1.0
+    return len(package.compute_nodes) / designed_nodes
+
+
+def _estimate_package_metrics(
+    package,
+    *,
+    score_seed: int,
+    estimate_workers: int,
+) -> tuple[float, float, float, float]:
+    python_random_state = random.getstate()
+    numpy_random_state = np.random.get_state()
+    random.seed(score_seed)
+    np.random.seed(score_seed)
+    try:
+        score = float(package.estimate_score(num_workers=estimate_workers))
+        fide_avg, fide_std = package.estimate_transfer(num_workers=estimate_workers)
+        compute_ratio = _package_compute_ratio(package)
+        return float(score), float(fide_avg), float(fide_std), float(compute_ratio)
+    finally:
+        random.setstate(python_random_state)
+        np.random.set_state(numpy_random_state)
+
+
+def _write_training_domain_inference_csv(
+    agent: LayoutAgent,
+    env_kwargs: dict[str, Any],
+    tasks,
+    output_path: Path,
+    *,
+    model_path: Path,
+    artifact_role: str,
+    trained_timesteps: int,
+    inference_seed: int,
+) -> None:
+    fieldnames = [
+        "artifact_role",
+        "model_path",
+        "trained_timesteps",
+        "evaluated_at",
+        "task_index",
+        "task_id",
+        "package_width",
+        "package_height",
+        "compute_geometry",
+        "inter_sparsity",
+        "inter_fide",
+        "score",
+        "fide_avg",
+        "fide_std",
+        "compute_ratio",
+        "feasible",
+        "termination_reason",
+        "error",
+    ]
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not output_path.exists()
+    evaluated_at = datetime.now(timezone.utc).isoformat()
+    score_seed = int(env_kwargs.get("score_seed", 0))
+    estimate_workers = int(env_kwargs.get("estimate_workers", 1))
+    rows = []
+
+    for task_index, task in enumerate(tasks):
+        task_env = QuNoCEnv(**env_kwargs)
+        task_seed = int(inference_seed) + task_index
+        task_row = {
+            "artifact_role": artifact_role,
+            "model_path": str(model_path),
+            "trained_timesteps": int(trained_timesteps),
+            "evaluated_at": evaluated_at,
+            "task_index": task_index,
+            "task_id": task.name or f"task_{task_index}",
+            "package_width": task.package_size[0],
+            "package_height": task.package_size[1],
+            "compute_geometry": dict(task.fab_model_kwargs).get("compute_geometry"),
+            "inter_sparsity": dict(task.fab_model_kwargs).get("inter_sparsity"),
+            "inter_fide": dict(task.fab_model_kwargs).get("inter_fide"),
+            "score": math.nan,
+            "fide_avg": math.nan,
+            "fide_std": math.nan,
+            "compute_ratio": math.nan,
+            "feasible": False,
+            "termination_reason": None,
+            "error": None,
+        }
+        try:
+            state, _ = task_env.reset(seed=task_seed, options={"task_index": task_index})
+            done = False
+            final_info = {}
+            while not done:
+                action, _ = agent.model.predict(state, deterministic=True)
+                state, _, terminated, truncated, final_info = task_env.step(
+                    action,
+                    record=False,
+                )
+                done = bool(terminated or truncated)
+
+            package = task_env.best_feasible_package or task_env.best_any_package
+            score, fide_avg, fide_std, compute_ratio = _estimate_package_metrics(
+                package,
+                score_seed=score_seed,
+                estimate_workers=estimate_workers,
+            )
+            task_row.update(
+                {
+                    "score": score,
+                    "fide_avg": fide_avg,
+                    "fide_std": fide_std,
+                    "compute_ratio": compute_ratio,
+                    "feasible": task_env.best_feasible_package is not None,
+                    "termination_reason": final_info.get("termination_reason"),
+                }
+            )
+        except Exception as error:
+            task_row["error"] = f"{type(error).__name__}: {error}"
+        finally:
+            task_env.close()
+        rows.append(task_row)
+
+    with output_path.open(mode="a", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        if write_header:
+            writer.writeheader()
+        writer.writerows(rows)
+
+
 def _resolve_source_model(
     output_model_path: Path,
     initial_model_path: Path | None,
@@ -257,6 +390,9 @@ def run_training(config_path: Path) -> None:
         run_manifest_path = output_model_path.with_name("run_manifest.json")
         checkpoint_path = output_model_path.with_name("checkpoint.zip")
         checkpoint_manifest_path = manifest_path_for_model(checkpoint_path)
+        training_domain_inference_csv_path = output_model_path.with_name(
+            "training_domain_inference.csv"
+        )
         checkpoint_interval = int(
             resume.get(
                 "checkpoint_interval_timesteps",
@@ -321,6 +457,7 @@ def run_training(config_path: Path) -> None:
             "checkpoint_manifest_path": str(checkpoint_manifest_path),
             "checkpoint_interval_timesteps": checkpoint_interval if checkpoint_enabled else None,
             "training_log_path": str(training_log_path),
+            "training_domain_inference_csv_path": str(training_domain_inference_csv_path),
             "source_model_path": str(source_model_path) if source_model_path else None,
             "source_is_checkpoint": source_is_checkpoint,
             "task_domain": serialized_tasks,
@@ -372,6 +509,35 @@ def run_training(config_path: Path) -> None:
                 resource_provenance={"cpu_allocation": allocation.to_dict()},
             )
 
+            inference_seed = int(ppo.get("seed", 42)) + 1000
+
+            def record_model_inference(
+                model_file: Path,
+                artifact_role: str,
+                trained_timesteps: int,
+            ) -> None:
+                _write_training_domain_inference_csv(
+                    agent,
+                    env_kwargs,
+                    tasks,
+                    training_domain_inference_csv_path,
+                    model_path=model_file,
+                    artifact_role=artifact_role,
+                    trained_timesteps=trained_timesteps,
+                    inference_seed=inference_seed,
+                )
+                run_manifest.update(
+                    {
+                        "last_training_domain_inference_csv_path": str(
+                            training_domain_inference_csv_path
+                        ),
+                        "last_training_domain_inference_at": datetime.now(
+                            timezone.utc
+                        ).isoformat(),
+                    }
+                )
+                write_json_atomic(run_manifest_path, run_manifest)
+
             def record_checkpoint(checkpoint_file: Path, checkpoint_timesteps: int) -> None:
                 agent.write_checkpoint_manifest(checkpoint_file, checkpoint_timesteps)
                 run_manifest.update(
@@ -384,7 +550,11 @@ def run_training(config_path: Path) -> None:
                         "last_checkpoint_at": datetime.now(timezone.utc).isoformat(),
                     }
                 )
-                write_json_atomic(run_manifest_path, run_manifest)
+                record_model_inference(
+                    checkpoint_file,
+                    "checkpoint",
+                    checkpoint_timesteps,
+                )
 
             target_timesteps = int(ppo.get("target_timesteps", 32768))
             if source_model_path is None:
@@ -401,6 +571,11 @@ def run_training(config_path: Path) -> None:
                     checkpoint_interval=checkpoint_interval if checkpoint_enabled else None,
                     checkpoint_on_save=record_checkpoint if checkpoint_enabled else None,
                 )
+            record_model_inference(
+                output_model_path,
+                "model",
+                agent.trained_timesteps,
+            )
             run_manifest.update(
                 {
                     "status": "completed",
