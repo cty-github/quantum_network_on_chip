@@ -11,7 +11,7 @@ from ..element.package import DesignOrientation, DesignTemplate
 
 
 SCHEMA_VERSION = "fixed-canvas-candidate-v1"
-POLICY_VERSION = "masked-candidate-ppo-v1"
+POLICY_VERSION = "masked-candidate-ppo-min-compute-v2"
 
 
 class IncompatibleLayoutModelError(ValueError):

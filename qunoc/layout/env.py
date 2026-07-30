@@ -292,6 +292,7 @@ class QuNoCEnv(gym.Env):
             result_dir=self.result_dir,
             record_design_history=self.record_design_history,
         )
+        self.initial_compute_node_count = len(self.package.compute_nodes)
         self.last_score, score_details = self.estimate_with_details()
         self.no_improve_steps = 0
         self.best_any_score = self.last_score
@@ -360,14 +361,16 @@ class QuNoCEnv(gym.Env):
                 self.no_improve_steps = 0
             else:
                 self.no_improve_steps += 1
+            if not self.is_feasible():
+                raise AssertionError(
+                    "Action feasibility filtering failed before package mutation."
+                )
 
         compute_ratio = self.get_compute_ratio()
         next_action_mask = self.get_action_mask()
         valid_action_count = self._ordinary_valid_action_count(next_action_mask)
         if termination_reason is None:
-            if self.is_feasible():
-                termination_reason = "compute_ratio"
-            elif valid_action_count == 0:
+            if valid_action_count == 0:
                 termination_reason = (
                     "module_slot_capacity"
                     if self._capacity_limited
@@ -519,6 +522,8 @@ class QuNoCEnv(gym.Env):
                         ):
                             capacity_limited = True
                             continue
+                        if not self._would_preserve_compute_ratio(action_dict):
+                            continue
                         seen_semantic_actions.add(semantic_key)
                         action_index = self.encode_action_index(
                             module_slot,
@@ -565,16 +570,184 @@ class QuNoCEnv(gym.Env):
             "interval": list(action["interval"]),
         }
 
-    def get_compute_ratio(self) -> float:
-        designed_nodes = len(self.package.compute_nodes) + len(self.package.transfer_nodes)
-        if designed_nodes == 0:
+    def _compute_ratio_for_package(self, package: Package) -> float:
+        reference_compute_nodes = getattr(
+            self,
+            "initial_compute_node_count",
+            len(package.compute_nodes) + len(package.transfer_nodes),
+        )
+        if reference_compute_nodes == 0:
             return 1.0
-        return len(self.package.compute_nodes) / designed_nodes
+        return len(package.compute_nodes) / reference_compute_nodes
+
+    def get_compute_ratio(self) -> float:
+        return self._compute_ratio_for_package(self.package)
 
     def is_feasible(self) -> bool:
-        return self.get_compute_ratio() <= (
-            self.compute_ratio_target + self.feasible_tolerance
+        return self.get_compute_ratio() >= (
+            self.compute_ratio_target - self.feasible_tolerance
         )
+
+    @staticmethod
+    def _add_line_nodes(
+        nodes: set[tuple[int, int]],
+        axis: int,
+        pos: int,
+        start: int,
+        end: int,
+    ) -> None:
+        for coordinate in range(start, end + 1):
+            nodes.add((coordinate, pos) if axis == 0 else (pos, coordinate))
+
+    def _top_down_transfer_nodes(self, action_dict: dict) -> set[tuple[int, int]]:
+        old_module = action_dict["old_module"]
+        template = action_dict["template"]
+        orient = action_dict["orient"]
+        x_interval, y_interval = action_dict["interval"]
+        old_left = old_module.left[0]
+        old_top = old_module.top[0]
+        old_right = old_module.right[0]
+        old_bottom = old_module.bottom[0]
+        nodes: set[tuple[int, int]] = set()
+
+        if template == DesignTemplate.Stripe:
+            if orient == DesignOrientation.X:
+                stripe_interval = y_interval
+                n_blocks = (old_bottom - old_top + 2) // (stripe_interval + 1)
+                for index in range(n_blocks - 1):
+                    self._add_line_nodes(
+                        nodes,
+                        0,
+                        old_top + (index + 1) * (stripe_interval + 1) - 1,
+                        old_left,
+                        old_right,
+                    )
+            elif orient == DesignOrientation.Y:
+                stripe_interval = x_interval
+                n_blocks = (old_right - old_left + 2) // (stripe_interval + 1)
+                for index in range(n_blocks - 1):
+                    self._add_line_nodes(
+                        nodes,
+                        1,
+                        old_left + (index + 1) * (stripe_interval + 1) - 1,
+                        old_top,
+                        old_bottom,
+                    )
+        elif template == DesignTemplate.Radial:
+            if orient == DesignOrientation.X:
+                self._add_line_nodes(
+                    nodes,
+                    0,
+                    old_top + y_interval,
+                    old_left,
+                    old_right - x_interval - 1,
+                )
+                self._add_line_nodes(
+                    nodes,
+                    1,
+                    old_right - x_interval,
+                    old_top,
+                    old_bottom - y_interval - 1,
+                )
+                self._add_line_nodes(
+                    nodes,
+                    0,
+                    old_bottom - y_interval,
+                    old_left + x_interval + 1,
+                    old_right,
+                )
+                self._add_line_nodes(
+                    nodes,
+                    1,
+                    old_left + x_interval,
+                    old_top + y_interval + 1,
+                    old_bottom,
+                )
+            elif orient == DesignOrientation.Y:
+                self._add_line_nodes(
+                    nodes,
+                    1,
+                    old_left + x_interval,
+                    old_top,
+                    old_bottom - y_interval - 1,
+                )
+                self._add_line_nodes(
+                    nodes,
+                    0,
+                    old_bottom - y_interval,
+                    old_left,
+                    old_right - x_interval - 1,
+                )
+                self._add_line_nodes(
+                    nodes,
+                    1,
+                    old_right - x_interval,
+                    old_top + y_interval + 1,
+                    old_bottom,
+                )
+                self._add_line_nodes(
+                    nodes,
+                    0,
+                    old_top + y_interval,
+                    old_left + x_interval + 1,
+                    old_right,
+                )
+        elif template == DesignTemplate.Grid:
+            if orient == DesignOrientation.X:
+                n_blocks = (old_bottom - old_top + 2) // (y_interval + 1)
+                n_units = (old_right - old_left + 2) // (x_interval + 1)
+                for block_index in range(n_blocks):
+                    for unit_index in range(n_units - 1):
+                        self._add_line_nodes(
+                            nodes,
+                            1,
+                            old_left + (unit_index + 1) * (x_interval + 1) - 1,
+                            old_top + block_index * (y_interval + 1),
+                            old_bottom
+                            if block_index == n_blocks - 1
+                            else old_top + block_index * (y_interval + 1) + y_interval - 1,
+                        )
+                    if block_index < n_blocks - 1:
+                        self._add_line_nodes(
+                            nodes,
+                            0,
+                            old_top + (block_index + 1) * (y_interval + 1) - 1,
+                            old_left,
+                            old_right,
+                        )
+            elif orient == DesignOrientation.Y:
+                n_blocks = (old_right - old_left + 2) // (x_interval + 1)
+                n_units = (old_bottom - old_top + 2) // (y_interval + 1)
+                for block_index in range(n_blocks):
+                    for unit_index in range(n_units - 1):
+                        self._add_line_nodes(
+                            nodes,
+                            0,
+                            old_top + (unit_index + 1) * (y_interval + 1) - 1,
+                            old_left + block_index * (x_interval + 1),
+                            old_right
+                            if block_index == n_blocks - 1
+                            else old_left + block_index * (x_interval + 1) + x_interval - 1,
+                        )
+                    if block_index < n_blocks - 1:
+                        self._add_line_nodes(
+                            nodes,
+                            1,
+                            old_left + (block_index + 1) * (x_interval + 1) - 1,
+                            old_top,
+                            old_bottom,
+                        )
+        return nodes
+
+    def _would_preserve_compute_ratio(self, action_dict: dict) -> bool:
+        transfer_nodes = self._top_down_transfer_nodes(action_dict)
+        next_compute_count = len(self.package.compute_nodes - transfer_nodes)
+        minimum_compute_count = math.ceil(
+            self.compute_ratio_target
+            * getattr(self, "initial_compute_node_count", len(self.package.compute_nodes))
+            - self.feasible_tolerance
+        )
+        return next_compute_count >= minimum_compute_count
 
     def _update_best_packages(self, score: float) -> None:
         if score > self.best_any_score:

@@ -740,25 +740,54 @@ class Router:
         Return:
             list[tuple[tuple[int, int], tuple[int, int]]]: The list of nodes in the nearest metro subgraph and how it is linked to the subgraph.
         """
-        visited_balise: set[tuple[int, int]] = set()
-        visited_balise_graph: list[tuple[tuple[int, int], tuple[int, int]]] = []
-        candidate_balise_queue = [(balise_id, None)]
-        while candidate_balise_queue and len(visited_balise_graph) < node_num:
-            node, parent = candidate_balise_queue.pop(0)
-            if node not in visited_balise:
+        def _is_free_balise(node: tuple[int, int]) -> bool:
+            return self.circuit.curr_p2l_map.get(node, -1) == -1
+
+        def _get_free_connected_subgraph(
+            root: tuple[int, int]
+        ) -> list[tuple[tuple[int, int], tuple[int, int]]]:
+            visited_balise: set[tuple[int, int]] = set()
+            visited_balise_graph: list[tuple[tuple[int, int], tuple[int, int]]] = []
+            candidate_balise_queue = [(root, None)]
+            while candidate_balise_queue and len(visited_balise_graph) < node_num:
+                node, parent = candidate_balise_queue.pop(0)
+                if node in visited_balise or not _is_free_balise(node):
+                    continue
                 visited_balise.add(node)
                 visited_balise_graph.append((node, parent))
                 candidate_balise_queue.extend(
                     [
                         (nbr, node)
                         for nbr in self.metro_graph.neighbors(node)
-                        if nbr not in visited_balise
+                        if nbr not in visited_balise and _is_free_balise(nbr)
                     ]
                 )
-        assert len(visited_balise) == len(visited_balise_graph), (
-            "Repeated balise found in the visited balise graph."
+            assert len(visited_balise) == len(visited_balise_graph), (
+                "Repeated balise found in the visited balise graph."
+            )
+            return visited_balise_graph
+
+        visited_balise: set[tuple[int, int]] = set()
+        candidate_balise_queue = [balise_id]
+        while candidate_balise_queue:
+            node = candidate_balise_queue.pop(0)
+            if node in visited_balise:
+                continue
+            visited_balise.add(node)
+            if _is_free_balise(node):
+                visited_balise_graph = _get_free_connected_subgraph(node)
+                if len(visited_balise_graph) == node_num:
+                    return visited_balise_graph
+            candidate_balise_queue.extend(
+                [
+                    nbr
+                    for nbr in self.metro_graph.neighbors(node)
+                    if nbr not in visited_balise
+                ]
+            )
+        raise ValueError(
+            f"No free metro subgraph with {node_num} nodes near balise {balise_id}."
         )
-        return visited_balise_graph
 
     def locate_ghz_state(
         self,
@@ -1901,6 +1930,26 @@ class Router:
                 local_block.actions.append(swap_gate_act)
                 self.circuit.add_action_into_earliest_stage(swap_gate_act)
             else:
+                actual_ctrl_qubit = self.circuit.curr_p2l_map[swap_path[i]]
+                actual_targ_qubit = self.circuit.curr_p2l_map[swap_path[i + 1]]
+                if (
+                    actual_ctrl_qubit != local_gate.control_qubit
+                    or actual_targ_qubit != local_gate.target_qubit
+                ):
+                    raise ValueError(
+                        "LocalGate mapping mismatch before DirectGate: "
+                        f"gate={local_gate.id}, "
+                        f"control={local_gate.control_qubit}, "
+                        f"target={local_gate.target_qubit}, "
+                        f"swap_path={swap_path}, "
+                        f"direct_nodes=({swap_path[i]}, {swap_path[i + 1]}), "
+                        f"actual_ctrl_at_node={actual_ctrl_qubit}, "
+                        f"actual_targ_at_node={actual_targ_qubit}, "
+                        f"control_current_node="
+                        f"{self.circuit.curr_l2p_map.get(local_gate.control_qubit)}, "
+                        f"target_current_node="
+                        f"{self.circuit.curr_l2p_map.get(local_gate.target_qubit)}"
+                    )
                 direct_gate_act = DirectGate(
                     local_gate,
                     swap_path[i],
@@ -1978,6 +2027,37 @@ class Router:
             swap_path = module.get_swap_path(
                 route_source_phy_qubit, route_target_phy_qubit
             )
+            if len(swap_path) < 2:
+                platform_inner_neighbors = [
+                    neighbor
+                    for neighbor in self.package_graph.neighbors(route_target_phy_qubit)
+                    if module.has_node(neighbor)
+                    and self.package_graph.edges[route_target_phy_qubit, neighbor]["type"]
+                    != EdgeType.Empty
+                ]
+                if not platform_inner_neighbors:
+                    raise ValueError(
+                        f"No inner neighbor for platform {route_target_phy_qubit} in compute module {module}."
+                    )
+                platform_inner_neighbors.sort(
+                    key=lambda neighbor: (
+                        self.circuit.curr_p2l_map.get(neighbor, -1) != -1,
+                        self.package_graph.nodes[neighbor]["qubit"].role
+                        == QubitRole.Platform,
+                    )
+                )
+                swap_gate_act = SwapGate(
+                    data_qubit,
+                    route_target_phy_qubit,
+                    platform_inner_neighbors[0],
+                    self.package_graph.edges[
+                        route_target_phy_qubit, platform_inner_neighbors[0]
+                    ]["type"]
+                    == EdgeType.Inter,
+                )
+                tele_block.actions.append(swap_gate_act)
+                self.circuit.add_action_into_earliest_stage(swap_gate_act)
+                swap_path = [platform_inner_neighbors[0], route_target_phy_qubit]
             for j in range(len(swap_path) - 2):
                 swap_gate_act = SwapGate(
                     data_qubit,
@@ -2012,6 +2092,37 @@ class Router:
             for transfer_on_metro_act in transfer_on_metro_acts:
                 tele_block.actions.append(transfer_on_metro_act)
                 self.circuit.add_action_into_earliest_stage(transfer_on_metro_act)
+            platform_qubit = self.circuit.curr_p2l_map[route_target_phy_qubit]
+            if platform_qubit != -1:
+                platform_inner_neighbors = [
+                    neighbor
+                    for neighbor in self.package_graph.neighbors(route_target_phy_qubit)
+                    if module.has_node(neighbor)
+                    and self.package_graph.edges[route_target_phy_qubit, neighbor]["type"]
+                    != EdgeType.Empty
+                    and self.circuit.curr_p2l_map.get(neighbor, -1) == -1
+                ]
+                if not platform_inner_neighbors:
+                    raise ValueError(
+                        f"No free inner neighbor for platform {route_target_phy_qubit} in compute module {module}."
+                    )
+                platform_inner_neighbors.sort(
+                    key=lambda neighbor: self.package_graph.nodes[neighbor]["qubit"].role
+                    == QubitRole.Platform
+                )
+                swap_gate_act = SwapGate(
+                    platform_qubit,
+                    route_target_phy_qubit,
+                    platform_inner_neighbors[0],
+                    self.package_graph.edges[
+                        route_target_phy_qubit, platform_inner_neighbors[0]
+                    ]["type"]
+                    == EdgeType.Inter,
+                )
+                tele_block.actions.append(swap_gate_act)
+                self.circuit.add_action_into_earliest_stage(swap_gate_act)
+                if platform_qubit == data_qubit:
+                    swap_path = [platform_inner_neighbors[0], route_target_phy_qubit]
             alight_act = Alight(
                 ancilla_qubit, tele_target_phy_qubit, route_target_phy_qubit
             )

@@ -112,9 +112,9 @@ Canonical files:
 - `baseline/mech_utils.py`
 - `baseline/MECH/`
 
-QuNoC routing consumes exact `package.pkl` paths from Step 2. If a required package is missing, run the matching layout scalability experiment first.
+QuNoC routing consumes exact `package.pkl` paths from Step 2. If a required package is missing, run the matching layout scalability experiment first. `defaults.quantum_programs` defines the default program list, and an experiment can override it with `scalability.quantum_program_to_test`.
 
-QuNoC routing outputs are written under `evaluate/result/routing_scalability/<experiment>/`:
+QuNoC routing outputs are written under `evaluate/result/routing_scalability/<experiment>/`; new CSV/JSON outputs use `QuantumProgram` / `quantum_program` for the routed program:
 
 - `output.csv`
 - `<case>/exp_result.json`

@@ -81,7 +81,7 @@ except ModuleNotFoundError as error:
 
 SCHEMA_VERSION = 1
 DEFAULT_SIZES = [40, 60, 80, 100, 120]
-ALGORITHMS = ["vqe", "qft", "qaoa", "bv"]
+QUANTUM_PROGRAMS = ["vqe", "qft", "qaoa", "bv"]
 STRATEGIES = ["mech_eqst", "qunoc_wo_opt"]
 QUNOC_STRATEGIES = {"qunoc_wo_opt"}
 MECH_EQST_GENERATORS = {
@@ -104,7 +104,7 @@ DEFAULT_OUTPUT = DEFAULT_RESULT_ROOT / "output.csv"
 ROW_FIELDS = [
     "Baseline",
     "PackageSize",
-    "Algorithm",
+    "QuantumProgram",
     "#DataQubit",
     "#LogicGate",
     "CircuitDuration",
@@ -114,6 +114,9 @@ ROW_FIELDS = [
     "QSTDist",
     "MeasNum",
     "TotalFide",
+]
+LEGACY_ROW_FIELDS = [
+    "Algorithm" if field == "QuantumProgram" else field for field in ROW_FIELDS
 ]
 
 
@@ -147,13 +150,13 @@ def _mech_gate_sequence(program: Any) -> list[tuple[int, int]]:
     return gates
 
 
-def _benchmark_metadata(algorithm: str, data_qubits: int, seed: int) -> dict[str, Any]:
+def _benchmark_metadata(quantum_program: str, data_qubits: int, seed: int) -> dict[str, Any]:
     _seed_everything(seed)
-    qunoc_program = get_program(algorithm, data_qubits)
+    qunoc_program = get_program(quantum_program, data_qubits)
     qunoc_gates = _qunoc_gate_sequence(qunoc_program)
 
     _seed_everything(seed)
-    mech_program = get_benchmark_program(algorithm, data_qubits)
+    mech_program = get_benchmark_program(quantum_program, data_qubits)
     mech_gates = _mech_gate_sequence(mech_program)
 
     if qunoc_gates != mech_gates:
@@ -169,7 +172,7 @@ def _benchmark_metadata(algorithm: str, data_qubits: int, seed: int) -> dict[str
         )
         raise RuntimeError(
             "MECH and QuNoC generated different benchmark circuits for "
-            f"{algorithm}/{data_qubits} qubits at gate {mismatch}: "
+            f"{quantum_program}/{data_qubits} qubits at gate {mismatch}: "
             f"QuNoC has {len(qunoc_gates)} gates and MECH has "
             f"{len(mech_gates)} gates."
         )
@@ -315,7 +318,7 @@ def _validate_package(package: Package, path: Path, size: int, args: argparse.Na
 
 def _run_qunoc(
     size: int,
-    algorithm: str,
+    quantum_program: str,
     data_qubits: int,
     benchmark: dict[str, Any],
     case_dir: Path,
@@ -326,7 +329,7 @@ def _run_qunoc(
     _validate_package(package, package_path, size, args)
 
     _seed_everything(args.seed)
-    program = get_program(algorithm, data_qubits)
+    program = get_program(quantum_program, data_qubits)
     gate_sequence = _qunoc_gate_sequence(program)
     if len(gate_sequence) != benchmark["logic_gate_num"]:
         raise RuntimeError("QuNoC benchmark changed after the equivalence check.")
@@ -367,7 +370,7 @@ def _run_qunoc(
 
 def _run_mech(
     size: int,
-    algorithm: str,
+    quantum_program: str,
     data_qubits: int,
     benchmark: dict[str, Any],
     case_dir: Path,
@@ -386,19 +389,19 @@ def _run_mech(
         "structure": args.geometry,
         "chiplet_array_dim": chiplet_array_dim,
         "chiplet_size": chiplet_size,
-        "benchmarks": [algorithm],
+        "benchmarks": [quantum_program],
         "data_qubit_num": data_qubits,
         "cross_link_sparsity": case_fields["cross_link_sparsity"],
     }
 
     _seed_everything(args.seed)
     results, circuits = _run_single_mech_eqst_benchmark(
-        algorithm,
+        quantum_program,
         kwargs,
         args.mech_eqst_basic_time_ns,
     )
 
-    result = results[algorithm]
+    result = results[quantum_program]
     logic_gate_num = int(result["logic_gate_num"])
     if logic_gate_num != benchmark["logic_gate_num"]:
         raise RuntimeError(
@@ -410,7 +413,7 @@ def _run_mech(
 
     if args.save_circuits:
         with (case_dir / "mech_eqst_circuit.pkl").open("wb") as file:
-            pickle.dump(circuits[algorithm], file)
+            pickle.dump(circuits[quantum_program], file)
 
     model = comparison_fab_model(
         geometry=args.geometry,
@@ -436,12 +439,12 @@ def _run_mech(
 
 
 def _run_single_mech_eqst_benchmark(
-    algorithm: str,
+    quantum_program: str,
     kwargs: dict[str, Any],
     basic_time_ns: float,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
     """Avoid eager construction of every unused MECH EQST benchmark."""
-    target_generator = MECH_EQST_GENERATORS[algorithm]
+    target_generator = MECH_EQST_GENERATORS[quantum_program]
     function_globals = MECH_EQST_experiments.__globals__
     originals: dict[str, Any] = {}
 
@@ -463,15 +466,15 @@ def _run_single_mech_eqst_benchmark(
 
 
 def _case_directory(
-    result_root: Path, size: int, algorithm: str, strategy: str
+    result_root: Path, size: int, quantum_program: str, strategy: str
 ) -> Path:
-    return result_root / f"{size}_{algorithm}_{strategy}"
+    return result_root / f"{size}_{quantum_program}_{strategy}"
 
 
 def _signature(
     strategy: str,
     size: int,
-    algorithm: str,
+    quantum_program: str,
     benchmark: dict[str, Any],
     args: argparse.Namespace,
 ) -> dict[str, Any]:
@@ -479,7 +482,7 @@ def _signature(
         "schema_version": SCHEMA_VERSION,
         "strategy": strategy,
         "package_size": size,
-        "algorithm": algorithm,
+        "quantum_program": quantum_program,
         "seed": args.seed,
         "data_qubit_num": data_qubit_num((size, size)),
         "logic_gate_num": benchmark["logic_gate_num"],
@@ -515,6 +518,18 @@ def _write_json(path: Path, value: dict[str, Any]) -> None:
     temporary.replace(path)
 
 
+def _normalize_result_schema(result: dict[str, Any]) -> dict[str, Any]:
+    if "quantum_program" not in result and "algorithm" in result:
+        result["quantum_program"] = result["algorithm"]
+    result.pop("algorithm", None)
+    signature = result.get("signature")
+    if isinstance(signature, dict):
+        if "quantum_program" not in signature and "algorithm" in signature:
+            signature["quantum_program"] = signature["algorithm"]
+        signature.pop("algorithm", None)
+    return result
+
+
 def _load_cached_result(
     path: Path, signature: dict[str, Any]
 ) -> Optional[dict[str, Any]]:
@@ -522,7 +537,7 @@ def _load_cached_result(
         return None
     try:
         with path.open("r", encoding="utf-8") as file:
-            cached = json.load(file)
+            cached = _normalize_result_schema(json.load(file))
     except (OSError, json.JSONDecodeError):
         return None
     if cached.get("status") != "complete" or cached.get("signature") != signature:
@@ -531,10 +546,11 @@ def _load_cached_result(
 
 
 def _result_row(result: dict[str, Any]) -> dict[str, Any]:
+    result = _normalize_result_schema(result)
     return {
         "Baseline": result["strategy"],
         "PackageSize": int(result["package_size"]),
-        "Algorithm": result["algorithm"],
+        "QuantumProgram": result["quantum_program"],
         "#DataQubit": int(result["data_qubit_num"]),
         "#LogicGate": int(result["logic_gate_num"]),
         "CircuitDuration": float(result["circuit_duration_ns"]),
@@ -550,7 +566,7 @@ def _result_row(result: dict[str, Any]) -> dict[str, Any]:
 def _row_key(row: dict[str, Any]) -> tuple[int, str, str]:
     return (
         int(row["PackageSize"]),
-        str(row["Algorithm"]).lower(),
+        str(row["QuantumProgram"]).lower(),
         str(row["Baseline"]).lower(),
     )
 
@@ -564,6 +580,8 @@ def _load_existing_rows(
         reader = csv.DictReader(file)
         if reader.fieldnames == ROW_FIELDS:
             migrated = False
+        elif reader.fieldnames == LEGACY_ROW_FIELDS:
+            migrated = True
         elif reader.fieldnames is not None and {
             "PackageSize",
             "Algorithm",
@@ -580,11 +598,13 @@ def _load_existing_rows(
 
         rows = {}
         for source_row in reader:
-            if migrated:
+            if "Strategy" in source_row:
                 row = {
                     "Baseline": source_row["Strategy"],
                     "PackageSize": source_row["PackageSize"],
-                    "Algorithm": source_row["Algorithm"],
+                    "QuantumProgram": source_row.get(
+                        "QuantumProgram", source_row.get("Algorithm", "")
+                    ),
                     "#DataQubit": source_row["DataQubit"],
                     "#LogicGate": source_row["LogicGate"],
                     "CircuitDuration": source_row.get("CircuitDuration", ""),
@@ -597,6 +617,8 @@ def _load_existing_rows(
                 }
             else:
                 row = {field: source_row.get(field, "") for field in ROW_FIELDS}
+                if not row.get("QuantumProgram"):
+                    row["QuantumProgram"] = source_row.get("Algorithm", "")
             rows[_row_key(row)] = row
         return rows, migrated
 
@@ -605,13 +627,13 @@ def _write_rows(
     path: Path,
     rows: dict[tuple[int, str, str], dict[str, Any]],
 ) -> None:
-    algorithm_order = {name: index for index, name in enumerate(ALGORITHMS)}
+    quantum_program_order = {name: index for index, name in enumerate(QUANTUM_PROGRAMS)}
     strategy_order = {name: index for index, name in enumerate(STRATEGIES)}
 
     def sort_key(row: dict[str, Any]) -> tuple[int, int, int]:
         return (
             int(row["PackageSize"]),
-            algorithm_order.get(str(row["Algorithm"]).lower(), len(ALGORITHMS)),
+            quantum_program_order.get(str(row["QuantumProgram"]).lower(), len(QUANTUM_PROGRAMS)),
             strategy_order.get(str(row["Baseline"]).lower(), len(STRATEGIES)),
         )
 
@@ -628,15 +650,15 @@ def _write_rows(
 def _validate_cross_strategy_results(
     results: dict[tuple[int, str, str, int], dict[str, Any]],
     sizes: list[int],
-    algorithms: list[str],
+    quantum_programs: list[str],
     seed: int,
 ) -> None:
-    for size, algorithm in product(sizes, algorithms):
+    for size, quantum_program in product(sizes, quantum_programs):
         selected = [
             result
             for result in results.values()
             if int(result["package_size"]) == size
-            and str(result["algorithm"]).lower() == algorithm
+            and str(result["quantum_program"]).lower() == quantum_program
             and int(result["seed"]) == seed
         ]
         if len(selected) < 2:
@@ -645,7 +667,7 @@ def _validate_cross_strategy_results(
         benchmark_hashes = {str(result["benchmark_hash"]) for result in selected}
         if len(gate_counts) != 1 or len(benchmark_hashes) != 1:
             raise RuntimeError(
-                f"Cross-strategy benchmark mismatch for {size}/{algorithm}: "
+                f"Cross-strategy benchmark mismatch for {size}/{quantum_program}: "
                 f"gate counts={sorted(gate_counts)}, hashes={sorted(benchmark_hashes)}"
             )
 
@@ -657,7 +679,7 @@ def _validate_cross_strategy_results(
         }
         if len(qunoc_mapping_hashes) > 1:
             raise RuntimeError(
-                f"QuNoC initial mappings differ for {size}/{algorithm}: "
+                f"QuNoC initial mappings differ for {size}/{quantum_program}: "
                 f"{sorted(qunoc_mapping_hashes)}"
             )
 
@@ -701,15 +723,15 @@ def _parse_args() -> argparse.Namespace:
         description="Run MECH/QuNoC routing-method ablation experiments.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
-  python evaluate/run_ablation.py --sizes 40 --algorithms bv
+  python evaluate/run_ablation.py --sizes 40 --quantum-programs bv
   python evaluate/run_ablation.py --sizes 40 60 80 100 120 \\
-      --algorithms vqe qft qaoa bv --keep-going
+      --quantum-programs vqe qft qaoa bv --keep-going
   python evaluate/run_ablation.py --dry-run
 """,
     )
     parser.add_argument("--sizes", nargs="+", type=int, default=DEFAULT_SIZES)
     parser.add_argument(
-        "--algorithms", nargs="+", choices=ALGORITHMS, default=ALGORITHMS
+        "--quantum-programs", nargs="+", choices=QUANTUM_PROGRAMS, default=QUANTUM_PROGRAMS
     )
     parser.add_argument(
         "--strategies", nargs="+", choices=STRATEGIES, default=STRATEGIES
@@ -760,7 +782,7 @@ def _parse_args() -> argparse.Namespace:
     )
     args = parser.parse_args()
     args.sizes = _unique(args.sizes)
-    args.algorithms = _unique(args.algorithms)
+    args.quantum_programs = _unique(args.quantum_programs)
     args.strategies = _unique(args.strategies)
     args.layout_root = args.layout_root.expanduser().resolve()
     args.result_root = args.result_root.expanduser().resolve()
@@ -772,26 +794,26 @@ def main() -> int:
     args = _parse_args()
     _preflight(args)
 
-    cases = list(product(args.sizes, args.algorithms, args.strategies))
+    cases = list(product(args.sizes, args.quantum_programs, args.strategies))
     print(
-        f"Ablation matrix: {len(args.sizes)} sizes x {len(args.algorithms)} "
-        f"algorithms x {len(args.strategies)} strategies = {len(cases)} cases",
+        f"Ablation matrix: {len(args.sizes)} sizes x {len(args.quantum_programs)} "
+        f"quantum programs x {len(args.strategies)} strategies = {len(cases)} cases",
         flush=True,
     )
     print(f"Output CSV: {args.output}", flush=True)
     print(f"Raw results: {args.result_root}", flush=True)
     if args.dry_run:
-        for size, algorithm in product(args.sizes, args.algorithms):
+        for size, quantum_program in product(args.sizes, args.quantum_programs):
             benchmark = _benchmark_metadata(
-                algorithm, data_qubit_num((size, size)), args.seed
+                quantum_program, data_qubit_num((size, size)), args.seed
             )
             print(
-                f"  benchmark {size}x{size} {algorithm}: "
+                f"  benchmark {size}x{size} {quantum_program}: "
                 f"{benchmark['logic_gate_num']} gates, "
                 f"sha256={benchmark['benchmark_hash'][:12]}..."
             )
-        for size, algorithm, strategy in cases:
-            print(f"  case {size}x{size} {algorithm} {strategy}")
+        for size, quantum_program, strategy in cases:
+            print(f"  case {size}x{size} {quantum_program} {strategy}")
         return 0
 
     rows, migrated = _load_existing_rows(args.output)
@@ -802,21 +824,21 @@ def main() -> int:
     completed_results: dict[tuple[int, str, str, int], dict[str, Any]] = {}
     failures: list[str] = []
 
-    for index, (size, algorithm, strategy) in enumerate(cases, start=1):
-        label = f"{size}x{size}/{algorithm}/{strategy}"
-        case_dir = _case_directory(args.result_root, size, algorithm, strategy)
+    for index, (size, quantum_program, strategy) in enumerate(cases, start=1):
+        label = f"{size}x{size}/{quantum_program}/{strategy}"
+        case_dir = _case_directory(args.result_root, size, quantum_program, strategy)
         case_dir.mkdir(parents=True, exist_ok=True)
         result_path = case_dir / "exp_result.json"
         failure_path = case_dir / "failure.json"
 
         try:
-            benchmark_key = (size, algorithm)
+            benchmark_key = (size, quantum_program)
             if benchmark_key not in benchmark_cache:
                 benchmark_cache[benchmark_key] = _benchmark_metadata(
-                    algorithm, data_qubit_num((size, size)), args.seed
+                    quantum_program, data_qubit_num((size, size)), args.seed
                 )
             benchmark = benchmark_cache[benchmark_key]
-            signature = _signature(strategy, size, algorithm, benchmark, args)
+            signature = _signature(strategy, size, quantum_program, benchmark, args)
 
             cached = None if args.force else _load_cached_result(result_path, signature)
             if cached is not None:
@@ -827,7 +849,7 @@ def main() -> int:
                 if strategy in QUNOC_STRATEGIES:
                     metrics = _run_qunoc(
                         size,
-                        algorithm,
+                        quantum_program,
                         data_qubit_num((size, size)),
                         benchmark,
                         case_dir,
@@ -836,7 +858,7 @@ def main() -> int:
                 else:
                     metrics = _run_mech(
                         size,
-                        algorithm,
+                        quantum_program,
                         data_qubit_num((size, size)),
                         benchmark,
                         case_dir,
@@ -847,7 +869,7 @@ def main() -> int:
                     "completed_at": datetime.now(timezone.utc).isoformat(),
                     "signature": signature,
                     "package_size": size,
-                    "algorithm": algorithm,
+                    "quantum_program": quantum_program,
                     "strategy": strategy,
                     "seed": args.seed,
                     "benchmark_hash": benchmark["benchmark_hash"],
@@ -861,12 +883,12 @@ def main() -> int:
                     flush=True,
                 )
 
-            result_key = (size, algorithm, strategy, args.seed)
+            result_key = (size, quantum_program, strategy, args.seed)
             completed_results[result_key] = result
             row = _result_row(result)
             rows[_row_key(row)] = row
             _validate_cross_strategy_results(
-                completed_results, [size], [algorithm], args.seed
+                completed_results, [size], [quantum_program], args.seed
             )
             _write_rows(args.output, rows)
             if failure_path.exists():
@@ -887,7 +909,7 @@ def main() -> int:
                 raise
 
     _validate_cross_strategy_results(
-        completed_results, args.sizes, args.algorithms, args.seed
+        completed_results, args.sizes, args.quantum_programs, args.seed
     )
     _write_rows(args.output, rows)
     if failures:

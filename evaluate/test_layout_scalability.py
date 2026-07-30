@@ -209,7 +209,8 @@ def _set_nested(config: dict[str, Any], key_path: str, value: Any) -> None:
 
 
 def load_experiment_config(path: str | Path | None) -> ExperimentConfig:
-    raw = copy.deepcopy(DEFAULT_CONFIG)
+    default_raw = copy.deepcopy(DEFAULT_CONFIG)
+    raw = default_raw
     if path is not None:
         config_path = Path(path)
         with config_path.open("r", encoding="utf-8") as file:
@@ -219,7 +220,13 @@ def load_experiment_config(path: str | Path | None) -> ExperimentConfig:
                 user_raw = json.load(file) or {}
         if not isinstance(user_raw, dict):
             raise ValueError("Config file must contain a mapping at the top level.")
-        raw = _deep_update(raw, user_raw)
+        user_experiments = copy.deepcopy(user_raw.get("experiments"))
+        user_without_experiments = {
+            key: value for key, value in user_raw.items() if key != "experiments"
+        }
+        raw = _deep_update(default_raw, user_without_experiments)
+        if user_experiments is not None:
+            raw["experiments"] = user_experiments
 
     if "defaults" not in raw:
         raw["defaults"] = {}
@@ -260,20 +267,29 @@ def load_experiment_config(path: str | Path | None) -> ExperimentConfig:
     )
 
     experiments: dict[str, ExperimentSpec] = {}
+    default_experiments = DEFAULT_CONFIG.get("experiments", {})
     for experiment_name, experiment_raw in raw.get("experiments", {}).items():
         if not isinstance(experiment_raw, dict):
             continue
-        experiment_exp_dir = experiment_raw.get(
+        experiment_override = copy.deepcopy(experiment_raw)
+        for optional_section in ("defaults", "scalability"):
+            if experiment_override.get(optional_section) is None:
+                experiment_override.pop(optional_section, None)
+        experiment_config = _deep_update(
+            copy.deepcopy(default_experiments.get(experiment_name, {})),
+            experiment_override,
+        )
+        experiment_exp_dir = experiment_config.get(
             "exp_dir",
             os.path.join(root_exp_dir, experiment_name),
         )
         experiments[experiment_name] = ExperimentSpec(
             name=experiment_name,
             exp_dir=_resolve_output_path(experiment_exp_dir, base_dir=config_dir),
-            log_filename=str(experiment_raw.get("log_filename", raw.get("log_filename", DEFAULT_CONFIG["log_filename"]))),
-            output_csv=str(experiment_raw.get("output_csv", raw.get("output_csv", DEFAULT_CONFIG["output_csv"]))),
-            defaults=copy.deepcopy(experiment_raw.get("defaults", {})),
-            scalability=copy.deepcopy(experiment_raw.get("scalability", {})),
+            log_filename=str(experiment_config.get("log_filename", raw.get("log_filename", DEFAULT_CONFIG["log_filename"]))),
+            output_csv=str(experiment_config.get("output_csv", raw.get("output_csv", DEFAULT_CONFIG["output_csv"]))),
+            defaults=copy.deepcopy(experiment_config.get("defaults", {})),
+            scalability=copy.deepcopy(experiment_config.get("scalability", {})),
         )
 
     defaults = copy.deepcopy(raw.get("defaults", {}))
@@ -360,14 +376,14 @@ def _build_fab_model(run_config: dict[str, Any]) -> FabricateModel:
 
 
 def _resolve_package_size(run_config: dict[str, Any]) -> tuple[int, int]:
-    if "package_size" in run_config:
-        return _normalize_package_size(run_config["package_size"])
     if "package_x_size" in run_config:
         package_x_size = int(run_config["package_x_size"])
         package_area = int(run_config.get("package_area", 10000))
         if package_x_size <= 0:
             raise ValueError("package_x_size must be positive.")
         return package_x_size, package_area // package_x_size
+    if "package_size" in run_config:
+        return _normalize_package_size(run_config["package_size"])
     raise KeyError("run_config must define package_size or package_x_size.")
 
 
@@ -577,6 +593,8 @@ def _run_experiment(common_defaults: dict[str, Any], spec: ExperimentSpec) -> No
     for values in product(*axis_values):
         run_config = copy.deepcopy(run_defaults)
         for target_key, value in values:
+            if target_key == "package_x_size":
+                run_config.pop("package_size", None)
             _set_nested(run_config, target_key, value)
 
         result_dir_name = _build_result_dir_name(spec.name, run_config)

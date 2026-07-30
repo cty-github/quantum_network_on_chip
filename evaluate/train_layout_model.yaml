@@ -15,6 +15,7 @@ schema:
 
 environment:
   chiplet_length: 10
+  # Minimum fraction of the initial compute region preserved during RL layout generation.
   compute_ratio: 0.8
   patience: 5
   invalid_action_penalty: -2.0
@@ -25,9 +26,20 @@ scoring:
   estimate_workers_per_env: 1
 
 domain:
-  # Default simple training/evaluation domain: square packages from 40x40 to
-  # 160x160. Add extra target shapes here as needed, for example [1000, 40].
-  package_shapes: [40, 60, 80, 100, 120, 140, 160]
+  # Square packages from 40x40 to 160x160 plus fixed-area rectangular shapes.
+  package_shapes:
+    # - 40
+    # - 60
+    # - 80
+    # - 100
+    # - 120
+    # - 140
+    # - 160
+    - [1000, 10]
+    - [500, 20]
+    - [250, 40]
+    - [200, 50]
+    - [125, 80]
   chiplet_length: 10
   fab_model:
     compute_geometry: square

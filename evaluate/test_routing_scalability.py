@@ -45,8 +45,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "output_csv": "output.csv",
     "defaults": {
         "layout_root_dir": "./result/layout_scalability",
-        "routing_algorithms": ["vqe", "qft", "qaoa", "bv"],
+        "quantum_programs": ["vqe", "qft", "qaoa", "bv"],
         "layout_design_strategy": "greedy",
+        "package_size": [100, 100],
         "package_area": 10000,
         "reuse_result": True,
     },
@@ -54,61 +55,41 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "package_size": {
             "exp_dir": "./result/routing_scalability/package_size",
             "output_csv": "output.csv",
-            "defaults": {
-                "package_size": [100, 100],
-            },
+            "defaults": {},
             "scalability": {
-                "layout_design_strategy_to_test": ["template", "heuristic", "greedy", "rl"],
                 "package_size_to_test": [40, 60, 80, 100, 120],
-                "algorithm_to_test": ["vqe", "qft", "qaoa", "bv"],
             },
         },
         "package_shape": {
             "exp_dir": "./result/routing_scalability/package_shape",
             "output_csv": "output.csv",
-            "defaults": {
-                "package_area": 10000,
-                "layout_design_strategy": "heuristic",
-            },
+            "defaults": {},
             "scalability": {
                 "package_x_length_to_test": [10, 20, 40, 50, 80, 100],
-                "algorithm_to_test": ["vqe", "qft", "qaoa", "bv"],
             },
         },
         "geometry": {
             "exp_dir": "./result/routing_scalability/geometry",
             "output_csv": "output.csv",
-            "defaults": {
-                "package_size": [100, 100],
-                "layout_design_strategy": "heuristic",
-            },
+            "defaults": {},
             "scalability": {
                 "geometry_to_test": ["square", "hexagon", "heavy_square", "heavy_hexagon"],
-                "algorithm_to_test": ["vqe", "qft", "qaoa", "bv"],
             },
         },
         "inter_fidelity": {
             "exp_dir": "./result/routing_scalability/inter_fidelity",
             "output_csv": "output.csv",
-            "defaults": {
-                "package_size": [100, 100],
-                "layout_design_strategy": "heuristic",
-            },
+            "defaults": {},
             "scalability": {
                 "inter_fidelity_to_test": [0.96, 0.965, 0.97, 0.975, 0.98, 0.985, 0.99],
-                "algorithm_to_test": ["vqe", "qft", "qaoa", "bv"],
             },
         },
         "chiplet_sparsity": {
             "exp_dir": "./result/routing_scalability/chiplet_sparsity",
             "output_csv": "output.csv",
-            "defaults": {
-                "package_size": [100, 100],
-                "layout_design_strategy": "heuristic",
-            },
+            "defaults": {},
             "scalability": {
                 "chiplet_sparsity_to_test": [1, 3, 5, 7],
-                "algorithm_to_test": ["vqe", "qft", "qaoa", "bv"],
             },
         },
     },
@@ -121,7 +102,6 @@ AXIS_TARGETS = {
     "geometry_to_test": "fab_model.compute_geometry",
     "inter_fidelity_to_test": "fab_model.inter_fide",
     "chiplet_sparsity_to_test": "fab_model.inter_sparsity",
-    "algorithm_to_test": "algorithm",
 }
 
 AXIS_LABELS = {
@@ -131,7 +111,6 @@ AXIS_LABELS = {
     "geometry_to_test": "PackageGeometry",
     "inter_fidelity_to_test": "InterFidelity",
     "chiplet_sparsity_to_test": "ChipletSparsity",
-    "algorithm_to_test": "Algorithm",
 }
 
 
@@ -209,20 +188,29 @@ def load_experiment_config(path: str | Path | None) -> ExperimentConfig:
         )
 
     experiments: dict[str, ExperimentSpec] = {}
+    default_experiments = DEFAULT_CONFIG.get("experiments", {})
     for experiment_name, experiment_raw in raw.get("experiments", {}).items():
         if not isinstance(experiment_raw, dict):
             continue
-        experiment_exp_dir = experiment_raw.get(
+        experiment_override = copy.deepcopy(experiment_raw)
+        for optional_section in ("defaults", "scalability"):
+            if experiment_override.get(optional_section) is None:
+                experiment_override.pop(optional_section, None)
+        experiment_config = _deep_update(
+            copy.deepcopy(default_experiments.get(experiment_name, {})),
+            experiment_override,
+        )
+        experiment_exp_dir = experiment_config.get(
             "exp_dir",
             os.path.join(root_exp_dir, experiment_name),
         )
         experiments[experiment_name] = ExperimentSpec(
             name=experiment_name,
             exp_dir=_resolve_output_path(experiment_exp_dir, base_dir=config_dir),
-            log_filename=str(experiment_raw.get("log_filename", raw.get("log_filename", DEFAULT_CONFIG["log_filename"]))),
-            output_csv=str(experiment_raw.get("output_csv", raw.get("output_csv", DEFAULT_CONFIG["output_csv"]))),
-            defaults=copy.deepcopy(experiment_raw.get("defaults", {})),
-            scalability=copy.deepcopy(experiment_raw.get("scalability", {})),
+            log_filename=str(experiment_config.get("log_filename", raw.get("log_filename", DEFAULT_CONFIG["log_filename"]))),
+            output_csv=str(experiment_config.get("output_csv", raw.get("output_csv", DEFAULT_CONFIG["output_csv"]))),
+            defaults=copy.deepcopy(experiment_config.get("defaults", {})),
+            scalability=copy.deepcopy(experiment_config.get("scalability", {})),
         )
 
     return ExperimentConfig(
@@ -257,8 +245,6 @@ def _build_sweep_axes(scalability: dict[str, list[Any]]) -> tuple[list[str], lis
                 normalized_values.append(float(value))
             elif target_key == "fab_model.inter_sparsity":
                 normalized_values.append(int(value))
-            elif target_key == "algorithm":
-                normalized_values.append(str(value))
             else:
                 normalized_values.append(value)
 
@@ -269,8 +255,6 @@ def _build_sweep_axes(scalability: dict[str, list[Any]]) -> tuple[list[str], lis
 
 
 def _resolve_package_size(run_config: dict[str, Any]) -> tuple[int, int]:
-    if "package_size" in run_config:
-        return _normalize_package_size(run_config["package_size"])
     if "package_x_size" in run_config:
         package_x_size = int(run_config["package_x_size"])
         package_area = int(run_config.get("package_area", 10000))
@@ -281,6 +265,8 @@ def _resolve_package_size(run_config: dict[str, Any]) -> tuple[int, int]:
                 f"package_area {package_area} is not divisible by package_x_size {package_x_size}."
             )
         return package_x_size, package_area // package_x_size
+    if "package_size" in run_config:
+        return _normalize_package_size(run_config["package_size"])
     raise KeyError("run_config must define package_size or package_x_size.")
 
 
@@ -311,26 +297,31 @@ def _build_layout_package_path(common_defaults: dict[str, Any], spec_name: str, 
     raise ValueError(f"Unsupported routing experiment: {spec_name}")
 
 
-def _build_result_dir_name(spec_name: str, run_config: dict[str, Any], algorithm: str) -> str:
+def _build_result_dir_name(spec_name: str, run_config: dict[str, Any], quantum_program: str) -> str:
     layout_strategy = str(run_config.get("layout_design_strategy", "greedy"))
     package_size = _resolve_package_size(run_config)
     if spec_name == "package_size":
-        return f"{package_size[0]}_{layout_strategy}_{algorithm}"
+        return f"{package_size[0]}_{layout_strategy}_{quantum_program}"
     if spec_name == "package_shape":
-        return f"{package_size[0]}_{package_size[1]}_{layout_strategy}_{algorithm}"
+        return f"{package_size[0]}_{package_size[1]}_{layout_strategy}_{quantum_program}"
     if spec_name == "geometry":
         geometry = str(run_config.get("fab_model", {}).get("compute_geometry", "square"))
-        return f"{geometry}_{layout_strategy}_{algorithm}"
+        return f"{geometry}_{layout_strategy}_{quantum_program}"
     if spec_name == "inter_fidelity":
         inter_fide = run_config.get("fab_model", {}).get("inter_fide")
-        return f"{inter_fide}_{layout_strategy}_{algorithm}"
+        return f"{inter_fide}_{layout_strategy}_{quantum_program}"
     if spec_name == "chiplet_sparsity":
         inter_sparsity = run_config.get("fab_model", {}).get("inter_sparsity")
-        return f"{inter_sparsity}_{layout_strategy}_{algorithm}"
-    return f"{layout_strategy}_{algorithm}"
+        return f"{inter_sparsity}_{layout_strategy}_{quantum_program}"
+    return f"{layout_strategy}_{quantum_program}"
 
 
-def _route_once(common_defaults: dict[str, Any], spec: ExperimentSpec, run_config: dict[str, Any]) -> dict[str, Any]:
+def _route_once(
+    common_defaults: dict[str, Any],
+    spec: ExperimentSpec,
+    run_config: dict[str, Any],
+    quantum_program: str,
+) -> dict[str, Any]:
     package_path = _build_layout_package_path(common_defaults, spec.name, run_config)
     if not os.path.exists(package_path):
         raise FileNotFoundError(
@@ -341,17 +332,21 @@ def _route_once(common_defaults: dict[str, Any], spec: ExperimentSpec, run_confi
     package = Package.from_pickle(filepath=package_path)
     package_size = package.package_size
     data_qubit_num = _data_qubit_num(package_size)
-    algorithm = str(run_config["algorithm"])
-    program = get_program(algorithm, data_qubit_num)
+    quantum_program = str(quantum_program)
+    program = get_program(quantum_program, data_qubit_num)
 
-    result_dir = os.path.join(spec.exp_dir, _build_result_dir_name(spec.name, run_config, algorithm))
+    result_dir = os.path.join(spec.exp_dir, _build_result_dir_name(spec.name, run_config, quantum_program))
     os.makedirs(result_dir, exist_ok=True)
 
     cache_path = os.path.join(result_dir, "exp_result.json")
     circuit_path = os.path.join(result_dir, "qunoc_circuit.pkl")
     if bool(run_config.get("reuse_result", True)) and os.path.exists(cache_path):
         with open(cache_path, "r", encoding="utf-8") as file:
-            return json.load(file)
+            cached = json.load(file)
+        if "quantum_program" not in cached and "algorithm" in cached:
+            cached["quantum_program"] = cached["algorithm"]
+        cached.pop("algorithm", None)
+        return cached
 
     router = Router(package, program, result_dir=result_dir)
     circuit = router.route_program_on_package()
@@ -361,7 +356,7 @@ def _route_once(common_defaults: dict[str, Any], spec: ExperimentSpec, run_confi
     logic_gate_fide = router.estimate_qunoc_logic_gate_fide()
 
     exp_result = {
-        "algorithm": algorithm,
+        "quantum_program": quantum_program,
         "data_qubit_num": data_qubit_num,
         "logic_gate_num": program.get_gate_depend_graph().number_of_nodes() - 1,
         "circuit_duration": circuit_duration,
@@ -396,7 +391,19 @@ def _run_experiment(common_defaults: dict[str, Any], spec: ExperimentSpec) -> No
     logging.info("Scalability: %s", spec.scalability)
 
     run_defaults = _deep_update(common_defaults, spec.defaults)
-    axis_names, axis_values = _build_sweep_axes(spec.scalability)
+    scalability = copy.deepcopy(spec.scalability)
+    quantum_programs = [
+        str(value)
+        for value in scalability.pop(
+            "quantum_program_to_test",
+            run_defaults.get("quantum_programs", []),
+        )
+    ]
+    if not quantum_programs:
+        raise ValueError(
+            f"Routing experiment {spec.name} must define at least one quantum program."
+        )
+    axis_names, axis_values = _build_sweep_axes(scalability)
     if not axis_names:
         logging.info("Skip %s because no sweep axes were provided.", spec.name)
         return
@@ -408,7 +415,7 @@ def _run_experiment(common_defaults: dict[str, Any], spec: ExperimentSpec) -> No
             writer.writerow(
                 [AXIS_LABELS.get(name, name) for name in axis_names]
                 + [
-                    "Algorithm",
+                    "QuantumProgram",
                     "#DataQubit",
                     "#LogicGate",
                     "CircuitDuration",
@@ -424,34 +431,46 @@ def _run_experiment(common_defaults: dict[str, Any], spec: ExperimentSpec) -> No
     for values in product(*axis_values):
         run_config = copy.deepcopy(run_defaults)
         for target_key, value in values:
+            if target_key == "package_x_size":
+                run_config.pop("package_size", None)
             _set_nested(run_config, target_key, value)
 
-        exp_result = _route_once(common_defaults, spec, run_config)
-
-        with open(output_path, mode="a", newline="", encoding="utf-8") as file:
-            writer = csv.writer(file)
-            writer.writerow(
-                [
-                    *(_format_value(value) for _, value in values),
-                    exp_result["algorithm"],
-                    exp_result["data_qubit_num"],
-                    exp_result["logic_gate_num"],
-                    exp_result["circuit_duration"],
-                    exp_result["gate_fidelity"],
-                    exp_result["intra_gate"],
-                    exp_result["inter_gate"],
-                    exp_result["qst_dist"],
-                    exp_result["meas_num"],
-                    exp_result["total_fide"],
-                ]
+        for quantum_program in quantum_programs:
+            exp_result = _route_once(
+                common_defaults,
+                spec,
+                run_config,
+                quantum_program,
             )
 
-        logging.info(
-            "Finished %s -> duration=%s, fidelity=%s",
-            _build_result_dir_name(spec.name, run_config, exp_result["algorithm"]),
-            exp_result["circuit_duration"],
-            exp_result["gate_fidelity"],
-        )
+            with open(output_path, mode="a", newline="", encoding="utf-8") as file:
+                writer = csv.writer(file)
+                writer.writerow(
+                    [
+                        *(_format_value(value) for _, value in values),
+                        exp_result["quantum_program"],
+                        exp_result["data_qubit_num"],
+                        exp_result["logic_gate_num"],
+                        exp_result["circuit_duration"],
+                        exp_result["gate_fidelity"],
+                        exp_result["intra_gate"],
+                        exp_result["inter_gate"],
+                        exp_result["qst_dist"],
+                        exp_result["meas_num"],
+                        exp_result["total_fide"],
+                    ]
+                )
+
+            logging.info(
+                "Finished %s -> duration=%s, fidelity=%s",
+                _build_result_dir_name(
+                    spec.name,
+                    run_config,
+                    exp_result["quantum_program"],
+                ),
+                exp_result["circuit_duration"],
+                exp_result["gate_fidelity"],
+            )
 
 
 def main() -> None:

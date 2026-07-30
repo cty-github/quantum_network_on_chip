@@ -1511,155 +1511,112 @@ class ComputeModule(FuncArea):
         )
 
         if FuncArea.fab_model.compute_geometry == "square":
+            origin_source = source
+            origin_target = target
             path = [source]
             append_path = []
-            if source == target:
-                path.extend(append_path)
+            platforms = self.get_platforms()
+            module_x_size = self.right[0] - self.left[0] + 1
+            module_y_size = self.bottom[0] - self.top[0] + 1
+
+            def _validate_path(path: list[tuple[int, int]]) -> list[tuple[int, int]]:
+                assert path and path[0] == origin_source, (
+                    f"Invalid swap path source in compute module {self}: {path}"
+                )
+                if origin_target in path:
+                    path = path[: path.index(origin_target) + 1]
+
+                normalized_path: list[tuple[int, int]] = []
+                node_indices: dict[tuple[int, int], int] = {}
+                for node in path:
+                    if node in node_indices:
+                        duplicate_index = node_indices[node]
+                        for removed_node in normalized_path[duplicate_index + 1 :]:
+                            node_indices.pop(removed_node, None)
+                        normalized_path = normalized_path[: duplicate_index + 1]
+                    else:
+                        node_indices[node] = len(normalized_path)
+                        normalized_path.append(node)
+                path = normalized_path
+
+                assert all(self.has_node(node) for node in path), (
+                    f"Invalid swap path outside compute module {self}: {path}"
+                )
+
+                node_graph = self.get_node_graph()
+                if path[-1] != origin_target or any(
+                    not node_graph.has_edge(path[i], path[i + 1])
+                    for i in range(len(path) - 1)
+                ):
+                    if not nx.has_path(node_graph, origin_source, origin_target):
+                        raise ValueError(
+                            f"No path between {origin_source} and {origin_target} in compute module {self}"
+                        )
+                    return nx.shortest_path(node_graph, origin_source, origin_target)
                 return path
 
-            if source[0] == self.left[0]:
-                if source[1] == self.top[0]:
-                    if (source[0] + 1, source[1]) not in self.get_platforms():
-                        source = (source[0] + 1, source[1])
-                        path.append(source)
-                        source = (source[0], source[1] + 1)
-                        path.append(source)
-                    else:
-                        assert (source[0], source[1] + 1) not in self.get_platforms(), (
-                            f"Data qubit in the top left corner {source} can not get out."
+            def _step_node(
+                node: tuple[int, int], step: tuple[int, int]
+            ) -> tuple[int, int]:
+                return node[0] + step[0], node[1] + step[1]
+
+            def _prefer_non_platform_steps(
+                node: tuple[int, int],
+                first_step: tuple[int, int],
+                second_step: tuple[int, int],
+            ) -> list[tuple[int, int]]:
+                first_node = _step_node(node, first_step)
+                second_node = _step_node(node, second_step)
+                if self.has_node(first_node) and first_node not in platforms:
+                    return [first_step, second_step]
+                if self.has_node(second_node) and second_node not in platforms:
+                    return [second_step, first_step]
+                return [first_step, second_step]
+
+            def _boundary_steps(node: tuple[int, int]) -> list[tuple[int, int]]:
+                if node[0] == self.left[0]:
+                    horizontal_step = (1, 0)
+                    if node[1] == self.top[0]:
+                        return _prefer_non_platform_steps(
+                            node, horizontal_step, (0, 1)
                         )
-                        source = (source[0], source[1] + 1)
-                        path.append(source)
-                        source = (source[0] + 1, source[1])
-                        path.append(source)
-                elif source[1] == self.bottom[0]:
-                    if (source[0] + 1, source[1]) not in self.get_platforms():
-                        source = (source[0] + 1, source[1])
-                        path.append(source)
-                        source = (source[0], source[1] - 1)
-                        path.append(source)
-                    else:
-                        assert (source[0], source[1] - 1) not in self.get_platforms(), (
-                            f"Data qubit in the bottom left corner {source} can not get out."
+                    if node[1] == self.bottom[0]:
+                        return _prefer_non_platform_steps(
+                            node, horizontal_step, (0, -1)
                         )
-                        source = (source[0], source[1] - 1)
-                        path.append(source)
-                        source = (source[0] + 1, source[1])
-                        path.append(source)
-                else:
-                    source = (source[0] + 1, source[1])
-                    path.append(source)
-            elif source[0] == self.right[0]:
-                if source[1] == self.top[0]:
-                    if (source[0] - 1, source[1]) not in self.get_platforms():
-                        source = (source[0] - 1, source[1])
-                        path.append(source)
-                        source = (source[0], source[1] + 1)
-                        path.append(source)
-                    else:
-                        assert (source[0], source[1] + 1) not in self.get_platforms(), (
-                            f"Data qubit in the top right corner {source} can not get out."
+                    return [horizontal_step]
+                if node[0] == self.right[0]:
+                    horizontal_step = (-1, 0)
+                    if node[1] == self.top[0]:
+                        return _prefer_non_platform_steps(
+                            node, horizontal_step, (0, 1)
                         )
-                        source = (source[0], source[1] + 1)
-                        path.append(source)
-                        source = (source[0] - 1, source[1])
-                        path.append(source)
-                elif source[1] == self.bottom[0]:
-                    if (source[0] - 1, source[1]) not in self.get_platforms():
-                        source = (source[0] - 1, source[1])
-                        path.append(source)
-                        source = (source[0], source[1] - 1)
-                        path.append(source)
-                    else:
-                        assert (source[0], source[1] - 1) not in self.get_platforms(), (
-                            f"Data qubit in the bottom right corner {source} can not get out."
+                    if node[1] == self.bottom[0]:
+                        return _prefer_non_platform_steps(
+                            node, horizontal_step, (0, -1)
                         )
-                        source = (source[0], source[1] - 1)
-                        path.append(source)
-                        source = (source[0] - 1, source[1])
-                        path.append(source)
-                else:
-                    source = (source[0] - 1, source[1])
-                    path.append(source)
-            else:
-                if source[1] == self.top[0]:
-                    source = (source[0], source[1] + 1)
-                    path.append(source)
-                elif source[1] == self.bottom[0]:
-                    source = (source[0], source[1] - 1)
+                    return [horizontal_step]
+                if node[1] == self.top[0]:
+                    return [(0, 1)]
+                if node[1] == self.bottom[0]:
+                    return [(0, -1)]
+                return []
+
+            if source == target:
+                path.extend(append_path)
+                return _validate_path(path)
+
+            for step in _boundary_steps(source):
+                next_source = _step_node(source, step)
+                if self.has_node(next_source):
+                    source = next_source
                     path.append(source)
 
-            if target[0] == self.left[0]:
-                if target[1] == self.top[0]:
-                    if (target[0] + 1, target[1]) not in self.get_platforms():
-                        append_path.insert(0, target)
-                        target = (target[0] + 1, target[1])
-                        append_path.insert(0, target)
-                        target = (target[0], target[1] + 1)
-                    else:
-                        assert (target[0], target[1] + 1) not in self.get_platforms(), (
-                            f"Data qubit in the top left corner {target} can not get in."
-                        )
-                        append_path.insert(0, target)
-                        target = (target[0], target[1] + 1)
-                        append_path.insert(0, target)
-                        target = (target[0] + 1, target[1])
-                elif target[1] == self.bottom[0]:
-                    if (target[0] + 1, target[1]) not in self.get_platforms():
-                        append_path.insert(0, target)
-                        target = (target[0] + 1, target[1])
-                        append_path.insert(0, target)
-                        target = (target[0], target[1] - 1)
-                    else:
-                        assert (target[0], target[1] - 1) not in self.get_platforms(), (
-                            f"Data qubit in the bottom left corner {target} can not get in."
-                        )
-                        append_path.insert(0, target)
-                        target = (target[0], target[1] - 1)
-                        append_path.insert(0, target)
-                        target = (target[0] + 1, target[1])
-                else:
+            for step in _boundary_steps(target):
+                next_target = _step_node(target, step)
+                if self.has_node(next_target):
                     append_path.insert(0, target)
-                    target = (target[0] + 1, target[1])
-            elif target[0] == self.right[0]:
-                if target[1] == self.top[0]:
-                    if (target[0] - 1, target[1]) not in self.get_platforms():
-                        append_path.insert(0, target)
-                        target = (target[0] - 1, target[1])
-                        append_path.insert(0, target)
-                        target = (target[0], target[1] + 1)
-                    else:
-                        assert (target[0], target[1] + 1) not in self.get_platforms(), (
-                            f"Data qubit in the top right corner {target} can not get in."
-                        )
-                        append_path.insert(0, target)
-                        target = (target[0], target[1] + 1)
-                        append_path.insert(0, target)
-                        target = (target[0] - 1, target[1])
-                elif target[1] == self.bottom[0]:
-                    if (target[0] - 1, target[1]) not in self.get_platforms():
-                        append_path.insert(0, target)
-                        target = (target[0] - 1, target[1])
-                        append_path.insert(0, target)
-                        target = (target[0], target[1] - 1)
-                    else:
-                        assert (target[0], target[1] - 1) not in self.get_platforms(), (
-                            f"Data qubit in the bottom right corner {target} can not get in."
-                        )
-                        append_path.insert(0, target)
-                        target = (target[0], target[1] - 1)
-                        append_path.insert(0, target)
-                        target = (target[0] - 1, target[1])
-                else:
-                    append_path.insert(0, target)
-                    target = (target[0] - 1, target[1])
-            else:
-                if target[1] == self.top[0]:
-                    append_path.insert(0, target)
-                    target = (target[0], target[1] + 1)
-                elif target[1] == self.bottom[0]:
-                    append_path.insert(0, target)
-                    target = (target[0], target[1] - 1)
+                    target = next_target
 
             if source == target:
                 while (
@@ -1668,7 +1625,23 @@ class ComputeModule(FuncArea):
                     path.pop()
                     append_path.pop(0)
                 path.extend(append_path)
-                return path
+                return _validate_path(path)
+
+            if module_x_size == 1 or module_y_size == 1:
+                if source[0] < target[0]:
+                    for i in range(source[0] + 1, target[0] + 1):
+                        path.append((i, source[1]))
+                elif source[0] > target[0]:
+                    for i in range(source[0] - 1, target[0] - 1, -1):
+                        path.append((i, source[1]))
+                if source[1] < target[1]:
+                    for i in range(source[1] + 1, target[1] + 1):
+                        path.append((target[0], i))
+                elif source[1] > target[1]:
+                    for i in range(source[1] - 1, target[1] - 1, -1):
+                        path.append((target[0], i))
+                path.extend(append_path)
+                return _validate_path(path)
 
             source_chiplet = self.get_node_chiplet(source)
             target_chiplet = self.get_node_chiplet(target)
@@ -1686,66 +1659,71 @@ class ComputeModule(FuncArea):
                     for i in range(source[1] - 1, target[1] - 1, -1):
                         path.append((target[0], i))
             else:
+                def _axis_candidates(
+                    axis: int, fixed_coord: int
+                ) -> list[int]:
+                    step = FuncArea.fab_model.inter_sparsity
+                    if step <= 0:
+                        return []
+                    if axis == 0:
+                        start, end = self.left[0], self.right[0]
+                        return [
+                            coord
+                            for coord in range(start, end + 1)
+                            if (coord - start) % step == 0
+                            and self.has_node((coord, fixed_coord))
+                        ]
+                    start, end = self.top[0], self.bottom[0]
+                    return [
+                        coord
+                        for coord in range(start, end + 1)
+                        if (coord - start) % step == 0
+                        and self.has_node((fixed_coord, coord))
+                    ]
+
+                def _fallback_shortest_path() -> list[tuple[int, int]]:
+                    node_graph = self.get_node_graph()
+                    if not nx.has_path(node_graph, source, target):
+                        raise ValueError(
+                            f"No path between {source} and {target} in compute module {self}"
+                        )
+                    fallback_path = path.copy()
+                    fallback_path.extend(nx.shortest_path(node_graph, source, target)[1:])
+                    fallback_path.extend(append_path)
+                    return _validate_path(fallback_path)
+
                 # find the x-line index has inter-chiplet coupler
                 if source_chiplet.in_module_coord[1] == target_chiplet.in_module_coord[1]:
                     inter_coupler_x = source[0]
-                elif source[0] < target[0]:
-                    inter_coupler_x = (
-                        self.left[0]
-                        + (
-                            (source[0] - self.left[0] - 1)
-                            // FuncArea.fab_model.inter_sparsity
-                            + 1
-                        )
-                        * FuncArea.fab_model.inter_sparsity
-                    )
-                    if inter_coupler_x >= self.right[0]:
-                        inter_coupler_x -= FuncArea.fab_model.inter_sparsity
-                    x_chiplet = self.get_node_chiplet((inter_coupler_x, source[1]))
-                    if x_chiplet.in_module_coord[0] > source_chiplet.in_module_coord[0]:
-                        inter_coupler_x -= FuncArea.fab_model.inter_sparsity
                 else:
-                    inter_coupler_x = (
-                        self.left[0]
-                        + (source[0] - self.left[0])
-                        // FuncArea.fab_model.inter_sparsity
-                        * FuncArea.fab_model.inter_sparsity
+                    x_candidates = _axis_candidates(0, source[1])
+                    x_candidates = [
+                        coord
+                        for coord in x_candidates
+                        if self.get_node_chiplet((coord, source[1])).in_module_coord[0]
+                        == source_chiplet.in_module_coord[0]
+                    ]
+                    if not x_candidates:
+                        return _fallback_shortest_path()
+                    inter_coupler_x = min(
+                        x_candidates, key=lambda coord: abs(coord - source[0])
                     )
-                    if inter_coupler_x == self.left[0]:
-                        inter_coupler_x += FuncArea.fab_model.inter_sparsity
-                    x_chiplet = self.get_node_chiplet((inter_coupler_x, source[1]))
-                    if x_chiplet.in_module_coord[0] < source_chiplet.in_module_coord[0]:
-                        inter_coupler_x += FuncArea.fab_model.inter_sparsity
                 # find the y-line index has inter-chiplet coupler
                 if source_chiplet.in_module_coord[0] == target_chiplet.in_module_coord[0]:
                     inter_coupler_y = target[1]
-                elif source[1] < target[1]:
-                    inter_coupler_y = (
-                        self.top[0]
-                        + (target[1] - self.top[0])
-                        // FuncArea.fab_model.inter_sparsity
-                        * FuncArea.fab_model.inter_sparsity
-                    )
-                    if inter_coupler_y == self.top[0]:
-                        inter_coupler_y += FuncArea.fab_model.inter_sparsity
-                    y_chiplet = self.get_node_chiplet((target[0], inter_coupler_y))
-                    if y_chiplet.in_module_coord[1] < target_chiplet.in_module_coord[1]:
-                        inter_coupler_y += FuncArea.fab_model.inter_sparsity
                 else:
-                    inter_coupler_y = (
-                        self.top[0]
-                        + (
-                            (target[1] - self.top[0] - 1)
-                            // FuncArea.fab_model.inter_sparsity
-                            + 1
-                        )
-                        * FuncArea.fab_model.inter_sparsity
+                    y_candidates = _axis_candidates(1, target[0])
+                    y_candidates = [
+                        coord
+                        for coord in y_candidates
+                        if self.get_node_chiplet((target[0], coord)).in_module_coord[1]
+                        == target_chiplet.in_module_coord[1]
+                    ]
+                    if not y_candidates:
+                        return _fallback_shortest_path()
+                    inter_coupler_y = min(
+                        y_candidates, key=lambda coord: abs(coord - target[1])
                     )
-                    if inter_coupler_y >= self.bottom[0]:
-                        inter_coupler_y -= FuncArea.fab_model.inter_sparsity
-                    y_chiplet = self.get_node_chiplet((target[0], inter_coupler_y))
-                    if y_chiplet.in_module_coord[1] > target_chiplet.in_module_coord[1]:
-                        inter_coupler_y -= FuncArea.fab_model.inter_sparsity
 
                 if source[0] < inter_coupler_x:
                     for i in range(source[0] + 1, inter_coupler_x + 1):
@@ -1773,7 +1751,7 @@ class ComputeModule(FuncArea):
                         path.append((target[0], i))
 
             path.extend(append_path)
-            return path
+            return _validate_path(path)
         else:
             node_graph = self.get_node_graph()
             if not nx.has_path(node_graph, source, target):

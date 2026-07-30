@@ -24,7 +24,7 @@ from baseline.mech_utils import (
 )
 
 
-ALGORITHMS = ["vqe", "qft", "qaoa", "bv"]
+QUANTUM_PROGRAMS = ["vqe", "qft", "qaoa", "bv"]
 BASE_OUT = PROJECT_ROOT / "evaluate" / "result" / "mechbaseline"
 
 EXPERIMENT_HEADERS = {
@@ -165,7 +165,7 @@ def write_rows(
             ["Baseline"]
             + headers
             + [
-                "Algorithm",
+                "QuantumProgram",
                 "#DataQubit",
                 "#LogicGate",
                 "CircuitDuration",
@@ -189,7 +189,7 @@ def write_rows(
                 case["package_size"],
                 case["chiplet_array_dim"],
                 case["chiplet_size"],
-                ALGORITHMS,
+                QUANTUM_PROGRAMS,
                 case["cross_link_sparsity"],
                 case["data_qubits"],
             )
@@ -204,21 +204,21 @@ def write_rows(
                 inter_fide=case.get("inter_fide", DEFAULT_INTER_FIDE),
             )
 
-            for algorithm in ALGORITHMS:
-                algorithm_result = result[algorithm]
+            for quantum_program in QUANTUM_PROGRAMS:
+                program_result = result[quantum_program]
                 writer.writerow(
                     [
                         "mech",
                         *case["axis_values"],
-                        algorithm,
+                        quantum_program,
                         case["data_qubits"],
-                        get_field(algorithm_result, "logic_gate_num", default=""),
-                        get_mech_circuit_duration(algorithm_result),
-                        aligned_logic_gate_fidelity(algorithm_result, model),
-                        get_field(algorithm_result, "on_chip", "on-chip"),
-                        get_field(algorithm_result, "cross_chip", "cross-chip"),
-                        get_field(algorithm_result, "eqst_dist", default=0),
-                        get_field(algorithm_result, "meas_num"),
+                        get_field(program_result, "logic_gate_num", default=""),
+                        get_mech_circuit_duration(program_result),
+                        aligned_logic_gate_fidelity(program_result, model),
+                        get_field(program_result, "on_chip", "on-chip"),
+                        get_field(program_result, "cross_chip", "cross-chip"),
+                        get_field(program_result, "eqst_dist", default=0),
+                        get_field(program_result, "meas_num"),
                         "",
                     ]
                 )

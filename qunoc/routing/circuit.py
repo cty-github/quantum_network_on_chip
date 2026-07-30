@@ -1338,10 +1338,28 @@ class RidingStage(CircuitStage):
             bool: Whether the action is successfully added.
         """
         assert isinstance(action, DirectGate), "Action should be LocalGate"
-        assert self.curr_p2l_map[action.phy_ctrl_qubit] == action.logic_gate.control_qubit, \
-            f"In action {action.id}, control qubit {action.logic_gate.control_qubit} should be in physical qubit {action.phy_ctrl_qubit}."
-        assert self.curr_p2l_map[action.phy_targ_qubit] == action.logic_gate.target_qubit, \
-            f"In action {action.id}, target qubit {action.logic_gate.target_qubit} should be in physical qubit {action.phy_targ_qubit}."
+        actual_ctrl_qubit = self.curr_p2l_map[action.phy_ctrl_qubit]
+        actual_targ_qubit = self.curr_p2l_map[action.phy_targ_qubit]
+        if actual_ctrl_qubit != action.logic_gate.control_qubit:
+            raise AssertionError(
+                f"In action {action.id}, control qubit "
+                f"{action.logic_gate.control_qubit} should be in physical qubit "
+                f"{action.phy_ctrl_qubit}, actual={actual_ctrl_qubit}, "
+                f"control_current_node="
+                f"{self.curr_l2p_map.get(action.logic_gate.control_qubit)}, "
+                f"target_current_node="
+                f"{self.curr_l2p_map.get(action.logic_gate.target_qubit)}."
+            )
+        if actual_targ_qubit != action.logic_gate.target_qubit:
+            raise AssertionError(
+                f"In action {action.id}, target qubit "
+                f"{action.logic_gate.target_qubit} should be in physical qubit "
+                f"{action.phy_targ_qubit}, actual={actual_targ_qubit}, "
+                f"control_current_node="
+                f"{self.curr_l2p_map.get(action.logic_gate.control_qubit)}, "
+                f"target_current_node="
+                f"{self.curr_l2p_map.get(action.logic_gate.target_qubit)}."
+            )
 
         self.node_action_ids.setdefault(action.phy_ctrl_qubit, []).append(action.id)
         self.node_action_ids.setdefault(action.phy_targ_qubit, []).append(action.id)

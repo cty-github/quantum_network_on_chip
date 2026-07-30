@@ -1,79 +1,125 @@
-exp_dir: ./result/layout_scalability
-log_filename: log
-output_csv: output.csv
+# exp_dir: ./result/layout_scalability
+# log_filename: log
+# output_csv: output.csv
 
 defaults:
-  chiplet_length: 10
-  design_strategy: greedy
-  compute_ratio: 0.8
-  rl_patience: 5
+  # package_size: [100, 100]
+  # package_area: 10000
+  # chiplet_length: 10
+  # design_strategy: greedy
+  # Minimum fraction of the initial compute region preserved during RL layout generation.
+  # compute_ratio: 0.8
+  # fab_model:
+  #   compute_geometry: square
+  #   inter_sparsity: 3
+  #   inter_fide: 0.983
   # RL is inference-only here. Train first with evaluate/train_layout_model.py,
   # then point rl_model_path at the resulting model.zip when design_strategy includes rl.
-  rl_model_path: null
-  rl_estimate_workers: 1
-  rl_seed: null
-  rl_inference_seed: 1042
-  rl_score_seeds: [0]
-  rl_canvas_size: null
-  rl_max_module_slots: null
-  rl_relative_interval_bins: null
-  rl_allow_legacy_model: false
-  reuse_package: true
-  save_package: true
-  save_figure: true
-  fab_model:
-    compute_geometry: square
-    inter_sparsity: 3
-    inter_fide: 0.983
+  # rl_patience: 5
+  rl_model_path: ./result/layout_models/layout-rl-1000x200_seed42/model.zip
+  # rl_estimate_workers: 1
+  # rl_score_seed: null
+  # rl_seed: null
+  # rl_inference_seed: 1042
+  # rl_score_seeds: [0]
+  # rl_canvas_size: null
+  # rl_max_module_slots: null
+  # rl_relative_interval_bins: null
+  # rl_invalid_action_penalty: -2.0
+  # rl_record_design_history: false
+  # rl_allow_legacy_model: false
+  reuse_package: false
+  # save_package: true
+  # save_figure: true
 
 experiments:
   package_size:
-    exp_dir: ./result/layout_scalability/package_size
-    output_csv: output.csv
-    defaults:
-      package_size: [100, 100]
+    # exp_dir: ./result/layout_scalability/package_size
+    # log_filename: log
+    # output_csv: output.csv
+    # defaults:
+    #   fab_model:
+    #     compute_geometry: square
+    #     inter_sparsity: 3
+    #     inter_fide: 0.983
     scalability:
-      design_strategy_to_test: [template, heuristic, greedy]
+      design_strategy_to_test: [
+        # template,
+        # heuristic,
+        # greedy,
+        rl,
+        ]
       package_size_to_test: [40, 60, 80, 100, 120]
 
   package_shape:
-    exp_dir: ./result/layout_scalability/package_shape
-    output_csv: output.csv
-    defaults:
-      package_area: 10000
+    # exp_dir: ./result/layout_scalability/package_shape
+    # log_filename: log
+    # output_csv: output.csv
+    # defaults:
+    #   package_area: 10000
+    #   fab_model:
+    #     compute_geometry: square
+    #     inter_sparsity: 3
+    #     inter_fide: 0.983
     scalability:
-      design_strategy_to_test: [heuristic, greedy]
-      package_x_length_to_test: [10, 20, 40, 50, 80, 100]
+      design_strategy_to_test: [
+        # template,
+        # heuristic,
+        # greedy,
+        rl,
+        ]
+      package_x_length_to_test: [1000, 500, 250, 200, 125, 100]
 
   geometry:
-    exp_dir: ./result/layout_scalability/geometry
-    output_csv: output.csv
-    defaults:
-      package_size: [100, 100]
+    # exp_dir: ./result/layout_scalability/geometry
+    # log_filename: log
+    # output_csv: output.csv
+    # defaults:
+    #   package_size: [100, 100]
+    #   fab_model:
+    #     inter_sparsity: 3
+    #     inter_fide: 0.983
     scalability:
-      design_strategy_to_test: [heuristic, greedy]
+      design_strategy_to_test: [
+        # template,
+        # heuristic,
+        # greedy,
+        rl,
+        ]
       geometry_to_test: [square, hexagon, heavy_square, heavy_hexagon]
 
   inter_fidelity:
-    exp_dir: ./result/layout_scalability/inter_fidelity
-    output_csv: output.csv
-    defaults:
-      package_size: [100, 100]
-      fab_model:
-        compute_geometry: square
-        inter_sparsity: 3
+    # exp_dir: ./result/layout_scalability/inter_fidelity
+    # log_filename: log
+    # output_csv: output.csv
+    # defaults:
+    #   package_size: [100, 100]
+    #   fab_model:
+    #     compute_geometry: square
+    #     inter_sparsity: 3
     scalability:
-      design_strategy_to_test: [heuristic, greedy]
+      design_strategy_to_test: [
+        # template,
+        # heuristic,
+        # greedy,
+        rl,
+        ]
       inter_fidelity_to_test: [0.96, 0.965, 0.97, 0.975, 0.98, 0.985, 0.99]
 
   chiplet_sparsity:
-    exp_dir: ./result/layout_scalability/chiplet_sparsity
-    output_csv: output.csv
-    defaults:
-      package_size: [100, 100]
-      fab_model:
-        compute_geometry: square
-        inter_fide: 0.983
+    # exp_dir: ./result/layout_scalability/chiplet_sparsity
+    # log_filename: log
+    # output_csv: output.csv
+    # defaults:
+    #   package_size: [100, 100]
+    #   fab_model:
+    #     compute_geometry: square
+    #     inter_fide: 0.983
     scalability:
-      design_strategy_to_test: [heuristic, greedy]
+      design_strategy_to_test: [
+        # template,
+        # heuristic,
+        # greedy,
+        rl,
+        ]
       chiplet_sparsity_to_test: [1, 3, 5, 7]
