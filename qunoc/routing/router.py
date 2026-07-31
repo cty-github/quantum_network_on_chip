@@ -209,6 +209,15 @@ class Router:
         program: Program,
         route_strategy: str = "immediate",
         result_dir: str = None,
+        block_strategy: str = "legacy",
+        move_min_gate_per_migrated_qubit: float = 3.0,
+        move_cost_ratio: float = 0.75,
+        move_density_divisor: float = 2.0,
+        ghz_source_strategy: str = "control",
+        ghz_pairing_strategy: str = "ordered",
+        tele_platform_strategy: str = "nearest",
+        gate_select_strategy: str = "first",
+        gate_order_strategy: str = "as_is",
     ):
         """
         Initialize a Router.
@@ -223,6 +232,17 @@ class Router:
         self.program = program
         self.route_strategy = route_strategy
         self.result_dir = result_dir
+        self.block_strategy = block_strategy
+        self.move_min_gate_per_migrated_qubit = move_min_gate_per_migrated_qubit
+        self.move_cost_ratio = move_cost_ratio
+        self.move_density_divisor = move_density_divisor
+        self.ghz_source_strategy = ghz_source_strategy
+        self.ghz_pairing_strategy = ghz_pairing_strategy
+        self.tele_platform_strategy = tele_platform_strategy
+        self.gate_select_strategy = gate_select_strategy
+        self.gate_order_strategy = gate_order_strategy
+        if self.gate_order_strategy != "as_is":
+            self.reorder_program_gates()
 
         self.package_graph = package.package_graph
         self.metro_graph: nx.Graph = package.package_graph.subgraph(
@@ -236,6 +256,20 @@ class Router:
         ComputeBlock._counter = 0
         self.block_history: list[plt.Figure] = []
         self.action_history: list[plt.Figure] = []
+
+    def reorder_program_gates(self):
+        if self.gate_order_strategy == "control_grouped":
+            self.program.logic_gates = sorted(
+                [gate for gate in self.program.logic_gates if isinstance(gate, Control)],
+                key=lambda gate: (gate.control_qubit, gate.target_qubit),
+            )
+        else:
+            raise ValueError(f"Unknown gate order strategy: {self.gate_order_strategy}")
+        for attr in ("gate_depend_graph", "qiskit_circuit", "circuit_depth"):
+            if hasattr(self.program, attr):
+                delattr(self.program, attr)
+        self.program.get_gate_depend_graph()
+        self.program.get_qiskit_circuit()
 
     def route_program_on_package(self, mapping_strategy="random") -> Circuit:
         """
@@ -328,6 +362,25 @@ class Router:
         if config.debug_mapping:
             logging.info(f"Initial qubit mapping: {self.init_l2p_map}")
 
+    def select_no_depend_gate_id(self, no_depend_gate_ids: set[int]) -> int:
+        if self.gate_select_strategy == "first":
+            return list(no_depend_gate_ids)[0]
+        if self.gate_select_strategy != "max_fanout":
+            raise ValueError(f"Unknown gate selection strategy: {self.gate_select_strategy}")
+
+        def score(gate_id: int) -> tuple[int, int]:
+            gate = self.gate_depend_graph.nodes[gate_id]["gate"]
+            assert isinstance(gate, Control)
+            fanout = 0
+            for cand_gate_id in no_depend_gate_ids:
+                cand_gate = self.gate_depend_graph.nodes[cand_gate_id]["gate"]
+                assert isinstance(cand_gate, Control)
+                if cand_gate.control_qubit == gate.control_qubit:
+                    fanout += 1
+            return fanout, -gate_id
+
+        return max(no_depend_gate_ids, key=score)
+
     # Functions for compiling compute blocks and actions
     def compile_blocks_and_actions(self):
         """
@@ -369,7 +422,7 @@ class Router:
         self.last_ghz_action_id = -1
 
         while len(no_depend_gate_ids) > 0:
-            gate_id = list(no_depend_gate_ids)[0]
+            gate_id = self.select_no_depend_gate_id(no_depend_gate_ids)
             self.update_no_depend_gate_ids(no_depend_gate_ids, gate_id)
             gate = self.gate_depend_graph.nodes[gate_id]["gate"]
             assert isinstance(gate, Control)
@@ -427,13 +480,16 @@ class Router:
                             break
                         move_gates.append(add_gate)
                         self.update_no_depend_gate_ids(no_depend_gate_ids, add_gate.id)
-                    if len(move_gates) > 2:
+                    if self.should_use_move_block(
+                        move_gates, tele_gates, nearest_platforms
+                    ):
                         block_type = "move"
                     else:
                         block_type = "tele"
-                        if len(move_gates) == 2 and len(tele_gates) == 1:
-                            restore_gate = move_gates[1]
-                            no_depend_gate_ids.add(move_gates[1].id)
+                        restored_gates = move_gates[len(tele_gates) :]
+                        for restore_gate in restored_gates:
+                            no_depend_gate_ids.add(restore_gate.id)
+                        for restore_gate in restored_gates:
                             for succ_gate in self.gate_depend_graph.successors(
                                 restore_gate.id
                             ):
@@ -442,6 +498,9 @@ class Router:
                                 )
                                 no_depend_gate_ids.discard(succ_gate)
                 if block_type == "tele":
+                    nearest_platforms = self.optimize_tele_platforms(
+                        tele_gates, nearest_platforms
+                    )
                     tele_block = self.construct_tele_block(tele_gates, nearest_platforms)
                     self.transform_tele_block(tele_block)
                 else:
@@ -638,16 +697,42 @@ class Router:
         Return:
             tuple[int, int]: The coordinate of the nearest platform.
         """
+        return self.find_best_platform(physical_qubit)
+
+    def get_platform_alignment_cost(
+        self, physical_qubit: tuple[int, int], platform: tuple[int, int]
+    ) -> float:
         compute_module = self.package.get_node_area(physical_qubit)
         assert isinstance(compute_module, ComputeModule)
-        nearest_platform = None
-        highest_fide = 0
-        for platform in compute_module.get_platforms():
-            _, fide = self.package.get_shortest_no_transfer_path(physical_qubit, platform)
-            if nearest_platform is None or fide > highest_fide:
-                nearest_platform = platform
-                highest_fide = fide
-        return nearest_platform
+        swap_path = compute_module.get_swap_path(physical_qubit, platform)
+        return max(0, len(swap_path) - 2) * self.package.op_config.intra_time * 3
+
+    def find_best_platform(
+        self,
+        physical_qubit: tuple[int, int],
+        source_station: tuple[int, int] | None = None,
+        excluded_platforms: set[tuple[int, int]] | None = None,
+    ) -> tuple[int, int]:
+        compute_module = self.package.get_node_area(physical_qubit)
+        assert isinstance(compute_module, ComputeModule)
+        best_platform = None
+        best_cost = None
+        excluded_platforms = excluded_platforms or set()
+        platforms = list(compute_module.get_platforms())
+        candidate_platforms = [
+            platform for platform in platforms if platform not in excluded_platforms
+        ] or platforms
+        for platform in candidate_platforms:
+            cost = self.get_platform_alignment_cost(physical_qubit, platform)
+            if source_station is not None:
+                station = self.package.platform_stations_dict[platform][0]
+                cost += self.estimate_transfer_distance(
+                    source_station, station
+                ) * self.package.op_config.qst_time_constant
+            if best_platform is None or cost < best_cost:
+                best_platform = platform
+                best_cost = cost
+        return best_platform
 
     def find_nearest_platforms(
         self, physical_qubits: list[tuple[int, int]]
@@ -685,6 +770,35 @@ class Router:
             else:
                 nearest_platforms.append(nearest_platform)
         return nearest_platforms
+
+    def optimize_tele_platforms(
+        self, tele_gates: list[Control], platforms: dict[int, tuple[int, int]]
+    ) -> dict[int, tuple[int, int]]:
+        if self.tele_platform_strategy == "nearest":
+            return platforms
+        if self.tele_platform_strategy != "source_aware":
+            raise ValueError(f"Unknown TeleBlock platform strategy: {self.tele_platform_strategy}")
+
+        involved_qubits = [tele_gates[0].control_qubit] + [
+            tele_gate.target_qubit for tele_gate in tele_gates
+        ]
+        optimized_platforms = dict(platforms)
+        for _ in range(2):
+            stations = [
+                self.package.platform_stations_dict[optimized_platforms[qubit]][0]
+                for qubit in involved_qubits
+            ]
+            source_station = self.select_ghz_source_station(stations)
+            used_platforms = set()
+            next_platforms = {}
+            for qubit in involved_qubits:
+                platform = self.find_best_platform(
+                    self.curr_l2p_map[qubit], source_station, used_platforms
+                )
+                next_platforms[qubit] = platform
+                used_platforms.add(platform)
+            optimized_platforms = next_platforms
+        return optimized_platforms
 
     def construct_tele_block(
         self, tele_gates: list[Control], nearest_platforms: dict[int, tuple[int, int]]
@@ -741,7 +855,7 @@ class Router:
             list[tuple[tuple[int, int], tuple[int, int]]]: The list of nodes in the nearest metro subgraph and how it is linked to the subgraph.
         """
         def _is_free_balise(node: tuple[int, int]) -> bool:
-            return self.circuit.curr_p2l_map.get(node, -1) == -1
+            return self.curr_p2l_map.get(node, -1) == -1
 
         def _get_free_connected_subgraph(
             root: tuple[int, int]
@@ -810,11 +924,18 @@ class Router:
         stations = [
             self.package.platform_stations_dict[platform][0] for platform in platforms
         ]
+        source_station = self.select_ghz_source_station(stations)
         ghz_balise_graph = self.get_balise_nearest_metro_subgraph(
-            stations[0], ancilla_qubit_num
+            source_station, ancilla_qubit_num
         )
         source_physical_qubits = [ghz_balise for ghz_balise, _ in ghz_balise_graph]
         target_physical_qubits = stations
+        if self.ghz_pairing_strategy == "greedy":
+            source_physical_qubits = self.greedy_pair_ghz_sources_to_targets(
+                source_physical_qubits, target_physical_qubits
+            )
+        elif self.ghz_pairing_strategy != "ordered":
+            raise ValueError(f"Unknown GHZ pairing strategy: {self.ghz_pairing_strategy}")
         ghz_action = GhzPreparation(
             ancilla_qubit_num,
             [self.ancilla_qubit_id + i for i in range(ancilla_qubit_num)],
@@ -826,6 +947,48 @@ class Router:
         )
         self.ancilla_qubit_id += ancilla_qubit_num
         return ghz_action
+
+    def select_ghz_source_station(
+        self, stations: list[tuple[int, int]]
+    ) -> tuple[int, int]:
+        if self.ghz_source_strategy == "control":
+            return stations[0]
+        if self.ghz_source_strategy == "median":
+            return min(
+                stations,
+                key=lambda candidate: sum(
+                    self.estimate_transfer_distance(candidate, station)
+                    for station in stations
+                ),
+            )
+        if self.ghz_source_strategy == "neighbor_median":
+            candidates = set(stations)
+            for station in stations:
+                candidates.update(self.metro_graph.neighbors(station))
+            return min(
+                candidates,
+                key=lambda candidate: sum(
+                    self.estimate_transfer_distance(candidate, station)
+                    for station in stations
+                ),
+            )
+        raise ValueError(f"Unknown GHZ source strategy: {self.ghz_source_strategy}")
+
+    def greedy_pair_ghz_sources_to_targets(
+        self,
+        source_physical_qubits: list[tuple[int, int]],
+        target_physical_qubits: list[tuple[int, int]],
+    ) -> list[tuple[int, int]]:
+        remaining_sources = list(source_physical_qubits)
+        paired_sources = []
+        for target in target_physical_qubits:
+            source = min(
+                remaining_sources,
+                key=lambda candidate: self.estimate_transfer_distance(candidate, target),
+            )
+            paired_sources.append(source)
+            remaining_sources.remove(source)
+        return paired_sources
 
     def route_on_transfer_chiplets(
         self,
@@ -1046,6 +1209,14 @@ class Router:
         involved_qubits.add(gate.control_qubit)
         involved_qubits.add(gate.target_qubit)
 
+        max_chiplet_capacity = self.get_max_chiplet_capacity(involved_qubits)
+        if len(move_gates) + 1 <= len(involved_qubits) * (len(involved_qubits) - 1) / self.move_density_divisor:
+            return False
+        if len(involved_qubits) > max_chiplet_capacity:
+            return False
+        return True
+
+    def get_max_chiplet_capacity(self, involved_qubits: set[int]) -> int:
         max_chiplet_capacity = 0
         for involved_qubit in involved_qubits:
             physical_qubit = self.curr_l2p_map[involved_qubit]
@@ -1055,12 +1226,132 @@ class Router:
             max_chiplet_capacity = max(
                 max_chiplet_capacity, self.package.get_chiplet_register_num(chiplet)
             )
+        return max_chiplet_capacity
 
-        if len(move_gates) + 1 <= len(involved_qubits) * (len(involved_qubits) - 1) // 2:
+    def collect_gate_qubits(self, gates: list[Control]) -> set[int]:
+        involved_qubits = set()
+        for gate in gates:
+            involved_qubits.add(gate.control_qubit)
+            involved_qubits.add(gate.target_qubit)
+        return involved_qubits
+
+    def estimate_transfer_distance(
+        self, source_physical_qubit: tuple[int, int], target_physical_qubit: tuple[int, int]
+    ) -> int:
+        transfer_path, _ = self.package.get_shortest_transfer_path(
+            source_physical_qubit, target_physical_qubit
+        )
+        distance = 0
+        for road in transfer_path.roads:
+            if isinstance(road, IntraTransferRoad):
+                if road.source != road.target:
+                    distance += abs(road.source[0] - road.target[0]) + abs(
+                        road.source[1] - road.target[1]
+                    )
+            elif isinstance(road, InterChipletRoad):
+                distance += 1
+        return distance
+
+    def estimate_tele_block_cost(
+        self, tele_gates: list[Control], nearest_platforms: dict[int, tuple[int, int]]
+    ) -> float:
+        cost = len(tele_gates) * self.package.op_config.inter_time
+        for qubit, platform in nearest_platforms.items():
+            source = self.curr_l2p_map[qubit]
+            module = self.package.get_node_area(source)
+            assert isinstance(module, ComputeModule)
+            swap_path = module.get_swap_path(source, platform)
+            cost += max(0, len(swap_path) - 2) * self.package.op_config.intra_time * 3
+        platforms = [nearest_platforms[qubit] for qubit in nearest_platforms]
+        stations = [self.package.platform_stations_dict[platform][0] for platform in platforms]
+        if stations:
+            ghz_source = stations[0]
+            cost += max(0, len(stations) - 1) * self.package.op_config.intra_time
+            for station in stations:
+                cost += self.estimate_transfer_distance(ghz_source, station) * self.package.op_config.qst_time_constant
+        return cost
+
+    def estimate_node_for_immigation(
+        self, chiplet: ComputeChiplet, native_qubits: list[int]
+    ) -> tuple[int, int]:
+        candidate_empty_nodes: list[tuple[int, int]] = []
+        candidate_occupied_freq: dict[tuple[int, int], int] = dict()
+        for i in range(chiplet.left, chiplet.right + 1):
+            for j in range(chiplet.top, chiplet.bottom + 1):
+                if self.package_graph.nodes[(i, j)]["qubit"].role == QubitRole.Register:
+                    cand_qubit = self.curr_p2l_map[(i, j)]
+                    if cand_qubit == -1:
+                        candidate_empty_nodes.append((i, j))
+                    elif cand_qubit not in native_qubits:
+                        candidate_occupied_freq[(i, j)] = self.local_gate_freq[cand_qubit]
+        if len(candidate_empty_nodes) > 0:
+            return candidate_empty_nodes[0]
+        return min(candidate_occupied_freq, key=candidate_occupied_freq.get)
+
+    def estimate_move_block_cost(self, move_gates: list[Control]) -> float:
+        involved_qubits = self.collect_gate_qubits(move_gates)
+        chiplet = self.find_chiplet_for_move_block(involved_qubits)
+        native_qubits = []
+        migrating_qubits = []
+        for qubit in involved_qubits:
+            if self.package_graph.nodes[self.curr_l2p_map[qubit]]["qubit"].chiplet == chiplet:
+                native_qubits.append(qubit)
+            else:
+                migrating_qubits.append(qubit)
+
+        cost = len(move_gates) * self.package.op_config.intra_time
+        temp_native_qubits = list(native_qubits)
+        for qubit in migrating_qubits:
+            depart_node = self.curr_l2p_map[qubit]
+            depart_platform = self.find_nearest_platform(depart_node)
+            depart_station = self.package.platform_stations_dict[depart_platform][0]
+            arrive_node = self.estimate_node_for_immigation(chiplet, temp_native_qubits)
+            arrive_platform = self.find_nearest_platform(arrive_node)
+            arrive_station = self.package.platform_stations_dict[arrive_platform][0]
+            depart_module = self.package.get_node_area(depart_node)
+            arrive_module = self.package.get_node_area(arrive_node)
+            assert isinstance(depart_module, ComputeModule)
+            assert isinstance(arrive_module, ComputeModule)
+            depart_swap_path = depart_module.get_swap_path(depart_node, depart_platform)
+            arrive_swap_path = arrive_module.get_swap_path(arrive_node, arrive_platform)
+            cost += max(0, len(depart_swap_path) - 2) * self.package.op_config.intra_time * 3
+            cost += max(0, len(arrive_swap_path) - 2) * self.package.op_config.intra_time * 3
+            cost += self.package.op_config.inter_time * 6
+            cost += self.estimate_transfer_distance(depart_station, arrive_station) * self.package.op_config.qst_time_constant
+            expelled_qubit = self.curr_p2l_map[arrive_node]
+            if expelled_qubit != -1:
+                cost += self.package.op_config.inter_time * 6
+                cost += self.estimate_transfer_distance(arrive_station, depart_station) * self.package.op_config.qst_time_constant
+            temp_native_qubits.append(qubit)
+        return cost
+
+    def should_use_move_block(
+        self,
+        move_gates: list[Control],
+        tele_gates: list[Control],
+        nearest_platforms: dict[int, tuple[int, int]],
+    ) -> bool:
+        if len(move_gates) <= 2:
             return False
-        if len(involved_qubits) > max_chiplet_capacity:
+        if self.block_strategy == "legacy":
+            return True
+        if self.block_strategy == "prefer_tele":
             return False
-        return True
+        if self.block_strategy != "cost_based":
+            raise ValueError(f"Unknown block strategy: {self.block_strategy}")
+
+        involved_qubits = self.collect_gate_qubits(move_gates)
+        migrating_qubits = []
+        target_chiplet = self.find_chiplet_for_move_block(involved_qubits)
+        for qubit in involved_qubits:
+            if self.package_graph.nodes[self.curr_l2p_map[qubit]]["qubit"].chiplet != target_chiplet:
+                migrating_qubits.append(qubit)
+        if migrating_qubits and len(move_gates) / len(migrating_qubits) < self.move_min_gate_per_migrated_qubit:
+            return False
+
+        tele_cost = self.estimate_tele_block_cost(tele_gates, nearest_platforms)
+        move_cost = self.estimate_move_block_cost(move_gates)
+        return move_cost < tele_cost * self.move_cost_ratio
 
     def find_chiplet_for_move_block(self, involved_qubits: list[int]) -> ComputeChiplet:
         """
@@ -1825,7 +2116,7 @@ class Router:
         self.curr_p2l_map = self.circuit.curr_p2l_map
 
         while len(no_depend_gate_ids) > 0:
-            gate_id = list(no_depend_gate_ids)[0]
+            gate_id = self.select_no_depend_gate_id(no_depend_gate_ids)
             self.update_no_depend_gate_ids(no_depend_gate_ids, gate_id)
             gate = self.gate_depend_graph.nodes[gate_id]["gate"]
             assert isinstance(gate, Control)
@@ -1882,13 +2173,16 @@ class Router:
                             break
                         move_gates.append(add_gate)
                         self.update_no_depend_gate_ids(no_depend_gate_ids, add_gate.id)
-                    if len(move_gates) > 2:
+                    if self.should_use_move_block(
+                        move_gates, tele_gates, nearest_platforms
+                    ):
                         block_type = "move"
                     else:
                         block_type = "tele"
-                        if len(move_gates) == 2 and len(tele_gates) == 1:
-                            restore_gate = move_gates[1]
-                            no_depend_gate_ids.add(move_gates[1].id)
+                        restored_gates = move_gates[len(tele_gates) :]
+                        for restore_gate in restored_gates:
+                            no_depend_gate_ids.add(restore_gate.id)
+                        for restore_gate in restored_gates:
                             for succ_gate in self.gate_depend_graph.successors(
                                 restore_gate.id
                             ):
@@ -1897,6 +2191,9 @@ class Router:
                                 )
                                 no_depend_gate_ids.discard(succ_gate)
                 if block_type == "tele":
+                    nearest_platforms = self.optimize_tele_platforms(
+                        tele_gates, nearest_platforms
+                    )
                     self.schedule_tele_gates(tele_gates, nearest_platforms)
                 else:
                     self.schedule_move_gates(move_gates)
@@ -2432,7 +2729,7 @@ class Router:
         self.curr_p2l_map = self.dummy_circuit.curr_p2l_map
 
         while len(no_depend_gate_ids) > 0:
-            gate_id = list(no_depend_gate_ids)[0]
+            gate_id = self.select_no_depend_gate_id(no_depend_gate_ids)
             self.update_no_depend_gate_ids(no_depend_gate_ids, gate_id)
             gate = self.gate_depend_graph.nodes[gate_id]["gate"]
             assert isinstance(gate, Control)
