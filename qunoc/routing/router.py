@@ -2814,6 +2814,37 @@ class Router:
             swap_path = module.get_swap_path(
                 route_source_phy_qubit, route_target_phy_qubit
             )
+            if len(swap_path) < 2:
+                platform_inner_neighbors = [
+                    neighbor
+                    for neighbor in self.package_graph.neighbors(route_target_phy_qubit)
+                    if module.has_node(neighbor)
+                    and self.package_graph.edges[route_target_phy_qubit, neighbor]["type"]
+                    != EdgeType.Empty
+                ]
+                if not platform_inner_neighbors:
+                    raise ValueError(
+                        f"No inner neighbor for platform {route_target_phy_qubit} in compute module {module}."
+                    )
+                platform_inner_neighbors.sort(
+                    key=lambda neighbor: (
+                        self.curr_p2l_map.get(neighbor, -1) != -1,
+                        self.package_graph.nodes[neighbor]["qubit"].role
+                        == QubitRole.Platform,
+                    )
+                )
+                swap_gate_act = SwapGate(
+                    data_qubit,
+                    route_target_phy_qubit,
+                    platform_inner_neighbors[0],
+                    self.package_graph.edges[
+                        route_target_phy_qubit, platform_inner_neighbors[0]
+                    ]["type"]
+                    == EdgeType.Inter,
+                )
+                tele_block.actions.append(swap_gate_act)
+                self.dummy_circuit.add_action(swap_gate_act)
+                swap_path = [platform_inner_neighbors[0], route_target_phy_qubit]
             for j in range(len(swap_path) - 2):
                 swap_gate_act = SwapGate(
                     data_qubit,
@@ -2848,6 +2879,37 @@ class Router:
             for transfer_on_metro_act in transfer_on_metro_acts:
                 tele_block.actions.append(transfer_on_metro_act)
                 self.dummy_circuit.add_action(transfer_on_metro_act)
+            platform_qubit = self.curr_p2l_map[route_target_phy_qubit]
+            if platform_qubit != -1:
+                platform_inner_neighbors = [
+                    neighbor
+                    for neighbor in self.package_graph.neighbors(route_target_phy_qubit)
+                    if module.has_node(neighbor)
+                    and self.package_graph.edges[route_target_phy_qubit, neighbor]["type"]
+                    != EdgeType.Empty
+                    and self.curr_p2l_map.get(neighbor, -1) == -1
+                ]
+                if not platform_inner_neighbors:
+                    raise ValueError(
+                        f"No free inner neighbor for platform {route_target_phy_qubit} in compute module {module}."
+                    )
+                platform_inner_neighbors.sort(
+                    key=lambda neighbor: self.package_graph.nodes[neighbor]["qubit"].role
+                    == QubitRole.Platform
+                )
+                swap_gate_act = SwapGate(
+                    platform_qubit,
+                    route_target_phy_qubit,
+                    platform_inner_neighbors[0],
+                    self.package_graph.edges[
+                        route_target_phy_qubit, platform_inner_neighbors[0]
+                    ]["type"]
+                    == EdgeType.Inter,
+                )
+                tele_block.actions.append(swap_gate_act)
+                self.dummy_circuit.add_action(swap_gate_act)
+                if platform_qubit == data_qubit:
+                    swap_path = [platform_inner_neighbors[0], route_target_phy_qubit]
             alight_act = Alight(
                 ancilla_qubit, tele_target_phy_qubit, route_target_phy_qubit
             )
