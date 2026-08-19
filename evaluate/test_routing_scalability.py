@@ -16,7 +16,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 import yaml
 
 from qunoc.element.benchmark import get_program
-from qunoc.element.package import FabricateModel, Package
+from qunoc.element.package import Package
 from qunoc.routing.router import Router
 
 
@@ -111,6 +111,20 @@ AXIS_LABELS = {
     "geometry_to_test": "PackageGeometry",
     "inter_fidelity_to_test": "InterFidelity",
     "chiplet_sparsity_to_test": "ChipletSparsity",
+}
+
+ROUTING_OPTION_DEFAULTS: dict[str, Any] = {
+    "route_strategy": "immediate",
+    "mapping_strategy": "random",
+    "block_strategy": "legacy",
+    "move_min_gate_per_migrated_qubit": 3.0,
+    "move_cost_ratio": 0.75,
+    "move_density_divisor": 2.0,
+    "ghz_source_strategy": "control",
+    "ghz_pairing_strategy": "ordered",
+    "tele_platform_strategy": "nearest",
+    "gate_select_strategy": "first",
+    "gate_order_strategy": "as_is",
 }
 
 
@@ -297,6 +311,30 @@ def _build_layout_package_path(common_defaults: dict[str, Any], spec_name: str, 
     raise ValueError(f"Unsupported routing experiment: {spec_name}")
 
 
+def _resolve_routing_options(
+    run_config: dict[str, Any], quantum_program: str
+) -> dict[str, Any]:
+    routing_options = copy.deepcopy(ROUTING_OPTION_DEFAULTS)
+    for key in ROUTING_OPTION_DEFAULTS:
+        if key in run_config:
+            routing_options[key] = copy.deepcopy(run_config[key])
+    routing_options = _deep_update(routing_options, run_config.get("routing", {}))
+    routing_options = _deep_update(
+        routing_options,
+        run_config.get("program_routing", {}).get(quantum_program, {}),
+    )
+    return routing_options
+
+
+def _resolve_program_options(
+    run_config: dict[str, Any], quantum_program: str
+) -> dict[str, Any]:
+    program_options = copy.deepcopy(run_config.get("program_options", {}).get(quantum_program, {}))
+    if not isinstance(program_options, dict):
+        raise ValueError(f"program_options.{quantum_program} must be a mapping.")
+    return program_options
+
+
 def _build_result_dir_name(spec_name: str, run_config: dict[str, Any], quantum_program: str) -> str:
     layout_strategy = str(run_config.get("layout_design_strategy", "greedy"))
     package_size = _resolve_package_size(run_config)
@@ -333,7 +371,9 @@ def _route_once(
     package_size = package.package_size
     data_qubit_num = _data_qubit_num(package_size)
     quantum_program = str(quantum_program)
-    program = get_program(quantum_program, data_qubit_num)
+    routing_options = _resolve_routing_options(run_config, quantum_program)
+    program_options = _resolve_program_options(run_config, quantum_program)
+    program = get_program(quantum_program, data_qubit_num, **program_options)
 
     result_dir = os.path.join(spec.exp_dir, _build_result_dir_name(spec.name, run_config, quantum_program))
     os.makedirs(result_dir, exist_ok=True)
@@ -346,10 +386,32 @@ def _route_once(
         if "quantum_program" not in cached and "algorithm" in cached:
             cached["quantum_program"] = cached["algorithm"]
         cached.pop("algorithm", None)
-        return cached
+        if (
+            cached.get("routing_options") == routing_options
+            and cached.get("program_options", {}) == program_options
+        ):
+            return cached
 
-    router = Router(package, program, result_dir=result_dir)
-    circuit = router.route_program_on_package()
+    router = Router(
+        package,
+        program,
+        route_strategy=str(routing_options["route_strategy"]),
+        result_dir=result_dir,
+        block_strategy=str(routing_options["block_strategy"]),
+        move_min_gate_per_migrated_qubit=float(
+            routing_options["move_min_gate_per_migrated_qubit"]
+        ),
+        move_cost_ratio=float(routing_options["move_cost_ratio"]),
+        move_density_divisor=float(routing_options["move_density_divisor"]),
+        ghz_source_strategy=str(routing_options["ghz_source_strategy"]),
+        ghz_pairing_strategy=str(routing_options["ghz_pairing_strategy"]),
+        tele_platform_strategy=str(routing_options["tele_platform_strategy"]),
+        gate_select_strategy=str(routing_options["gate_select_strategy"]),
+        gate_order_strategy=str(routing_options["gate_order_strategy"]),
+    )
+    circuit = router.route_program_on_package(
+        mapping_strategy=str(routing_options["mapping_strategy"])
+    )
     circuit.to_pickle(circuit_path)
     intra_gate_num, inter_gate_num, qst_dist, meas_num, total_fide = router.statistic_route_results()
     circuit_duration = router.estimate_qunoc_circuit_duration()
@@ -367,6 +429,8 @@ def _route_once(
         "meas_num": meas_num,
         "total_fide": total_fide,
         "layout_package_path": package_path,
+        "routing_options": routing_options,
+        "program_options": program_options,
     }
 
     with open(cache_path, "w", encoding="utf-8") as file:
@@ -409,7 +473,8 @@ def _run_experiment(common_defaults: dict[str, Any], spec: ExperimentSpec) -> No
         return
 
     output_path = os.path.join(spec.exp_dir, spec.output_csv)
-    if not os.path.exists(output_path):
+    reset_output = not bool(run_defaults.get("reuse_result", True))
+    if reset_output or not os.path.exists(output_path):
         with open(output_path, mode="w", newline="", encoding="utf-8") as file:
             writer = csv.writer(file)
             writer.writerow(

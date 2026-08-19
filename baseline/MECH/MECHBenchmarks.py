@@ -40,11 +40,31 @@ def QFT(data_qubit_num):
     return program
 
 
-def QAOA(data_qubit_num, percentage=0.5):
-    all_possible_gates = [
-        (i, j) for i in range(data_qubit_num) for j in range(i + 1, data_qubit_num)
-    ]
-    gates = list(sample(all_possible_gates, k=int(len(all_possible_gates) * percentage)))
+def QAOA(
+    data_qubit_num,
+    percentage=0.5,
+    problem_graph="random_complete_sample",
+    order_strategy="as_sampled",
+    seed=None,
+):
+    gate_num = int(data_qubit_num * (data_qubit_num - 1) / 2 * percentage)
+    rng = stdlib_random.Random(seed) if seed is not None else stdlib_random
+
+    if problem_graph == "random_complete_sample":
+        all_possible_gates = [
+            (i, j) for i in range(data_qubit_num) for j in range(i + 1, data_qubit_num)
+        ]
+        gates = list(rng.sample(all_possible_gates, k=gate_num))
+    elif problem_graph in {"cycle", "ring"}:
+        gates = [(i, (i + 1) % data_qubit_num) for i in range(data_qubit_num)]
+    else:
+        raise ValueError(f"Unknown QAOA problem graph: {problem_graph}")
+
+    if order_strategy == "control_grouped":
+        gates.sort(key=lambda gate: (gate[0], gate[1]))
+    elif order_strategy != "as_sampled":
+        raise ValueError(f"Unknown QAOA order strategy: {order_strategy}")
+
     program = []
     for control, target in gates:
         control_block = ControlBlock(control, Counter([target]))
@@ -162,6 +182,8 @@ def MECH_experiments_data_qubit_num(
     custom_highway_qubits=None,
     custom_highway_edges=[],
     cross_link_sparsity=1,
+    cross_link_row_spacing=None,
+    cross_link_col_spacing=None,
     prep_period=None,
 ):
     G = gen_chiplet_array(
@@ -171,6 +193,8 @@ def MECH_experiments_data_qubit_num(
         chiplet_size[0],
         chiplet_size[1],
         cross_link_sparsity=cross_link_sparsity,
+        cross_link_row_spacing=cross_link_row_spacing,
+        cross_link_col_spacing=cross_link_col_spacing,
     )
     if prep_period is None:
         if structure in ["square", "hexagon"]:
@@ -185,36 +209,38 @@ def MECH_experiments_data_qubit_num(
 
     return len(G.nodes) - len(get_highway_qubits(G))
 
-def get_benchmark_program(benchmark_name, data_qubit_num):
+def get_benchmark_program(benchmark_name, data_qubit_num, **kwargs):
     if benchmark_name == "vqe":
-        return VQE(data_qubit_num)
+        return VQE(data_qubit_num, **kwargs)
 
     if benchmark_name == "qft":
         return QFT(data_qubit_num)
 
     if benchmark_name == "qaoa":
-        return QAOA(data_qubit_num)
+        return QAOA(data_qubit_num, **kwargs)
 
     if benchmark_name == "bv":
-        return BV(data_qubit_num)
+        return BV(data_qubit_num, **kwargs)
 
-    if benchmark_name == "s_ghz":
+    if benchmark_name in {"s_ghz", "ghz"}:
         return S_GHZ(data_qubit_num)
 
     if benchmark_name == "s_hamiltonian_simulation":
-        return S_HAMILTONIAN_SIMULATION(data_qubit_num)
+        return S_HAMILTONIAN_SIMULATION(data_qubit_num, **kwargs)
 
-    if benchmark_name == "s_mermin_bell":
+    if benchmark_name in {"s_mermin_bell", "mermin_bell"}:
         return S_MERMIN_BELL(data_qubit_num)
 
-    if benchmark_name == "fully_connected":
-        return FULLY_CONNECTED(data_qubit_num)
+    if benchmark_name in {"fully_connected", "fully_connected_ansatz"}:
+        return FULLY_CONNECTED(data_qubit_num, **kwargs)
 
-    if benchmark_name == "circular":
-        return CIRCULAR(data_qubit_num)
+    if benchmark_name in {"circular", "circular_ansatz"}:
+        return CIRCULAR(data_qubit_num, **kwargs)
 
     if benchmark_name == "bv_hard":
         return BV_HARD(data_qubit_num)
+
+    raise ValueError(f"Unknown benchmark name: {benchmark_name}")
 
 def MECH_experiments(
     structure,
@@ -225,10 +251,13 @@ def MECH_experiments(
     benchmarks=["vqe", "qft", "qaoa", "bv"],
     data_qubit_num=None,
     cross_link_sparsity=1,
+    cross_link_row_spacing=None,
+    cross_link_col_spacing=None,
     prep_period=None,
     meas_period=2,
     cross_chip_gate_weight=7.4,
     meas_weight=2.2,
+    benchmark_options=None,
 ):
     G = gen_chiplet_array(
         structure,
@@ -237,6 +266,8 @@ def MECH_experiments(
         chiplet_size[0],
         chiplet_size[1],
         cross_link_sparsity=cross_link_sparsity,
+        cross_link_row_spacing=cross_link_row_spacing,
+        cross_link_col_spacing=cross_link_col_spacing,
     )
     if prep_period is None:
         if structure in ["square", "hexagon"]:
@@ -265,10 +296,13 @@ def MECH_experiments(
     # }
     result = defaultdict(dict)
     circuit = dict()
+    benchmark_options = benchmark_options or {}
 
     for b in benchmarks:
         logging.info("-" * 16 + "executing " + b + "-" * 16)
-        program = get_benchmark_program(b, data_qubit_num)
+        program = get_benchmark_program(
+            b, data_qubit_num, **benchmark_options.get(b, {})
+        )
         initial_v2p = dict()
         data_idx, highway_idx = 0, len(G.nodes) - len(get_highway_qubits(G))
         nodes = set(G.nodes)
@@ -379,6 +413,10 @@ def MECH_experiments(
             "periods": (prep_period, meas_period),
             "shuttle_num": len(router.highway_manager.shuttle_stack),
             "sparsity": cross_link_sparsity,
+            "cross_link_row_spacing": cross_link_row_spacing,
+            "cross_link_col_spacing": cross_link_col_spacing,
+            "cross_link_rows": list(G.cross_link_rows),
+            "cross_link_cols": list(G.cross_link_cols),
         }
         circuit[b] = router.circuit
 
@@ -394,11 +432,14 @@ def MECH_EQST_experiments(
     benchmarks=["vqe", "qft", "qaoa", "bv"],
     data_qubit_num=None,
     cross_link_sparsity=1,
+    cross_link_row_spacing=None,
+    cross_link_col_spacing=None,
     prep_period=None,
     meas_period=2,
     cross_chip_gate_weight=7.4,
     meas_weight=2.2,
     basic_time=1000,
+    benchmark_options=None,
 ):
     G = gen_chiplet_array(
         structure,
@@ -407,6 +448,8 @@ def MECH_EQST_experiments(
         chiplet_size[0],
         chiplet_size[1],
         cross_link_sparsity=cross_link_sparsity,
+        cross_link_row_spacing=cross_link_row_spacing,
+        cross_link_col_spacing=cross_link_col_spacing,
     )
     if prep_period is None:
         if structure in ["square", "hexagon"]:
@@ -421,24 +464,15 @@ def MECH_EQST_experiments(
 
     if data_qubit_num is None:
         data_qubit_num = len(G.nodes) - len(get_highway_qubits(G))
-    benchmark_program_dict = {
-        "vqe": VQE(data_qubit_num),
-        "qft": QFT(data_qubit_num),
-        "qaoa": QAOA(data_qubit_num),
-        "bv": BV(data_qubit_num),
-        "s_ghz": S_GHZ(data_qubit_num),
-        "s_hamiltonian_simulation": S_HAMILTONIAN_SIMULATION(data_qubit_num),
-        "s_mermin_bell": S_MERMIN_BELL(data_qubit_num),
-        "fully_connected": FULLY_CONNECTED(data_qubit_num),
-        "circular": CIRCULAR(data_qubit_num),
-        "bv_hard": BV_HARD(data_qubit_num),
-    }
+    benchmark_options = benchmark_options or {}
     result = defaultdict(dict)
     circuit = dict()
 
     for b in benchmarks:
         logging.info("-" * 16 + "executing " + b + "-" * 16)
-        program = benchmark_program_dict[b]
+        program = get_benchmark_program(
+            b, data_qubit_num, **benchmark_options.get(b, {})
+        )
         initial_v2p = dict()
         data_idx, highway_idx = 0, len(G.nodes) - len(get_highway_qubits(G))
         nodes = set(G.nodes)
@@ -538,6 +572,10 @@ def MECH_EQST_experiments(
             "periods": (prep_period, meas_period),
             "shuttle_num": len(router.highway_manager.shuttle_stack),
             "sparsity": cross_link_sparsity,
+            "cross_link_row_spacing": cross_link_row_spacing,
+            "cross_link_col_spacing": cross_link_col_spacing,
+            "cross_link_rows": list(G.cross_link_rows),
+            "cross_link_cols": list(G.cross_link_cols),
             "circuit_duration": circuit_duration,
         }
         circuit[b] = router.circuit

@@ -539,8 +539,27 @@ class HighwayManager:
             self.qubit_idx_dict[eqst_path[0]], self.qubit_idx_dict[eqst_path[-1]] = v2, v1
 
         for op in ops:
+            unique_qargs = list(dict.fromkeys(op.qargs))
+            while True:
+                target_idx = depth - 1
+                if all(circuit.is_position_empty(line, target_idx) for line in unique_qargs):
+                    break
+                depth += 1
             if op.qubit_num > 2:
-                circuit.add_eqst_op(op, depth)
+                while True:
+                    try:
+                        for qubit in unique_qargs:
+                            circuit.add_node_with_role(qubit, depth - 1, op, "eqst")
+                        break
+                    except AssertionError:
+                        for qubit in unique_qargs:
+                            if circuit.take_node(qubit, depth - 1) is op:
+                                circuit.delete_node_with_role(qubit, depth - 1)
+                        depth += 1
+                circuit.eqst_depths[depth - 1] = max(
+                    circuit.eqst_depths[depth - 1], len(unique_qargs)
+                )
+                circuit.eqst_dist += len(unique_qargs) - 1
                 depth += 1
             else:
                 circuit.add_2qubit_op(
@@ -639,10 +658,31 @@ class HighwayManager:
 
         earliest_idx = self.get_shuttle_prep_start_time(shuttle_idx)
         latest_idx = self.get_shuttle_exec_start_time(shuttle_idx) - 1
+        if latest_idx < earliest_idx:
+            latest_idx = earliest_idx
         control_line, target_line = (
             self.qubit_idx_dict[control_qubit],
             self.qubit_idx_dict[target_qubit],
         )
+
+        def add_bridge_op(op):
+            nonlocal latest_idx
+            bridge_idx = circuit.get_earliest_index_for_2qubit_op(
+                op,
+                auto_commuting=auto_commuting,
+                auto_cancellation=False,
+                min_idx=earliest_idx,
+                max_idx=latest_idx,
+            )
+            if bridge_idx < 0:
+                bridge_idx = max(
+                    latest_idx + 1,
+                    circuit.get_line_depth(op.control),
+                    circuit.get_line_depth(op.target),
+                )
+                latest_idx = bridge_idx
+            circuit.add_2qubit_op(op, depth=bridge_idx + 1)
+
         if distance == 1:
             if VERBOSE:
                 logging.info(
@@ -650,12 +690,7 @@ class HighwayManager:
                         control_line, target_line, earliest_idx, latest_idx
                     )
                 )
-            circuit.add_2qubit_op(
-                OpNode(control_line, target_line),
-                auto_commuting=auto_commuting,
-                min_idx=earliest_idx,
-                max_idx=latest_idx,
-            )
+            add_bridge_op(OpNode(control_line, target_line))
         else:
             if mid is None:
                 mid = nx.shortest_path(self.chiplet_array, control_qubit, target_qubit)[
@@ -674,30 +709,10 @@ class HighwayManager:
                         latest_idx,
                     )
                 )
-            circuit.add_2qubit_op(
-                OpNode(mid_line, target_line),
-                auto_commuting=auto_commuting,
-                min_idx=earliest_idx,
-                max_idx=latest_idx,
-            )
-            circuit.add_2qubit_op(
-                OpNode(control_line, mid_line),
-                auto_commuting=auto_commuting,
-                min_idx=earliest_idx,
-                max_idx=latest_idx,
-            )
-            circuit.add_2qubit_op(
-                OpNode(mid_line, target_line),
-                auto_commuting=auto_commuting,
-                min_idx=earliest_idx,
-                max_idx=latest_idx,
-            )
-            circuit.add_2qubit_op(
-                OpNode(control_line, mid_line),
-                auto_commuting=auto_commuting,
-                min_idx=earliest_idx,
-                max_idx=latest_idx,
-            )
+            add_bridge_op(OpNode(mid_line, target_line))
+            add_bridge_op(OpNode(control_line, mid_line))
+            add_bridge_op(OpNode(mid_line, target_line))
+            add_bridge_op(OpNode(control_line, mid_line))
 
     def bridge_highway_path(self, circuit, shuttle_idx, source, target):
         if VERBOSE:

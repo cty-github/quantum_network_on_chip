@@ -13,6 +13,30 @@ defaults:
   #   inter_sparsity: 3
   #   inter_fide: 0.983
   reuse_result: false
+  routing:
+    route_strategy: immediate
+    mapping_strategy: random
+    block_strategy: cost_based
+    ghz_source_strategy: neighbor_median
+    ghz_pairing_strategy: greedy
+  program_routing:
+    vqe:
+      block_strategy: legacy
+    qaoa:
+      block_strategy: prefer_tele
+      tele_platform_strategy: nearest
+      gate_select_strategy: max_fanout
+      gate_order_strategy: control_grouped
+    bv:
+      block_strategy: legacy
+    s_ghz:
+      block_strategy: prefer_tele
+  program_options:
+    qaoa:
+      # A cycle graph is a valid QAOA problem instance with locality and depth
+      # characteristics that fit the QuNoC teleportation routing flow.
+      problem_graph: cycle
+      order_strategy: control_grouped
 
 experiments:
   package_size:
@@ -27,7 +51,7 @@ experiments:
     scalability:
       # layout_design_strategy_to_test: [template, heuristic, greedy, rl]
       package_size_to_test: [40, 60, 80, 100, 120]
-      # quantum_program_to_test: [vqe, qft, qaoa, bv]
+      quantum_program_to_test: [vqe, qaoa, bv, s_ghz]
 
   package_shape:
     # exp_dir: ./result/routing_scalability/package_shape

@@ -31,6 +31,8 @@ def get_mech_data_qubit_num(
     custom_highway_qubits=None,
     custom_highway_edges=None,
     cross_link_sparsity=1,
+    cross_link_row_spacing=None,
+    cross_link_col_spacing=None,
 ):
     graph = gen_chiplet_array(
         structure,
@@ -39,6 +41,8 @@ def get_mech_data_qubit_num(
         chiplet_size[0],
         chiplet_size[1],
         cross_link_sparsity=cross_link_sparsity,
+        cross_link_row_spacing=cross_link_row_spacing,
+        cross_link_col_spacing=cross_link_col_spacing,
     )
     if custom_highway_qubits is not None:
         if custom_highway_edges is None:
@@ -56,6 +60,8 @@ def get_mech_highway_proportion(
     custom_highway_qubits=None,
     custom_highway_edges=None,
     cross_link_sparsity=1,
+    cross_link_row_spacing=None,
+    cross_link_col_spacing=None,
 ):
     graph = gen_chiplet_array(
         structure,
@@ -64,6 +70,8 @@ def get_mech_highway_proportion(
         chiplet_size[0],
         chiplet_size[1],
         cross_link_sparsity=cross_link_sparsity,
+        cross_link_row_spacing=cross_link_row_spacing,
+        cross_link_col_spacing=cross_link_col_spacing,
     )
     if custom_highway_qubits is not None:
         if custom_highway_edges is None:
@@ -181,9 +189,11 @@ def sensate_spacing_to_mech_links(
     mech_col_links = min(requested_col_links, available_col_links)
     mech_link_count = min(mech_row_links, mech_col_links)
     return {
-        "method": "link_count_only",
-        "exact_topology_match": False,
+        "method": "coordinate_spacing",
+        "exact_topology_match": geometry == "square",
         "sensate_inter_sparsity": sensate_spacing,
+        "mech_row_spacing": sensate_spacing,
+        "mech_col_spacing": sensate_spacing,
         "requested_row_link_count": requested_row_links,
         "requested_col_link_count": requested_col_links,
         "available_mech_row_link_count": available_row_links,
@@ -191,7 +201,7 @@ def sensate_spacing_to_mech_links(
         "mech_row_link_count": mech_row_links,
         "mech_col_link_count": mech_col_links,
         "mech_link_count": mech_link_count,
-        "uses_single_count_for_both_directions": True,
+        "uses_single_count_for_both_directions": False,
         "was_capped_by_geometry": (
             mech_row_links != requested_row_links
             or mech_col_links != requested_col_links
@@ -210,6 +220,11 @@ def sensate_spacing_case_fields(
     return {
         "inter_sparsity": sensate_spacing,
         "cross_link_sparsity": conversion["mech_link_count"],
+        "cross_link_row_spacing": conversion["mech_row_spacing"],
+        "cross_link_col_spacing": conversion["mech_col_spacing"],
+        "cross_link_row_sparsity": conversion["mech_row_link_count"],
+        "cross_link_col_sparsity": conversion["mech_col_link_count"],
+        "sparsity_conversion": conversion,
     }
 
 
@@ -258,7 +273,11 @@ def run_mech(
     algorithms: list[str],
     cross_link_sparsity: int,
     data_qubits: int,
+    benchmark_options: dict[str, dict[str, Any]] | None = None,
+    cross_link_row_spacing: int | None = None,
+    cross_link_col_spacing: int | None = None,
 ) -> dict[str, dict[str, Any]]:
+    benchmark_options = benchmark_options or {}
     key = (
         structure,
         package_size,
@@ -266,7 +285,13 @@ def run_mech(
         chiplet_size,
         tuple(algorithms),
         cross_link_sparsity,
+        cross_link_row_spacing,
+        cross_link_col_spacing,
         data_qubits,
+        tuple(
+            (program, tuple(sorted(options.items())))
+            for program, options in sorted(benchmark_options.items())
+        ),
     )
     if key not in cache:
         result, _ = MECH_experiments(
@@ -276,6 +301,9 @@ def run_mech(
             benchmarks=algorithms,
             data_qubit_num=data_qubits,
             cross_link_sparsity=cross_link_sparsity,
+            cross_link_row_spacing=cross_link_row_spacing,
+            cross_link_col_spacing=cross_link_col_spacing,
+            benchmark_options=benchmark_options,
         )
         cache[key] = result
     return cache[key]

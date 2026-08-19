@@ -81,7 +81,7 @@ except ModuleNotFoundError as error:
 
 SCHEMA_VERSION = 1
 DEFAULT_SIZES = [40, 60, 80, 100, 120]
-QUANTUM_PROGRAMS = ["vqe", "qft", "qaoa", "bv"]
+QUANTUM_PROGRAMS = ["vqe", "qaoa", "bv", "s_ghz"]
 STRATEGIES = ["mech_eqst", "qunoc_wo_opt"]
 QUNOC_STRATEGIES = {"qunoc_wo_opt"}
 MECH_EQST_GENERATORS = {
@@ -150,13 +150,23 @@ def _mech_gate_sequence(program: Any) -> list[tuple[int, int]]:
     return gates
 
 
-def _benchmark_metadata(quantum_program: str, data_qubits: int, seed: int) -> dict[str, Any]:
+def _benchmark_options(args: argparse.Namespace, quantum_program: str) -> dict[str, Any]:
+    options = args.benchmark_options.get(quantum_program, {})
+    if not isinstance(options, dict):
+        raise ValueError(f"benchmark option for {quantum_program} must be a mapping.")
+    return options
+
+
+def _benchmark_metadata(
+    quantum_program: str, data_qubits: int, seed: int, args: argparse.Namespace
+) -> dict[str, Any]:
+    options = _benchmark_options(args, quantum_program)
     _seed_everything(seed)
-    qunoc_program = get_program(quantum_program, data_qubits)
+    qunoc_program = get_program(quantum_program, data_qubits, **options)
     qunoc_gates = _qunoc_gate_sequence(qunoc_program)
 
     _seed_everything(seed)
-    mech_program = get_benchmark_program(quantum_program, data_qubits)
+    mech_program = get_benchmark_program(quantum_program, data_qubits, **options)
     mech_gates = _mech_gate_sequence(mech_program)
 
     if qunoc_gates != mech_gates:
@@ -329,14 +339,27 @@ def _run_qunoc(
     _validate_package(package, package_path, size, args)
 
     _seed_everything(args.seed)
-    program = get_program(quantum_program, data_qubits)
+    program = get_program(
+        quantum_program, data_qubits, **_benchmark_options(args, quantum_program)
+    )
     gate_sequence = _qunoc_gate_sequence(program)
     if len(gate_sequence) != benchmark["logic_gate_num"]:
         raise RuntimeError("QuNoC benchmark changed after the equivalence check.")
     if _sha256_json(gate_sequence) != benchmark["benchmark_hash"]:
         raise RuntimeError("QuNoC benchmark hash changed after the equivalence check.")
 
-    router = Router(package, program, result_dir=str(case_dir))
+    router = Router(
+        package,
+        program,
+        route_strategy="immediate",
+        result_dir=str(case_dir),
+        block_strategy="legacy",
+        ghz_source_strategy="control",
+        ghz_pairing_strategy="ordered",
+        tele_platform_strategy="nearest",
+        gate_select_strategy="first",
+        gate_order_strategy="as_is",
+    )
     circuit = router.dummy_route_program_on_package(args.mapping_strategy)
     stats = _statistic_dummy_route_results(router)
     duration_ns = router.estimate_dummy_circuit_duration()
@@ -392,6 +415,11 @@ def _run_mech(
         "benchmarks": [quantum_program],
         "data_qubit_num": data_qubits,
         "cross_link_sparsity": case_fields["cross_link_sparsity"],
+        "cross_link_row_spacing": case_fields["cross_link_row_spacing"],
+        "cross_link_col_spacing": case_fields["cross_link_col_spacing"],
+        "benchmark_options": {
+            quantum_program: _benchmark_options(args, quantum_program)
+        },
     }
 
     _seed_everything(args.seed)
@@ -483,6 +511,7 @@ def _signature(
         "strategy": strategy,
         "package_size": size,
         "quantum_program": quantum_program,
+        "benchmark_options": _benchmark_options(args, quantum_program),
         "seed": args.seed,
         "data_qubit_num": data_qubit_num((size, size)),
         "logic_gate_num": benchmark["logic_gate_num"],
@@ -762,6 +791,12 @@ def _parse_args() -> argparse.Namespace:
         "--inter-fidelity", type=float, default=DEFAULT_INTER_FIDE
     )
     parser.add_argument(
+        "--benchmark-options",
+        type=str,
+        default="{}",
+        help="JSON mapping of per-benchmark options, e.g. '{\"qaoa\": {\"problem_graph\": \"cycle\"}}'.",
+    )
+    parser.add_argument(
         "--mech-eqst-basic-time-ns",
         type=float,
         default=1000.0,
@@ -781,6 +816,9 @@ def _parse_args() -> argparse.Namespace:
         "--dry-run", action="store_true", help="Validate inputs and list cases only."
     )
     args = parser.parse_args()
+    args.benchmark_options = json.loads(args.benchmark_options)
+    if not isinstance(args.benchmark_options, dict):
+        raise ValueError("--benchmark-options must be a JSON mapping.")
     args.sizes = _unique(args.sizes)
     args.quantum_programs = _unique(args.quantum_programs)
     args.strategies = _unique(args.strategies)
@@ -805,7 +843,7 @@ def main() -> int:
     if args.dry_run:
         for size, quantum_program in product(args.sizes, args.quantum_programs):
             benchmark = _benchmark_metadata(
-                quantum_program, data_qubit_num((size, size)), args.seed
+                quantum_program, data_qubit_num((size, size)), args.seed, args
             )
             print(
                 f"  benchmark {size}x{size} {quantum_program}: "
@@ -835,7 +873,7 @@ def main() -> int:
             benchmark_key = (size, quantum_program)
             if benchmark_key not in benchmark_cache:
                 benchmark_cache[benchmark_key] = _benchmark_metadata(
-                    quantum_program, data_qubit_num((size, size)), args.seed
+                    quantum_program, data_qubit_num((size, size)), args.seed, args
                 )
             benchmark = benchmark_cache[benchmark_key]
             signature = _signature(strategy, size, quantum_program, benchmark, args)

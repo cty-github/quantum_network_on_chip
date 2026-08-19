@@ -283,7 +283,14 @@ def qft(data_qubit_num: int) -> Program:
         logic_gates.extend(control_gates)
     return Program("qft", data_qubit_num, logic_gates)
 
-def qaoa(data_qubit_num: int, percentage: float = 0.5, blocklayer: int = 1) -> Program:
+def qaoa(
+    data_qubit_num: int,
+    percentage: float = 0.5,
+    blocklayer: int = 1,
+    problem_graph: str = "random_complete_sample",
+    order_strategy: str = "as_sampled",
+    seed: int | None = None,
+) -> Program:
     """
     Generate a QAOA program.
 
@@ -291,18 +298,37 @@ def qaoa(data_qubit_num: int, percentage: float = 0.5, blocklayer: int = 1) -> P
         data_qubit_num (int): Number of data qubits.
         percentage (float): Percentage of control gates to be selected.
         blocklayer (int): Number of block layers.
+        problem_graph (str): The QAOA problem graph instance family.
+        order_strategy (str): Ordering for commuting cost-layer control gates.
+        seed (int | None): Optional local random seed for reproducible instances.
 
     Returns:
         Program: A quantum program with QAOA logic gates.
     """
     Gate._counter = 0
-    all_possible_gates = [(i, j) for i in range(data_qubit_num) for j in range(i+1, data_qubit_num)]
-    control_gates = sample(all_possible_gates, k=int(len(all_possible_gates)*percentage))
+    gate_num = int(data_qubit_num * (data_qubit_num - 1) / 2 * percentage)
+    rng = random.Random(seed) if seed is not None else random
+
+    if problem_graph == "random_complete_sample":
+        all_possible_gates = [
+            (i, j) for i in range(data_qubit_num) for j in range(i + 1, data_qubit_num)
+        ]
+        control_gates = rng.sample(all_possible_gates, k=gate_num)
+    elif problem_graph in {"cycle", "ring"}:
+        control_gates = [(i, (i + 1) % data_qubit_num) for i in range(data_qubit_num)]
+    else:
+        raise ValueError(f"Unknown QAOA problem graph: {problem_graph}")
+
+    if order_strategy == "control_grouped":
+        control_gates.sort(key=lambda gate: (gate[0], gate[1]))
+    elif order_strategy != "as_sampled":
+        raise ValueError(f"Unknown QAOA order strategy: {order_strategy}")
+
     logic_gates = []
     for i, gate in enumerate(control_gates):
         logic_gates.append(Control(*gate))
-        if (i+1) % (data_qubit_num*blocklayer) == 0 and (i+1) != len(control_gates):
-            logic_gates.extend([Barrier(j) for j in range(data_qubit_num-1)])
+        if (i + 1) % (data_qubit_num * blocklayer) == 0 and (i + 1) != len(control_gates):
+            logic_gates.extend([Barrier(j) for j in range(data_qubit_num - 1)])
     return Program("qaoa", data_qubit_num, logic_gates)
 
 def bv(data_qubit_num: int, percentage: float = 0.5) -> Program:
@@ -511,15 +537,15 @@ def get_program(algorithm: str, data_qubit_num: int, **kwargs) -> Program:
         return qaoa(data_qubit_num, **kwargs)
     elif algorithm == "bv":
         return bv(data_qubit_num, **kwargs)
-    elif algorithm == "fully_connected":
+    elif algorithm in {"fully_connected", "fully_connected_ansatz"}:
         return fully_connected_ansatz(data_qubit_num, **kwargs)
-    elif algorithm == "circular":
+    elif algorithm in {"circular", "circular_ansatz"}:
         return circular_ansatz(data_qubit_num, **kwargs)
-    elif algorithm == "s_ghz":
+    elif algorithm in {"s_ghz", "ghz"}:
         return s_ghz(data_qubit_num)
     elif algorithm == "s_hamiltonian_simulation":
         return s_hamiltonian_simulation(data_qubit_num, **kwargs)
-    elif algorithm == "s_mermin_bell":
+    elif algorithm in {"s_mermin_bell", "mermin_bell"}:
         return s_mermin_bell(data_qubit_num)
     elif algorithm == "bv_hard":
         return bv_hard(data_qubit_num)

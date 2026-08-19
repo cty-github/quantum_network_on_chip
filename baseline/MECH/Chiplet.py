@@ -24,6 +24,23 @@ def pick_n_links(size, lst, n):
     else:
         return links_1
 
+
+def pick_spaced_links(size, lst, spacing):
+    spacing = int(spacing)
+    if spacing <= 0:
+        raise ValueError('cross-link spacing must be positive')
+    candidates = sorted(lst)
+    if not candidates:
+        return candidates
+    selected = []
+    for position in range(0, size, spacing):
+        link = min(candidates, key=lambda candidate: (abs(candidate - position), candidate))
+        if link not in selected:
+            selected.append(link)
+    if not selected:
+        selected.append(candidates[0])
+    return sorted(selected)
+
 def gen_square_lattice(x_dim, y_dim):
     return nx.grid_2d_graph(x_dim, y_dim)
 
@@ -74,7 +91,7 @@ def gen_sparse_chip_links(lattice, rows, cols):
                 edges_to_remove.append((u,v))
     lattice.remove_edges_from(edges_to_remove)
 
-def gen_chiplet_array(geometry, array_x_dim, array_y_dim, chiplet_x_size, chiplet_y_size, cross_link_sparsity=None, cross_link_row_sparsity=None, cross_link_col_sparsity=None, auto=True):
+def gen_chiplet_array(geometry, array_x_dim, array_y_dim, chiplet_x_size, chiplet_y_size, cross_link_sparsity=None, cross_link_row_sparsity=None, cross_link_col_sparsity=None, cross_link_row_spacing=None, cross_link_col_spacing=None, auto=True):
 
     if geometry == 'square':
         G=gen_square_lattice(array_x_dim * chiplet_x_size, array_y_dim * chiplet_y_size)
@@ -126,9 +143,13 @@ def gen_chiplet_array(geometry, array_x_dim, array_y_dim, chiplet_x_size, chiple
     gen_link_types(G)
     if cross_link_row_sparsity is None and cross_link_col_sparsity is None and cross_link_sparsity is not None:
         cross_link_row_sparsity = cross_link_col_sparsity = cross_link_sparsity
-    if cross_link_row_sparsity:
+    if cross_link_row_spacing is not None:
+        G.cross_link_rows = pick_spaced_links(G.chiplet_y_size, G.cross_link_rows, cross_link_row_spacing)
+    elif cross_link_row_sparsity:
         G.cross_link_rows = pick_n_links(G.chiplet_y_size, sorted(G.cross_link_rows), cross_link_row_sparsity)
-    if cross_link_col_sparsity:
+    if cross_link_col_spacing is not None:
+        G.cross_link_cols = pick_spaced_links(G.chiplet_x_size, G.cross_link_cols, cross_link_col_spacing)
+    elif cross_link_col_sparsity:
         G.cross_link_cols = pick_n_links(G.chiplet_x_size, sorted(G.cross_link_cols), cross_link_col_sparsity)
     gen_sparse_chip_links(G, G.cross_link_rows, G.cross_link_cols)
     return G

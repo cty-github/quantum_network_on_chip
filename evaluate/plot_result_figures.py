@@ -34,7 +34,7 @@ from matplotlib.ticker import FuncFormatter
 # ----------------------------- configuration -----------------------------
 
 PACKAGE_SIZES = [40, 60, 80, 100, 120]
-QUANTUM_PROGRAMS = ["vqe", "qft", "qaoa", "bv"]
+QUANTUM_PROGRAMS = ["vqe", "qaoa", "bv", "s_ghz"]
 LAYOUT_STRATEGIES = ["template", "heuristic", "greedy", "rl"]
 PRIMARY_LAYOUT_STRATEGY = "rl"
 ROUTING_STRATEGIES = ["mech", "mech_eqst", "qunoc_wo_opt", "qunoc"]
@@ -43,9 +43,9 @@ SCALABILITY_SPECS = {
     "package_shape": {
         "csv": "package_shape/output.csv",
         "axis": "PackageXLength",
-        "order": [10, 20, 40, 50, 80, 100],
+        "order": [500, 250, 200, 125, 100],
         "xlabel": "Package shape (x × 10000/x)",
-        "tick_labels": ["10×1000", "20×500", "40×250", "50×200", "80×125", "100×100"],
+        "tick_labels": ["500×20", "250×40", "200×50", "125×80", "100×100"],
         "title": "Package shape",
     },
     "geometry": {
@@ -99,9 +99,9 @@ SERIES_COLOR = {
     "qunoc_wo_opt": COLORS["light_gray"],
     "qunoc": COLORS["dark_green"],
     "vqe": COLORS["dark_green"],
-    "qft": COLORS["teal"],
-    "qaoa": COLORS["sage"],
-    "bv": COLORS["khaki"],
+    "qaoa": COLORS["teal"],
+    "bv": COLORS["sage"],
+    "s_ghz": COLORS["khaki"],
 }
 
 SERIES_MARKER = {
@@ -114,9 +114,9 @@ SERIES_MARKER = {
     "qunoc_wo_opt": "^",
     "qunoc": "D",
     "vqe": "o",
-    "qft": "s",
-    "qaoa": "^",
-    "bv": "D",
+    "qaoa": "s",
+    "bv": "^",
+    "s_ghz": "D",
 }
 
 DISPLAY_NAME = {
@@ -129,9 +129,9 @@ DISPLAY_NAME = {
     "qunoc_wo_opt": "QuNoC w/o opt.",
     "qunoc": "QuNoC",
     "vqe": "VQE",
-    "qft": "QFT",
     "qaoa": "QAOA",
     "bv": "BV",
+    "s_ghz": "GHZ",
 }
 
 
@@ -311,24 +311,19 @@ def load_layout_package_shape(eval_result_dir: Path) -> pd.DataFrame:
 def load_routing_package_size(eval_result_dir: Path) -> pd.DataFrame:
     path = eval_result_dir / "routing_scalability/package_size/output.csv"
     df = read_csv(path)
+    values = ["GateFidelity", "CircuitDuration", "IntraGate", "InterGate", "QSTDist"]
+    grid_keys = {"PackageSize": PACKAGE_SIZES, "QuantumProgram": QUANTUM_PROGRAMS}
     if df.empty:
-        return complete_grid(
-            pd.DataFrame(),
-            {"LayoutDesignStrategy": LAYOUT_STRATEGIES, "PackageSize": PACKAGE_SIZES, "QuantumProgram": QUANTUM_PROGRAMS},
-            ["GateFidelity", "CircuitDuration", "IntraGate", "InterGate", "QSTDist"],
-        )
+        return complete_grid(pd.DataFrame(), grid_keys, values)
     df = coerce_numeric(
         df,
         ["PackageSize", "#DataQubit", "#LogicGate", "CircuitDuration", "GateFidelity", "IntraGate", "InterGate", "QSTDist"],
     )
-    df = last_by(df, ["LayoutDesignStrategy", "PackageSize", "QuantumProgram"])
-    df = df[df["LayoutDesignStrategy"].isin(LAYOUT_STRATEGIES)]
+    if "LayoutDesignStrategy" in df.columns:
+        df = df[df["LayoutDesignStrategy"].astype(str).str.lower().eq(PRIMARY_LAYOUT_STRATEGY)]
+    df = last_by(df, ["PackageSize", "QuantumProgram"])
     df = df[df["QuantumProgram"].isin(QUANTUM_PROGRAMS)]
-    return complete_grid(
-        df,
-        {"LayoutDesignStrategy": LAYOUT_STRATEGIES, "PackageSize": PACKAGE_SIZES, "QuantumProgram": QUANTUM_PROGRAMS},
-        ["GateFidelity", "CircuitDuration", "IntraGate", "InterGate", "QSTDist"],
-    )
+    return complete_grid(df, grid_keys, values)
 
 
 def load_main_exp(evaluate_dir: Path) -> pd.DataFrame:
@@ -341,7 +336,7 @@ def load_main_exp(evaluate_dir: Path) -> pd.DataFrame:
     if df.empty:
         out = complete_grid(
             pd.DataFrame(),
-            {"PackageSize": PACKAGE_SIZES, "QuantumProgram": ["vqe", "qft", "qaoa"]},
+            {"PackageSize": PACKAGE_SIZES, "QuantumProgram": QUANTUM_PROGRAMS},
             ["MECHGateFidelity", "QuNoCGateFidelity", "MECHCircuitDuration", "QuNoCCircuitDuration"],
         )
         return out
@@ -356,7 +351,7 @@ def load_main_exp(evaluate_dir: Path) -> pd.DataFrame:
     df = last_by(df, ["PackageSize", "QuantumProgram"])
     return complete_grid(
         df,
-        {"PackageSize": PACKAGE_SIZES, "QuantumProgram": sorted(df["QuantumProgram"].dropna().unique().tolist()) or ["vqe", "qft", "qaoa"]},
+        {"PackageSize": PACKAGE_SIZES, "QuantumProgram": sorted(df["QuantumProgram"].dropna().unique().tolist()) or QUANTUM_PROGRAMS},
         ["MECHGateFidelity", "QuNoCGateFidelity", "MECHCircuitDuration", "QuNoCCircuitDuration"],
     )
 
@@ -432,6 +427,13 @@ def load_mech_scalability(root: Path, name: str, spec: dict) -> pd.DataFrame:
         return complete_grid(pd.DataFrame(), {axis: spec["order"], "QuantumProgram": QUANTUM_PROGRAMS}, values)
     numeric_axis = all(isinstance(v, (int, float, np.integer, np.floating)) for v in spec["order"])
     df = coerce_numeric(df, ([axis] if numeric_axis else []) + values)
+    if name == "package_shape" and axis in df.columns:
+        observed = set(pd.to_numeric(df[axis], errors="coerce").dropna().astype(int).tolist())
+        expected = set(int(v) for v in spec["order"])
+        reversed_expected = {10000 // int(v) for v in spec["order"]}
+        if len(observed & reversed_expected) > len(observed & expected):
+            df[axis] = np.divide(10000, pd.to_numeric(df[axis], errors="coerce"))
+            df[axis] = pd.to_numeric(df[axis], errors="coerce").round().astype("Int64")
     if "Baseline" in df.columns:
         df = df[df["Baseline"].astype(str).str.lower().eq("mech")]
     df = last_by(df, [axis, "QuantumProgram"])
@@ -473,10 +475,7 @@ def load_ablation(evaluate_dir: Path, eval_result_dir: Path, quantum_program: st
     )
     mech_df = mech_df[mech_df["QuantumProgram"] == quantum_program]
     routing_df = load_routing_package_size(eval_result_dir)
-    routing_df = routing_df[
-        routing_df["LayoutDesignStrategy"].eq(PRIMARY_LAYOUT_STRATEGY)
-        & routing_df["QuantumProgram"].eq(quantum_program)
-    ]
+    routing_df = routing_df[routing_df["QuantumProgram"].eq(quantum_program)]
 
     for size in PACKAGE_SIZES:
         mech_f = value_at(mech_df, mech_df["PackageSize"].eq(size), "GateFidelity")
@@ -557,13 +556,19 @@ def load_mech_operation_json(root: Path, quantum_program: str) -> pd.DataFrame:
         baseline_dir = root / "result/routing_scalability/mech_baseline/package_size"
     rows = []
     for size in PACKAGE_SIZES:
-        path = baseline_dir / f"{size}_mech.json"
-        if not path.exists():
-            rows.append({"PackageSize": size, "OnChip": np.nan, "CrossChip": np.nan, "MeasNum": np.nan})
-            continue
-        with path.open("r", encoding="utf-8") as file:
-            data = json.load(file)
-        result = data.get(quantum_program, {})
+        path = baseline_dir / f"{size}_mech_{quantum_program}.json"
+        if path.exists():
+            with path.open("r", encoding="utf-8") as file:
+                data = json.load(file)
+            result = data.get("result", data.get(quantum_program, {}))
+        else:
+            path = baseline_dir / f"{size}_mech.json"
+            if not path.exists():
+                rows.append({"PackageSize": size, "OnChip": np.nan, "CrossChip": np.nan, "MeasNum": np.nan})
+                continue
+            with path.open("r", encoding="utf-8") as file:
+                data = json.load(file)
+            result = data.get(quantum_program, {})
         rows.append(
             {
                 "PackageSize": size,
@@ -575,13 +580,220 @@ def load_mech_operation_json(root: Path, quantum_program: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+# ----------------------------- figure data exporters -----------------------------
+
+
+def safe_ratio(numerator: float, denominator: float) -> float:
+    if not np.isfinite(numerator) or not np.isfinite(denominator) or denominator == 0:
+        return np.nan
+    return numerator / denominator
+
+
+def duration_ms(value: float) -> float:
+    return value / 1_000_000 if np.isfinite(value) else np.nan
+
+
+def export_figure_csv(df: pd.DataFrame, out_dir: Path, stem: str) -> Path:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{stem}.csv"
+    df.to_csv(path, index=False)
+    return path
+
+
+def build_overall_results_csv(root: Path, eval_result_dir: Path) -> pd.DataFrame:
+    sensate = load_routing_package_size(eval_result_dir)
+    mech = load_mech_scalability(
+        root,
+        "package_size",
+        {"axis": "PackageSize", "order": PACKAGE_SIZES},
+    )
+    rows = []
+    for quantum_program in QUANTUM_PROGRAMS:
+        sensate_subset = sensate[sensate["QuantumProgram"].eq(quantum_program)]
+        mech_subset = mech[mech["QuantumProgram"].eq(quantum_program)]
+        for size in PACKAGE_SIZES:
+            mech_duration = value_at(mech_subset, mech_subset["PackageSize"].eq(size), "CircuitDuration")
+            qunoc_duration = value_at(sensate_subset, sensate_subset["PackageSize"].eq(size), "CircuitDuration")
+            mech_fidelity = value_at(mech_subset, mech_subset["PackageSize"].eq(size), "GateFidelity")
+            qunoc_fidelity = value_at(sensate_subset, sensate_subset["PackageSize"].eq(size), "GateFidelity")
+            rows.append(
+                {
+                    "Figure": "overall_results",
+                    "Panel": DISPLAY_NAME.get(quantum_program, quantum_program),
+                    "QuantumProgram": quantum_program,
+                    "PackageSize": size,
+                    "PackageLabel": f"{size}x{size}",
+                    "MECHCircuitDurationRaw": mech_duration,
+                    "QuNoCCircuitDurationRaw": qunoc_duration,
+                    "MECHCircuitDurationMs": duration_ms(mech_duration),
+                    "QuNoCCircuitDurationMs": duration_ms(qunoc_duration),
+                    "CircuitSpeedup_MECH_over_QuNoC": safe_ratio(mech_duration, qunoc_duration),
+                    "DurationReductionPercent": (1 - safe_ratio(qunoc_duration, mech_duration)) * 100,
+                    "MECHGateFidelity": mech_fidelity,
+                    "QuNoCGateFidelity": qunoc_fidelity,
+                    "GateFidelityRatio_QuNoC_over_MECH": safe_ratio(qunoc_fidelity, mech_fidelity),
+                    "GateFidelityDelta_QuNoC_minus_MECH": qunoc_fidelity - mech_fidelity,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def build_layout_scalability_csv(eval_result_dir: Path) -> pd.DataFrame:
+    package_size = load_layout_package_size(eval_result_dir)
+    rows = []
+    for strategy in ["rl", "greedy", "heuristic", "template"]:
+        subset = package_size[package_size["DesignStrategy"].eq(strategy)].copy()
+        subset["PackageSize"] = pd.Categorical(subset["PackageSize"], categories=PACKAGE_SIZES, ordered=True)
+        subset = subset.sort_values("PackageSize")
+        for _, row in subset.iterrows():
+            rows.append(
+                {
+                    "Figure": "layout_scalability",
+                    "Panel": "layout_score_and_fidelity",
+                    "DesignStrategy": strategy,
+                    "DesignStrategyLabel": DISPLAY_NAME.get(strategy, strategy),
+                    "PackageSize": int(row["PackageSize"]),
+                    "PackageLabel": f"{int(row['PackageSize'])}x{int(row['PackageSize'])}",
+                    "Score": row.get("Score", np.nan),
+                    "Fidelity": row.get("Fidelity", np.nan),
+                    "FideStd": row.get("FideStd", np.nan),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def build_package_shape_scalability_csv(root: Path, eval_result_dir: Path) -> pd.DataFrame:
+    spec = SCALABILITY_SPECS["package_shape"]
+    axis = spec["axis"]
+    sensate = load_scalability(eval_result_dir, "package_shape", spec)
+    mech = load_mech_scalability(root, "package_shape", spec)
+    rows = []
+    for quantum_program in QUANTUM_PROGRAMS:
+        sensate_subset = sensate[sensate["QuantumProgram"].eq(quantum_program)]
+        mech_subset = mech[mech["QuantumProgram"].eq(quantum_program)]
+        for axis_value, tick_label in zip(spec["order"], spec["tick_labels"]):
+            mech_duration = value_at(mech_subset, mech_subset[axis].eq(axis_value), "CircuitDuration")
+            qunoc_duration = value_at(sensate_subset, sensate_subset[axis].eq(axis_value), "CircuitDuration")
+            mech_fidelity = value_at(mech_subset, mech_subset[axis].eq(axis_value), "GateFidelity")
+            qunoc_fidelity = value_at(sensate_subset, sensate_subset[axis].eq(axis_value), "GateFidelity")
+            rows.append(
+                {
+                    "Figure": "package_shape_scalability",
+                    "Panel": DISPLAY_NAME.get(quantum_program, quantum_program),
+                    "QuantumProgram": quantum_program,
+                    axis: axis_value,
+                    "PackageShapeLabel": tick_label.replace("\n", " "),
+                    "MECHCircuitDurationRaw": mech_duration,
+                    "QuNoCCircuitDurationRaw": qunoc_duration,
+                    "MECHCircuitDurationMs": duration_ms(mech_duration),
+                    "QuNoCCircuitDurationMs": duration_ms(qunoc_duration),
+                    "CircuitSpeedup_MECH_over_QuNoC": safe_ratio(mech_duration, qunoc_duration),
+                    "DurationReductionPercent": (1 - safe_ratio(qunoc_duration, mech_duration)) * 100,
+                    "MECHGateFidelity": mech_fidelity,
+                    "QuNoCGateFidelity": qunoc_fidelity,
+                    "GateFidelityRatio_QuNoC_over_MECH": safe_ratio(qunoc_fidelity, mech_fidelity),
+                    "GateFidelityDelta_QuNoC_minus_MECH": qunoc_fidelity - mech_fidelity,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def build_routing_scalability_csv(root: Path, eval_result_dir: Path) -> pd.DataFrame:
+    rows = []
+    for name, spec in SCALABILITY_SPECS.items():
+        if name == "package_shape":
+            continue
+        axis = spec["axis"]
+        sensate = load_scalability(eval_result_dir, name, spec)
+        mech = load_mech_scalability(root, name, spec)
+        for quantum_program in QUANTUM_PROGRAMS:
+            sensate_subset = sensate[sensate["QuantumProgram"].eq(quantum_program)]
+            mech_subset = mech[mech["QuantumProgram"].eq(quantum_program)]
+            for axis_value, tick_label in zip(spec["order"], spec["tick_labels"]):
+                mech_duration = value_at(mech_subset, mech_subset[axis].eq(axis_value), "CircuitDuration")
+                qunoc_duration = value_at(sensate_subset, sensate_subset[axis].eq(axis_value), "CircuitDuration")
+                mech_fidelity = value_at(mech_subset, mech_subset[axis].eq(axis_value), "GateFidelity")
+                qunoc_fidelity = value_at(sensate_subset, sensate_subset[axis].eq(axis_value), "GateFidelity")
+                rows.append(
+                    {
+                        "Figure": "routing_scalability",
+                        "Sweep": name,
+                        "SweepTitle": spec["title"],
+                        "AxisColumn": axis,
+                        "AxisValue": axis_value,
+                        "AxisLabel": tick_label.replace("\n", " "),
+                        "QuantumProgram": quantum_program,
+                        "QuantumProgramLabel": DISPLAY_NAME.get(quantum_program, quantum_program),
+                        "MECHCircuitDurationRaw": mech_duration,
+                        "QuNoCCircuitDurationRaw": qunoc_duration,
+                        "CircuitSpeedup_MECH_over_QuNoC": safe_ratio(mech_duration, qunoc_duration),
+                        "MECHGateFidelity": mech_fidelity,
+                        "QuNoCGateFidelity": qunoc_fidelity,
+                        "GateFidelityRatio_QuNoC_over_MECH": safe_ratio(qunoc_fidelity, mech_fidelity),
+                        "GateFidelityDelta_QuNoC_minus_MECH": qunoc_fidelity - mech_fidelity,
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
+def build_ablation_csv(root: Path, evaluate_dir: Path, eval_result_dir: Path, quantum_program: str) -> pd.DataFrame:
+    rows = []
+    ablation = load_ablation(evaluate_dir, eval_result_dir, quantum_program)
+    for _, row in ablation.sort_values(["PackageSize", "Strategy"]).iterrows():
+        strategy = row["Strategy"]
+        rows.append(
+            {
+                "Figure": f"ablation_{quantum_program}",
+                "Panel": "routing_method_ablation",
+                "QuantumProgram": quantum_program,
+                "PackageSize": int(row["PackageSize"]),
+                "Strategy": strategy,
+                "StrategyLabel": DISPLAY_NAME.get(strategy, strategy),
+                "GateFidelity": row.get("GateFidelity", np.nan),
+                "CircuitDurationMs": row.get("CircuitDurationMs", np.nan),
+            }
+        )
+
+    qunoc_ops = load_routing_package_size(eval_result_dir)
+    qunoc_ops = qunoc_ops[qunoc_ops["QuantumProgram"].eq(quantum_program)]
+    qunoc_ops = last_by(qunoc_ops, ["PackageSize"])
+    mech_ops = load_mech_operation_json(root, quantum_program)
+    for size in PACKAGE_SIZES:
+        qunoc_subset = qunoc_ops[qunoc_ops["PackageSize"].eq(size)]
+        mech_subset = mech_ops[mech_ops["PackageSize"].eq(size)]
+        rows.append(
+            {
+                "Figure": f"ablation_{quantum_program}",
+                "Panel": "hardware_operation_decomposition",
+                "QuantumProgram": quantum_program,
+                "PackageSize": size,
+                "MECHOnChipGate": value_at(mech_subset, mech_subset["PackageSize"].eq(size), "OnChip"),
+                "MECHCrossChipGate": value_at(mech_subset, mech_subset["PackageSize"].eq(size), "CrossChip"),
+                "MECHMeasNum": value_at(mech_subset, mech_subset["PackageSize"].eq(size), "MeasNum"),
+                "QuNoCIntraGate": value_at(qunoc_subset, qunoc_subset["PackageSize"].eq(size), "IntraGate"),
+                "QuNoCInterGate": value_at(qunoc_subset, qunoc_subset["PackageSize"].eq(size), "InterGate"),
+                "QuNoCQSTDist": value_at(qunoc_subset, qunoc_subset["PackageSize"].eq(size), "QSTDist"),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def export_all_figure_csv(root: Path, evaluate_dir: Path, eval_result_dir: Path, out_dir: Path, quantum_program: str) -> list[Path]:
+    return [
+        export_figure_csv(build_overall_results_csv(root, eval_result_dir), out_dir, "overall_results"),
+        export_figure_csv(build_layout_scalability_csv(eval_result_dir), out_dir, "layout_scalability"),
+        export_figure_csv(build_package_shape_scalability_csv(root, eval_result_dir), out_dir, "package_shape_scalability"),
+        export_figure_csv(build_routing_scalability_csv(root, eval_result_dir), out_dir, "routing_scalability"),
+        export_figure_csv(build_ablation_csv(root, evaluate_dir, eval_result_dir, quantum_program), out_dir, f"ablation_{quantum_program}"),
+    ]
+
+
 # ----------------------------- figure builders -----------------------------
 
 def plot_overall(root: Path, evaluate_dir: Path, eval_result_dir: Path, out_dir: Path, formats: list[str]) -> None:
     """Plot MECH-versus-Sensate routing results for each quantum program."""
-    package_sizes = [40, 60, 80, 100]
+    package_sizes = [40, 60, 80, 100, 120]
     sensate = load_routing_package_size(eval_result_dir)
-    sensate = sensate[sensate["LayoutDesignStrategy"].eq(PRIMARY_LAYOUT_STRATEGY)].copy()
     mech = load_mech_scalability(
         root,
         "package_size",
@@ -998,7 +1210,7 @@ def plot_scalability(root: Path, eval_result_dir: Path, out_dir: Path, formats: 
 def plot_ablation(root: Path, evaluate_dir: Path, eval_result_dir: Path, out_dir: Path, formats: list[str], quantum_program: str) -> None:
     ablation = load_ablation(evaluate_dir, eval_result_dir, quantum_program)
     qunoc_ops = load_routing_package_size(eval_result_dir)
-    qunoc_ops = qunoc_ops[(qunoc_ops["LayoutDesignStrategy"] == PRIMARY_LAYOUT_STRATEGY) & (qunoc_ops["QuantumProgram"] == quantum_program)]
+    qunoc_ops = qunoc_ops[qunoc_ops["QuantumProgram"] == quantum_program]
     qunoc_ops = last_by(qunoc_ops, ["PackageSize"])
     mech_ops = load_mech_operation_json(root, quantum_program)
 
@@ -1158,6 +1370,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=None, help="Figure output directory. Default: evaluate/figure.")
     parser.add_argument("--formats", nargs="+", default=["pdf", "svg"], help="Output formats, e.g. pdf svg png.")
     parser.add_argument("--ablation-quantum-program", choices=QUANTUM_PROGRAMS, default="qaoa", help="Quantum program used for ablation operation decomposition.")
+    parser.add_argument("--skip-csv", action="store_true", help="Do not export per-figure CSV data tables.")
+    parser.add_argument("--only-csv", action="store_true", help="Export per-figure CSV data tables without rendering figures.")
     return parser.parse_args()
 
 
@@ -1168,14 +1382,30 @@ def main() -> None:
     eval_result_dir = evaluate_dir / "result"
     out_dir = args.output_dir.resolve() if args.output_dir else evaluate_dir / "figure"
 
-    setup_matplotlib()
-    plot_overall(root, evaluate_dir, eval_result_dir, out_dir, args.formats)
-    plot_layout_scalability(eval_result_dir, out_dir, args.formats)
-    plot_package_shape_scalability(root, eval_result_dir, out_dir, args.formats)
-    plot_scalability(root, eval_result_dir, out_dir, args.formats)
-    plot_ablation(root, evaluate_dir, eval_result_dir, out_dir, args.formats, args.ablation_quantum_program)
+    saved_csvs = []
+    if not args.skip_csv:
+        saved_csvs = export_all_figure_csv(
+            root,
+            evaluate_dir,
+            eval_result_dir,
+            out_dir,
+            args.ablation_quantum_program,
+        )
 
-    print(f"Saved figures to {out_dir}")
+    if not args.only_csv:
+        setup_matplotlib()
+        plot_overall(root, evaluate_dir, eval_result_dir, out_dir, args.formats)
+        plot_layout_scalability(eval_result_dir, out_dir, args.formats)
+        plot_package_shape_scalability(root, eval_result_dir, out_dir, args.formats)
+        plot_scalability(root, eval_result_dir, out_dir, args.formats)
+        plot_ablation(root, evaluate_dir, eval_result_dir, out_dir, args.formats, args.ablation_quantum_program)
+
+    if not args.only_csv:
+        print(f"Saved figures to {out_dir}")
+    if saved_csvs:
+        print("Saved figure CSV data:")
+        for path in saved_csvs:
+            print(f"  {path}")
 
 
 if __name__ == "__main__":

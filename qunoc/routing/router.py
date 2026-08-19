@@ -23,6 +23,7 @@ from .circuit import (
     BoardingStage,
     Circuit,
     CircuitAction,
+    Barrier,
     Control,
     DirectGate,
     DummyCircuit,
@@ -259,6 +260,18 @@ class Router:
 
     def reorder_program_gates(self):
         if self.gate_order_strategy == "control_grouped":
+            if self.program.algo_name != "qaoa":
+                raise ValueError(
+                    "gate_order_strategy='control_grouped' is only valid for "
+                    "QAOA-style commuting control-gate programs."
+                )
+            if not all(
+                isinstance(gate, (Control, Barrier)) for gate in self.program.logic_gates
+            ):
+                raise ValueError(
+                    "control_grouped can only reorder programs containing Control "
+                    "gates and Barrier markers."
+                )
             self.program.logic_gates = sorted(
                 [gate for gate in self.program.logic_gates if isinstance(gate, Control)],
                 key=lambda gate: (gate.control_qubit, gate.target_qubit),
@@ -1265,7 +1278,7 @@ class Router:
         platforms = [nearest_platforms[qubit] for qubit in nearest_platforms]
         stations = [self.package.platform_stations_dict[platform][0] for platform in platforms]
         if stations:
-            ghz_source = stations[0]
+            ghz_source = self.select_ghz_source_station(stations)
             cost += max(0, len(stations) - 1) * self.package.op_config.intra_time
             for station in stations:
                 cost += self.estimate_transfer_distance(ghz_source, station) * self.package.op_config.qst_time_constant
