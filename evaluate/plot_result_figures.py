@@ -192,13 +192,13 @@ ABLATION_STYLE = {
     "figsize": (16, 6),
     "title_fontsize": 16,
     "label_fontsize": 16,
-    "tick_fontsize": 14,
-    "legend_fontsize": 14,
+    "tick_fontsize": 16,
+    "legend_fontsize": 16,
     "line_width": 2.0,
     "marker_size": 9,
     "legend_marker_size": 8,
     "routing_bar_width": 0.18,
-    "operation_bar_width": 0.18,
+    "operation_bar_width": 0.13,
     "subplot_adjust": {
         "left": 0.075,
         "right": 0.925,
@@ -223,14 +223,12 @@ ABLATION_STYLE = {
     "y_scales": {
         "routing_duration": "log",
         "operation_counts": "log",
-        "qst_distance": "log",
     },
     # Use None for automatic limits, or (low, high) for manual limits.
     "y_limits": {
         "routing_duration": None,
         "routing_fidelity": (0, 1.02),
         "operation_counts": None,
-        "qst_distance": None,
     },
 }
 
@@ -1674,63 +1672,47 @@ def plot_ablation(root: Path, evaluate_dir: Path, eval_result_dir: Path, out_dir
         **style["routing_legend"],
     )
 
-    # (b) Two-qubit-gate counts share the left log axis; EQST distance is a
-    # line on the right log axis.
+    # (b) Plot all operation components as grouped bars: MECH gate counts and
+    # measurements, plus QuNoC gate counts and EQST distance.
     ax = operation_ax
     width = style["operation_bar_width"]
+    mech_ops = mech_ops.sort_values("PackageSize")
+    qunoc_ops = qunoc_ops.sort_values("PackageSize")
     mech_intra = pd.to_numeric(mech_ops["OnChip"], errors="coerce").to_numpy(dtype=float)
     mech_inter = pd.to_numeric(mech_ops["CrossChip"], errors="coerce").to_numpy(dtype=float)
-    qunoc_intra = pd.to_numeric(qunoc_ops.sort_values("PackageSize")["IntraGate"], errors="coerce").to_numpy(dtype=float)
-    qunoc_inter = pd.to_numeric(qunoc_ops.sort_values("PackageSize")["InterGate"], errors="coerce").to_numpy(dtype=float)
+    mech_meas = pd.to_numeric(mech_ops["MeasNum"], errors="coerce").to_numpy(dtype=float)
+    qunoc_intra = pd.to_numeric(qunoc_ops["IntraGate"], errors="coerce").to_numpy(dtype=float)
+    qunoc_inter = pd.to_numeric(qunoc_ops["InterGate"], errors="coerce").to_numpy(dtype=float)
+    qunoc_qst = pd.to_numeric(qunoc_ops["QSTDist"], errors="coerce").to_numpy(dtype=float)
 
     if len(qunoc_intra) != len(PACKAGE_SIZES):
         tmp = complete_grid(qunoc_ops, {"PackageSize": PACKAGE_SIZES}, ["IntraGate", "InterGate", "QSTDist"])
         qunoc_intra = pd.to_numeric(tmp["IntraGate"], errors="coerce").to_numpy(dtype=float)
         qunoc_inter = pd.to_numeric(tmp["InterGate"], errors="coerce").to_numpy(dtype=float)
+        qunoc_qst = pd.to_numeric(tmp["QSTDist"], errors="coerce").to_numpy(dtype=float)
 
-    ax.bar(x - 1.5 * width, mech_intra, width, color=COLORS["dark_green"], edgecolor=COLORS["ink"], linewidth=0.5, label="MECH: intra-die gates")
-    ax.bar(x - 0.5 * width, mech_inter, width, color=COLORS["teal"], edgecolor=COLORS["ink"], linewidth=0.5, label="MECH: inter-die gates")
+    ax.bar(x - 2.5 * width, mech_intra, width, color=COLORS["dark_green"], edgecolor=COLORS["ink"], linewidth=0.5, label="MECH: intra-die gates")
+    ax.bar(x - 1.5 * width, mech_inter, width, color=COLORS["teal"], edgecolor=COLORS["ink"], linewidth=0.5, label="MECH: inter-die gates")
+    ax.bar(x - 0.5 * width, mech_meas, width, color=COLORS["khaki"], edgecolor=COLORS["ink"], linewidth=0.5, label="MECH: measurements")
     ax.bar(x + 0.5 * width, qunoc_intra, width, color=COLORS["sage"], edgecolor=COLORS["ink"], linewidth=0.5, label="QuNoC: intra-die gates")
     ax.bar(x + 1.5 * width, qunoc_inter, width, color=COLORS["light_gray"], edgecolor=COLORS["ink"], linewidth=0.5, label="QuNoC: inter-die gates")
-    qst_ax = ax.twinx()
-    qst = pd.to_numeric(qunoc_ops.sort_values("PackageSize")["QSTDist"], errors="coerce").to_numpy(dtype=float)
-    if len(qst) != len(PACKAGE_SIZES):
-        tmp = complete_grid(qunoc_ops, {"PackageSize": PACKAGE_SIZES}, ["IntraGate", "InterGate", "QSTDist"])
-        qst = pd.to_numeric(tmp["QSTDist"], errors="coerce").to_numpy(dtype=float)
-    qst_line = qst_ax.plot(
-        x,
-        qst,
-        color=COLORS["khaki"],
-        marker="D",
-        markersize=marker_size,
-        markeredgecolor="black",
-        markeredgewidth=0.5,
-        linewidth=line_width,
-        label="QuNoC: EQST distance",
-    )[0]
+    ax.bar(x + 2.5 * width, qunoc_qst, width, color=COLORS["muted"], edgecolor=COLORS["ink"], linewidth=0.5, label="QuNoC: EQST distance")
 
     ax.set_title(f"(b) Hardware-operation decomposition ({DISPLAY_NAME.get(quantum_program, quantum_program.upper())})", fontsize=title_fontsize)
     ax.set_xlabel("Package side length", fontsize=label_fontsize)
-    ax.set_ylabel("Number of two-qubit operations", fontsize=label_fontsize)
-    qst_ax.set_ylabel("Total EQST distance", fontsize=label_fontsize)
+    ax.set_ylabel("Operation count / EQST distance", fontsize=label_fontsize)
     ax.set_xticks(x)
     ax.set_xticklabels(PACKAGE_SIZES, fontsize=tick_fontsize)
     ax.set_yscale(style["y_scales"]["operation_counts"])
-    qst_ax.set_yscale(style["y_scales"]["qst_distance"])
     _set_ylim_from_config(ax, style["y_limits"]["operation_counts"])
-    _set_ylim_from_config(qst_ax, style["y_limits"]["qst_distance"])
     style_axis(ax)
     ax.tick_params(axis="both", labelsize=tick_fontsize)
-    qst_ax.grid(False)
-    qst_ax.spines["top"].set_visible(True)
-    qst_ax.spines["right"].set_color(COLORS["ink"])
-    qst_ax.tick_params(axis="both", colors=COLORS["ink"], labelsize=tick_fontsize)
-    plot_nan_hint(ax, [*mech_intra, *mech_inter, *qunoc_intra, *qunoc_inter, *qst])
+    plot_nan_hint(ax, [*mech_intra, *mech_inter, *mech_meas, *qunoc_intra, *qunoc_inter, *qunoc_qst])
 
     operation_handles, operation_labels = ax.get_legend_handles_labels()
     ax.legend(
-        operation_handles + [qst_line],
-        operation_labels + ["QuNoC: EQST distance"],
+        operation_handles,
+        operation_labels,
         fontsize=style["legend_fontsize"],
         frameon=True,
         edgecolor=COLORS["ink"],
