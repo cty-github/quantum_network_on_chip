@@ -134,6 +134,106 @@ DISPLAY_NAME = {
     "s_ghz": "GHZ",
 }
 
+# Central knobs for the 2 × 5 combined scalability figure.  Edit this block to
+# tune the final paper layout without touching the plotting logic below.
+COMBINED_SCALABILITY_STYLE = {
+    "figsize": (24, 6),
+    "title_fontsize": 13,
+    "label_fontsize": 13,
+    "tick_fontsize": 13,
+    "legend_fontsize": 13,
+    "line_width": 2.0,
+    "marker_size": 7.5,
+    "package_shape_bar_width": 0.34,
+    "package_shape_duration_scale": "linear",  # Use "log" only if the duration range becomes too large.
+    "routing_bar_width": 0.18,
+    "subplot_adjust": {
+        "left": 0.055,
+        "right": 0.985,
+        "bottom": 0.11,
+        "top": 0.80,
+        "wspace": 0.30,
+        "hspace": 0.20,
+    },
+    "package_shape_legend": {
+        "loc": "upper center",
+        "bbox_to_anchor": (0.24, 0.92),
+        "ncol": 4,
+        "columnspacing": 1.2,
+        "handlelength": 1.35,
+    },
+    "routing_legend": {
+        "loc": "upper center",
+        "bbox_to_anchor": (0.71, 0.92),
+        "ncol": len(QUANTUM_PROGRAMS),
+        "columnspacing": 1.2,
+        "handlelength": 1.35,
+    },
+    # Per-subplot y-axis ranges. Use None for automatic limits, or (low, high)
+    # for manual limits. Package-shape panels have separate duration/fidelity axes.
+    "y_limits": {
+        "package_shape": {
+            "vqe": {"duration": None, "fidelity": (0, 1.02)},
+            "qaoa": {"duration": None, "fidelity": (0, 1.02)},
+            "bv": {"duration": None, "fidelity": (0, 1.02)},
+            "s_ghz": {"duration": None, "fidelity": (0, 1.02)},
+        },
+        "routing": {
+            "geometry": {"fidelity_improvement": None, "circuit_speedup": None},
+            "inter_fidelity": {"fidelity_improvement": (2, 3), "circuit_speedup": (2.5, 5)},
+            "chiplet_sparsity": {"fidelity_improvement": (2.3, 2.9), "circuit_speedup": (1, 5)},
+        },
+    },
+}
+
+# Central knobs for ablation_qaoa (and any other --ablation-quantum-program).
+# Edit this block to tune fonts, spacing, legends, axes, and mark sizes.
+ABLATION_STYLE = {
+    "figsize": (16, 6),
+    "title_fontsize": 16,
+    "label_fontsize": 16,
+    "tick_fontsize": 14,
+    "legend_fontsize": 14,
+    "line_width": 2.0,
+    "marker_size": 9,
+    "legend_marker_size": 8,
+    "routing_bar_width": 0.18,
+    "operation_bar_width": 0.18,
+    "subplot_adjust": {
+        "left": 0.075,
+        "right": 0.925,
+        "bottom": 0.14,
+        "top": 0.70,
+        "wspace": 0.3,
+    },
+    "routing_legend": {
+        "ncol": 3,
+        "loc": "upper center",
+        "bbox_to_anchor": (0.5, 1.3),
+        "columnspacing": 0.9,
+        "handlelength": 1.3,
+    },
+    "operation_legend": {
+        "ncol": 3,
+        "loc": "upper center",
+        "bbox_to_anchor": (0.5, 1.3),
+        "columnspacing": 0.55,
+        "handlelength": 1.3,
+    },
+    "y_scales": {
+        "routing_duration": "log",
+        "operation_counts": "log",
+        "qst_distance": "log",
+    },
+    # Use None for automatic limits, or (low, high) for manual limits.
+    "y_limits": {
+        "routing_duration": None,
+        "routing_fidelity": (0, 1.02),
+        "operation_counts": None,
+        "qst_distance": None,
+    },
+}
+
 
 # ----------------------------- basic helpers -----------------------------
 
@@ -736,6 +836,24 @@ def build_routing_scalability_csv(root: Path, eval_result_dir: Path) -> pd.DataF
     return pd.DataFrame(rows)
 
 
+def build_combined_scalability_csv(root: Path, eval_result_dir: Path) -> pd.DataFrame:
+    package_shape = build_package_shape_scalability_csv(root, eval_result_dir).copy()
+    if not package_shape.empty:
+        package_shape["Figure"] = "combined_scalability"
+        package_shape["PanelGroup"] = "package_shape_scalability"
+        package_shape["Sweep"] = "package_shape"
+        package_shape["SweepTitle"] = SCALABILITY_SPECS["package_shape"]["title"]
+        package_shape["RowMetric"] = "duration_and_fidelity"
+
+    routing = build_routing_scalability_csv(root, eval_result_dir).copy()
+    if not routing.empty:
+        routing["Figure"] = "combined_scalability"
+        routing["PanelGroup"] = "routing_scalability"
+        routing["RowMetric"] = "fidelity_improvement_and_circuit_speedup"
+
+    return pd.concat([package_shape, routing], ignore_index=True, sort=False)
+
+
 def build_ablation_csv(root: Path, evaluate_dir: Path, eval_result_dir: Path, quantum_program: str) -> pd.DataFrame:
     rows = []
     ablation = load_ablation(evaluate_dir, eval_result_dir, quantum_program)
@@ -784,6 +902,7 @@ def export_all_figure_csv(root: Path, evaluate_dir: Path, eval_result_dir: Path,
         export_figure_csv(build_layout_scalability_csv(eval_result_dir), out_dir, "layout_scalability"),
         export_figure_csv(build_package_shape_scalability_csv(root, eval_result_dir), out_dir, "package_shape_scalability"),
         export_figure_csv(build_routing_scalability_csv(root, eval_result_dir), out_dir, "routing_scalability"),
+        export_figure_csv(build_combined_scalability_csv(root, eval_result_dir), out_dir, "combined_scalability"),
         export_figure_csv(build_ablation_csv(root, evaluate_dir, eval_result_dir, quantum_program), out_dir, f"ablation_{quantum_program}"),
     ]
 
@@ -1207,20 +1326,283 @@ def plot_scalability(root: Path, eval_result_dir: Path, out_dir: Path, formats: 
     save_figure(fig, out_dir, "routing_scalability", formats)
 
 
+def _set_ylim_from_config(ax: Axes, limits: tuple[float, float] | None) -> None:
+    if limits is not None:
+        ax.set_ylim(*limits)
+
+
+def _auto_zero_ylim(ax: Axes, values: Iterable[float], pad: float = 1.12) -> None:
+    arr = np.asarray(list(values), dtype=float)
+    finite = arr[np.isfinite(arr)]
+    if finite.size:
+        ax.set_ylim(0, max(float(finite.max()) * pad, 1e-12))
+    else:
+        ax.set_ylim(0, 1)
+
+
+def _compact_tick_label(value: float, _position: int) -> str:
+    if not np.isfinite(value):
+        return ""
+    abs_value = abs(value)
+    if abs_value >= 1000:
+        return f"{value / 1000:g}k"
+    return f"{value:g}"
+
+
+def plot_combined_scalability(root: Path, eval_result_dir: Path, out_dir: Path, formats: list[str]) -> None:
+    """Plot package-shape and routing scalability in one 2 × 5 paper figure."""
+    style = COMBINED_SCALABILITY_STYLE
+    fig, axes = plt.subplots(2, 5, figsize=style["figsize"], sharex=False)
+    panel_letters = iter("abcdefghij")
+
+    title_fontsize = style["title_fontsize"]
+    label_fontsize = style["label_fontsize"]
+    tick_fontsize = style["tick_fontsize"]
+    marker_size = style["marker_size"]
+    line_width = style["line_width"]
+
+    package_spec = SCALABILITY_SPECS["package_shape"]
+    package_axis = package_spec["axis"]
+    package_x = np.arange(len(package_spec["order"]))
+    package_width = style["package_shape_bar_width"]
+    baseline_colors = {"mech": COLORS["sage"], "sensate": COLORS["dark_green"]}
+    baseline_markers = {"mech": "^", "sensate": "o"}
+    sensate_package = load_scalability(eval_result_dir, "package_shape", package_spec)
+    mech_package = load_mech_scalability(root, "package_shape", package_spec)
+
+    for index, quantum_program in enumerate(QUANTUM_PROGRAMS):
+        row, col = divmod(index, 2)
+        ax = axes[row, col]
+        fidelity_ax = ax.twinx()
+        sensate_subset = sensate_package[sensate_package["QuantumProgram"].eq(quantum_program)].copy()
+        mech_subset = mech_package[mech_package["QuantumProgram"].eq(quantum_program)].copy()
+        for subset in (sensate_subset, mech_subset):
+            subset[package_axis] = pd.Categorical(subset[package_axis], categories=package_spec["order"], ordered=True)
+            subset.sort_values(package_axis, inplace=True)
+
+        mech_duration = pd.to_numeric(mech_subset["CircuitDuration"], errors="coerce").to_numpy(dtype=float) / 1_000_000
+        sensate_duration = pd.to_numeric(sensate_subset["CircuitDuration"], errors="coerce").to_numpy(dtype=float) / 1_000_000
+        mech_fidelity = pd.to_numeric(mech_subset["GateFidelity"], errors="coerce").to_numpy(dtype=float)
+        sensate_fidelity = pd.to_numeric(sensate_subset["GateFidelity"], errors="coerce").to_numpy(dtype=float)
+
+        ax.bar(
+            package_x - package_width / 2,
+            mech_duration,
+            package_width,
+            color=baseline_colors["mech"],
+            edgecolor=COLORS["ink"],
+            linewidth=0.5,
+            alpha=0.82,
+            zorder=2,
+        )
+        ax.bar(
+            package_x + package_width / 2,
+            sensate_duration,
+            package_width,
+            color=baseline_colors["sensate"],
+            edgecolor=COLORS["ink"],
+            linewidth=0.5,
+            alpha=0.82,
+            zorder=2,
+        )
+        fidelity_ax.plot(
+            package_x,
+            mech_fidelity,
+            color=baseline_colors["mech"],
+            marker=baseline_markers["mech"],
+            markersize=marker_size,
+            markeredgecolor=COLORS["ink"],
+            markeredgewidth=0.5,
+            linewidth=line_width,
+            zorder=3,
+        )
+        fidelity_ax.plot(
+            package_x,
+            sensate_fidelity,
+            color=baseline_colors["sensate"],
+            marker=baseline_markers["sensate"],
+            markersize=marker_size,
+            markeredgecolor=COLORS["ink"],
+            markeredgewidth=0.5,
+            linewidth=line_width,
+            zorder=3,
+        )
+
+        panel = next(panel_letters)
+        ax.set_title(f"({panel}) {DISPLAY_NAME[quantum_program]}", fontsize=title_fontsize)
+        ax.set_xticks(package_x)
+        ax.set_xticklabels(package_spec["tick_labels"], fontsize=tick_fontsize)
+        if row == 1:
+            ax.set_xlabel("Package shape", fontsize=label_fontsize)
+        else:
+            ax.tick_params(axis="x", labelbottom=False)
+        if col == 0:
+            ax.set_ylabel("Circuit duration (ms)", fontsize=label_fontsize)
+        else:
+            ax.set_ylabel("")
+        if col == 1:
+            fidelity_ax.set_ylabel("Avg. gate fidelity", fontsize=label_fontsize)
+        else:
+            fidelity_ax.set_ylabel("")
+        ax.set_yscale(style.get("package_shape_duration_scale", "linear"))
+        ax.yaxis.set_major_formatter(FuncFormatter(_compact_tick_label))
+        ax.yaxis.get_offset_text().set_visible(False)
+        limits = style["y_limits"]["package_shape"].get(quantum_program, {})
+        if limits.get("duration") is None:
+            _auto_zero_ylim(ax, [*mech_duration, *sensate_duration])
+        else:
+            _set_ylim_from_config(ax, limits.get("duration"))
+        _set_ylim_from_config(fidelity_ax, limits.get("fidelity"))
+        style_axis(ax)
+        fidelity_ax.grid(False)
+        fidelity_ax.spines["top"].set_visible(True)
+        fidelity_ax.spines["right"].set_color(COLORS["ink"])
+        fidelity_ax.tick_params(axis="both", colors=COLORS["ink"], labelsize=tick_fontsize)
+        ax.tick_params(axis="both", labelsize=tick_fontsize)
+        plot_nan_hint(ax, [*mech_duration, *sensate_duration, *mech_fidelity, *sensate_fidelity])
+
+    routing_specs = [
+        (name, SCALABILITY_SPECS[name])
+        for name in ["geometry", "inter_fidelity", "chiplet_sparsity"]
+    ]
+    for col_offset, (name, spec) in enumerate(routing_specs, start=2):
+        axis_name = spec["axis"]
+        sensate = load_scalability(eval_result_dir, name, spec)
+        mech = load_mech_scalability(root, name, spec)
+        x = np.arange(len(spec["order"]))
+        numeric_trend = all(isinstance(value, (int, float, np.integer, np.floating)) for value in spec["order"])
+
+        for row, (metric_key, ylabel) in enumerate(
+            [("fidelity_improvement", "Fidelity improvement (×)"), ("circuit_speedup", "Circuit speedup (×)")]
+        ):
+            ax = axes[row, col_offset]
+            plotted_values: list[float] = []
+            for quantum_program_index, quantum_program in enumerate(QUANTUM_PROGRAMS):
+                sensate_subset = sensate[sensate["QuantumProgram"].eq(quantum_program)].copy()
+                mech_subset = mech[mech["QuantumProgram"].eq(quantum_program)].copy()
+                for subset in (sensate_subset, mech_subset):
+                    subset[axis_name] = pd.Categorical(subset[axis_name], categories=spec["order"], ordered=True)
+                    subset.sort_values(axis_name, inplace=True)
+
+                if metric_key == "circuit_speedup":
+                    numerator = pd.to_numeric(mech_subset["CircuitDuration"], errors="coerce").to_numpy(dtype=float)
+                    denominator = pd.to_numeric(sensate_subset["CircuitDuration"], errors="coerce").to_numpy(dtype=float)
+                else:
+                    numerator = pd.to_numeric(sensate_subset["GateFidelity"], errors="coerce").to_numpy(dtype=float)
+                    denominator = pd.to_numeric(mech_subset["GateFidelity"], errors="coerce").to_numpy(dtype=float)
+                ratio = np.divide(
+                    numerator,
+                    denominator,
+                    out=np.full_like(numerator, np.nan, dtype=float),
+                    where=np.isfinite(denominator) & (denominator != 0),
+                )
+                plotted_values.extend(ratio.tolist())
+
+                if numeric_trend:
+                    ax.plot(
+                        x,
+                        ratio,
+                        marker=SERIES_MARKER.get(quantum_program, "o"),
+                        markersize=marker_size,
+                        markeredgecolor=COLORS["ink"],
+                        markeredgewidth=0.45,
+                        linewidth=line_width,
+                        color=SERIES_COLOR[quantum_program],
+                        label=DISPLAY_NAME[quantum_program],
+                    )
+                else:
+                    offset = (quantum_program_index - (len(QUANTUM_PROGRAMS) - 1) / 2) * style["routing_bar_width"]
+                    ax.bar(
+                        x + offset,
+                        ratio,
+                        width=style["routing_bar_width"],
+                        color=SERIES_COLOR[quantum_program],
+                        edgecolor=COLORS["ink"],
+                        linewidth=0.5,
+                        label=DISPLAY_NAME[quantum_program],
+                    )
+
+            panel = next(panel_letters)
+            ax.set_title(f"({panel}) {spec['title']}", fontsize=title_fontsize)
+            ax.set_ylabel(ylabel, fontsize=label_fontsize)
+            ax.set_xticks(x)
+            ax.set_xticklabels(spec["tick_labels"], fontsize=tick_fontsize)
+            if row == 1:
+                ax.set_xlabel(spec["xlabel"], fontsize=label_fontsize)
+            else:
+                ax.tick_params(axis="x", labelbottom=False)
+            y_limit = style["y_limits"]["routing"].get(name, {}).get(metric_key)
+            if y_limit is None:
+                _auto_zero_ylim(ax, plotted_values)
+            else:
+                _set_ylim_from_config(ax, y_limit)
+            style_axis(ax)
+            ax.tick_params(axis="both", labelsize=tick_fontsize)
+            plot_nan_hint(ax, plotted_values)
+
+    package_handles = [
+        Line2D([0], [0], color=baseline_colors["mech"], marker=baseline_markers["mech"], markersize=marker_size, linewidth=line_width, markeredgecolor=COLORS["ink"], label="MECH fidelity"),
+        Line2D([0], [0], color=baseline_colors["sensate"], marker=baseline_markers["sensate"], markersize=marker_size, linewidth=line_width, markeredgecolor=COLORS["ink"], label="QuNoC fidelity"),
+        Patch(facecolor=baseline_colors["mech"], edgecolor=COLORS["ink"], label="MECH duration"),
+        Patch(facecolor=baseline_colors["sensate"], edgecolor=COLORS["ink"], label="QuNoC duration"),
+    ]
+    routing_handles = [
+        Line2D(
+            [0],
+            [0],
+            color=SERIES_COLOR[quantum_program],
+            marker=SERIES_MARKER[quantum_program],
+            markersize=marker_size,
+            linewidth=line_width,
+            markeredgecolor=COLORS["ink"],
+            label=DISPLAY_NAME[quantum_program],
+        )
+        for quantum_program in QUANTUM_PROGRAMS
+    ]
+    fig.legend(
+        handles=package_handles,
+        labels=[handle.get_label() for handle in package_handles],
+        fontsize=style["legend_fontsize"],
+        frameon=True,
+        edgecolor=COLORS["ink"],
+        facecolor=COLORS["surface"],
+        fancybox=False,
+        **style["package_shape_legend"],
+    )
+    fig.legend(
+        handles=routing_handles,
+        labels=[handle.get_label() for handle in routing_handles],
+        fontsize=style["legend_fontsize"],
+        frameon=True,
+        edgecolor=COLORS["ink"],
+        facecolor=COLORS["surface"],
+        fancybox=False,
+        **style["routing_legend"],
+    )
+    fig.subplots_adjust(**style["subplot_adjust"])
+    save_figure(fig, out_dir, "combined_scalability", formats)
+
+
 def plot_ablation(root: Path, evaluate_dir: Path, eval_result_dir: Path, out_dir: Path, formats: list[str], quantum_program: str) -> None:
+    style = ABLATION_STYLE
     ablation = load_ablation(evaluate_dir, eval_result_dir, quantum_program)
     qunoc_ops = load_routing_package_size(eval_result_dir)
     qunoc_ops = qunoc_ops[qunoc_ops["QuantumProgram"] == quantum_program]
     qunoc_ops = last_by(qunoc_ops, ["PackageSize"])
     mech_ops = load_mech_operation_json(root, quantum_program)
 
-    fig, (ablation_ax, operation_ax) = plt.subplots(1, 2, figsize=(14, 6.2))
+    fig, (ablation_ax, operation_ax) = plt.subplots(1, 2, figsize=style["figsize"])
     x = np.arange(len(PACKAGE_SIZES))
+    title_fontsize = style["title_fontsize"]
+    label_fontsize = style["label_fontsize"]
+    tick_fontsize = style["tick_fontsize"]
+    marker_size = style["marker_size"]
+    line_width = style["line_width"]
 
     # (a) Match the package-shape pattern: duration bars on the left axis and
     # fidelity lines on the right axis.
     fidelity_ax = ablation_ax.twinx()
-    width = 0.18
+    width = style["routing_bar_width"]
     ablation_duration_handles = []
     ablation_fidelity_handles = []
     ablation_labels = []
@@ -1243,35 +1625,37 @@ def plot_ablation(root: Path, evaluate_dir: Path, eval_result_dir: Path, out_dir
             fidelity,
             color=SERIES_COLOR[strategy],
             marker=SERIES_MARKER[strategy],
-            markersize=9,
+            markersize=marker_size,
             markeredgecolor="black",
             markeredgewidth=0.5,
-            linewidth=2,
+            linewidth=line_width,
         )[0]
         ablation_duration_handles.append(bars)
         ablation_fidelity_handles.append(line)
         ablation_labels.append(DISPLAY_NAME[strategy])
 
-    ablation_ax.set_title("(a) Routing-method ablation")
-    ablation_ax.set_xlabel("Package side length")
-    ablation_ax.set_ylabel("Circuit duration (ms)")
-    fidelity_ax.set_ylabel("Average logical-gate fidelity")
+    ablation_ax.set_title("(a) Routing-method ablation", fontsize=title_fontsize)
+    ablation_ax.set_xlabel("Package side length", fontsize=label_fontsize)
+    ablation_ax.set_ylabel("Circuit duration (ms)", fontsize=label_fontsize)
+    fidelity_ax.set_ylabel("Average logical-gate fidelity", fontsize=label_fontsize)
     ablation_ax.set_xticks(x)
-    ablation_ax.set_xticklabels(PACKAGE_SIZES)
-    ablation_ax.set_yscale("log")
-    fidelity_ax.set_ylim(0, 1.02)
+    ablation_ax.set_xticklabels(PACKAGE_SIZES, fontsize=tick_fontsize)
+    ablation_ax.set_yscale(style["y_scales"]["routing_duration"])
+    _set_ylim_from_config(ablation_ax, style["y_limits"]["routing_duration"])
+    _set_ylim_from_config(fidelity_ax, style["y_limits"]["routing_fidelity"])
     style_axis(ablation_ax)
+    ablation_ax.tick_params(axis="both", labelsize=tick_fontsize)
     fidelity_ax.grid(False)
     fidelity_ax.spines["top"].set_visible(True)
     fidelity_ax.spines["right"].set_color(COLORS["ink"])
-    fidelity_ax.tick_params(axis="both", colors=COLORS["ink"])
+    fidelity_ax.tick_params(axis="both", colors=COLORS["ink"], labelsize=tick_fontsize)
     line_handle = Line2D(
         [0],
         [0],
         color=COLORS["ink"],
         marker="o",
-        markersize=8,
-        linewidth=2,
+        markersize=style["legend_marker_size"],
+        linewidth=line_width,
         label="Line: avg. fidelity",
     )
     bar_handle = Patch(
@@ -1282,21 +1666,18 @@ def plot_ablation(root: Path, evaluate_dir: Path, eval_result_dir: Path, out_dir
     ablation_ax.legend(
         ablation_fidelity_handles + [line_handle, bar_handle],
         ablation_labels + ["Line: avg. fidelity", "Bar: circuit duration"],
-        ncol=2,
-        loc="upper center",
-        bbox_to_anchor=(0.5, 1.36),
+        fontsize=style["legend_fontsize"],
         frameon=True,
         edgecolor=COLORS["ink"],
         facecolor=COLORS["surface"],
         fancybox=False,
-        columnspacing=0.9,
-        handlelength=1.3,
+        **style["routing_legend"],
     )
 
     # (b) Two-qubit-gate counts share the left log axis; EQST distance is a
     # line on the right log axis.
     ax = operation_ax
-    width = 0.18
+    width = style["operation_bar_width"]
     mech_intra = pd.to_numeric(mech_ops["OnChip"], errors="coerce").to_numpy(dtype=float)
     mech_inter = pd.to_numeric(mech_ops["CrossChip"], errors="coerce").to_numpy(dtype=float)
     qunoc_intra = pd.to_numeric(qunoc_ops.sort_values("PackageSize")["IntraGate"], errors="coerce").to_numpy(dtype=float)
@@ -1321,43 +1702,43 @@ def plot_ablation(root: Path, evaluate_dir: Path, eval_result_dir: Path, out_dir
         qst,
         color=COLORS["khaki"],
         marker="D",
-        markersize=9,
+        markersize=marker_size,
         markeredgecolor="black",
         markeredgewidth=0.5,
-        linewidth=2,
+        linewidth=line_width,
         label="QuNoC: EQST distance",
     )[0]
 
-    ax.set_title(f"(b) Hardware-operation decomposition ({DISPLAY_NAME.get(quantum_program, quantum_program.upper())})")
-    ax.set_xlabel("Package side length")
-    ax.set_ylabel("Number of two-qubit operations")
-    qst_ax.set_ylabel("Total EQST distance")
+    ax.set_title(f"(b) Hardware-operation decomposition ({DISPLAY_NAME.get(quantum_program, quantum_program.upper())})", fontsize=title_fontsize)
+    ax.set_xlabel("Package side length", fontsize=label_fontsize)
+    ax.set_ylabel("Number of two-qubit operations", fontsize=label_fontsize)
+    qst_ax.set_ylabel("Total EQST distance", fontsize=label_fontsize)
     ax.set_xticks(x)
-    ax.set_xticklabels(PACKAGE_SIZES)
-    ax.set_yscale("log")
-    qst_ax.set_yscale("log")
+    ax.set_xticklabels(PACKAGE_SIZES, fontsize=tick_fontsize)
+    ax.set_yscale(style["y_scales"]["operation_counts"])
+    qst_ax.set_yscale(style["y_scales"]["qst_distance"])
+    _set_ylim_from_config(ax, style["y_limits"]["operation_counts"])
+    _set_ylim_from_config(qst_ax, style["y_limits"]["qst_distance"])
     style_axis(ax)
+    ax.tick_params(axis="both", labelsize=tick_fontsize)
     qst_ax.grid(False)
     qst_ax.spines["top"].set_visible(True)
     qst_ax.spines["right"].set_color(COLORS["ink"])
-    qst_ax.tick_params(axis="both", colors=COLORS["ink"])
+    qst_ax.tick_params(axis="both", colors=COLORS["ink"], labelsize=tick_fontsize)
     plot_nan_hint(ax, [*mech_intra, *mech_inter, *qunoc_intra, *qunoc_inter, *qst])
 
     operation_handles, operation_labels = ax.get_legend_handles_labels()
     ax.legend(
         operation_handles + [qst_line],
         operation_labels + ["QuNoC: EQST distance"],
-        ncol=3,
-        loc="upper center",
-        bbox_to_anchor=(0.5, 1.32),
+        fontsize=style["legend_fontsize"],
         frameon=True,
         edgecolor=COLORS["ink"],
         facecolor=COLORS["surface"],
         fancybox=False,
-        columnspacing=0.55,
-        handlelength=1.3,
+        **style["operation_legend"],
     )
-    fig.subplots_adjust(left=0.075, right=0.925, bottom=0.14, top=0.70, wspace=0.55)
+    fig.subplots_adjust(**style["subplot_adjust"])
     save_figure(fig, out_dir, f"ablation_{quantum_program}", formats)
 
 
@@ -1368,7 +1749,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate evaluation figures from existing CSV/JSON results.")
     parser.add_argument("--root", type=Path, default=default_root, help="Repository root directory.")
     parser.add_argument("--output-dir", type=Path, default=None, help="Figure output directory. Default: evaluate/figure.")
-    parser.add_argument("--formats", nargs="+", default=["pdf", "svg"], help="Output formats, e.g. pdf svg png.")
+    parser.add_argument("--formats", nargs="+", default=["pdf", "svg", "png"], help="Output formats, e.g. pdf svg png.")
     parser.add_argument("--ablation-quantum-program", choices=QUANTUM_PROGRAMS, default="qaoa", help="Quantum program used for ablation operation decomposition.")
     parser.add_argument("--skip-csv", action="store_true", help="Do not export per-figure CSV data tables.")
     parser.add_argument("--only-csv", action="store_true", help="Export per-figure CSV data tables without rendering figures.")
@@ -1398,6 +1779,7 @@ def main() -> None:
         plot_layout_scalability(eval_result_dir, out_dir, args.formats)
         plot_package_shape_scalability(root, eval_result_dir, out_dir, args.formats)
         plot_scalability(root, eval_result_dir, out_dir, args.formats)
+        plot_combined_scalability(root, eval_result_dir, out_dir, args.formats)
         plot_ablation(root, evaluate_dir, eval_result_dir, out_dir, args.formats, args.ablation_quantum_program)
 
     if not args.only_csv:
