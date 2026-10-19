@@ -35,7 +35,8 @@ defaults:
     qaoa:
       # A cycle graph is a valid QAOA problem instance with locality and depth
       # characteristics that fit the QuNoC teleportation routing flow.
-      problem_graph: cycle
+      problem_graph: QAOAcycle
+      seed: 52
       order_strategy: control_grouped
 
 experiments:

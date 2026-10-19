@@ -43,9 +43,9 @@ def QFT(data_qubit_num):
 def QAOA(
     data_qubit_num,
     percentage=0.5,
-    problem_graph="random_complete_sample",
-    order_strategy="as_sampled",
-    seed=None,
+    problem_graph="QAOAcycle",
+    order_strategy="control_grouped",
+    seed=52,
 ):
     gate_num = int(data_qubit_num * (data_qubit_num - 1) / 2 * percentage)
     rng = stdlib_random.Random(seed) if seed is not None else stdlib_random
@@ -57,6 +57,15 @@ def QAOA(
         gates = list(rng.sample(all_possible_gates, k=gate_num))
     elif problem_graph in {"cycle", "ring"}:
         gates = [(i, (i + 1) % data_qubit_num) for i in range(data_qubit_num)]
+    elif problem_graph == "QAOAcycle":
+        centers = data_qubit_num // 4
+        gates = [(i, (i + 1) % centers) for i in range(centers)]
+        leaves = list(range(centers, data_qubit_num))
+        rng.shuffle(leaves)
+        gates.extend((i, leaves[i]) for i in range(centers))
+        gates.extend(
+            (rng.randrange(centers), leaf) for leaf in leaves[centers:]
+        )
     else:
         raise ValueError(f"Unknown QAOA problem graph: {problem_graph}")
 

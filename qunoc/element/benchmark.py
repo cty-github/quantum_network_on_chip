@@ -316,6 +316,17 @@ def qaoa(
         control_gates = rng.sample(all_possible_gates, k=gate_num)
     elif problem_graph in {"cycle", "ring"}:
         control_gates = [(i, (i + 1) % data_qubit_num) for i in range(data_qubit_num)]
+    elif problem_graph == "QAOAcycle":
+        centers = data_qubit_num // 4
+        control_gates = [(i, (i + 1) % centers) for i in range(centers)]
+        leaves = list(range(centers, data_qubit_num))
+        rng.shuffle(leaves)
+
+        control_gates.extend((i, leaves[i]) for i in range(centers))
+        control_gates.extend(
+            (rng.randrange(centers), leaf)
+            for leaf in leaves[centers:]
+        )
     else:
         raise ValueError(f"Unknown QAOA problem graph: {problem_graph}")
 
