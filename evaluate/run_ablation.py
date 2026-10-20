@@ -72,6 +72,12 @@ try:
         Transport,
     )
     from qunoc.routing.router import Router
+    from qunoc.routing.fidelity import normalized_gate_fidelity, probability_cost
+    from evaluate.test_routing_scalability import (
+        EQST_CSV_FIELDS,
+        _copy_package_eqst_config,
+        _package_evaluation_signature,
+    )
 except ModuleNotFoundError as error:
     raise SystemExit(
         f"Missing Python dependency {error.name!r}. Activate the project's Python "
@@ -79,7 +85,7 @@ except ModuleNotFoundError as error:
     ) from error
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DEFAULT_SIZES = [40, 60, 80, 100, 120]
 QUANTUM_PROGRAMS = ["vqe", "qaoa", "bv", "s_ghz"]
 STRATEGIES = ["mech_eqst", "qunoc_wo_opt"]
@@ -115,9 +121,11 @@ ROW_FIELDS = [
     "MeasNum",
     "TotalFide",
 ]
+PRE_EQST_ROW_FIELDS = ROW_FIELDS.copy()
 LEGACY_ROW_FIELDS = [
-    "Algorithm" if field == "QuantumProgram" else field for field in ROW_FIELDS
+    "Algorithm" if field == "QuantumProgram" else field for field in PRE_EQST_ROW_FIELDS
 ]
+ROW_FIELDS += EQST_CSV_FIELDS
 
 
 def _unique(values: Iterable[Any]) -> list[Any]:
@@ -207,25 +215,30 @@ def _logic_gate_fidelity(
     inter_gate_num: int,
     qst_distance: int,
 ) -> float:
-    if logic_gate_num <= 0:
-        raise ValueError("Cannot normalize fidelity for a circuit without logic gates.")
-    return float(
-        package.fab_model.get_intra_fide(package.fab_model.max_length)
-        ** (intra_gate_num / logic_gate_num)
-        * package.fab_model.inter_fide ** (inter_gate_num / logic_gate_num)
-        * package.fab_model.enhanced_fide ** (qst_distance / logic_gate_num)
+    """Return normalized legacy dummy fidelity from physical counts and raw distance.
+
+    输入 package、逻辑门数及物理计数；输出稳定的 legacy 平均门保真度，不使用 Hamiltonian 成本。
+    """
+    return normalized_gate_fidelity(
+        intra_gate_num,
+        inter_gate_num,
+        probability_cost(package.fab_model.enhanced_fide, qst_distance),
+        logic_gate_num,
+        package.fab_model.get_intra_fide(package.fab_model.max_length),
+        package.fab_model.inter_fide,
     )
 
 
-def _statistic_dummy_route_results(
-    router: Router,
-) -> tuple[int, int, int, int, float]:
-    """Count physical operations in a dummy circuit using full-route semantics."""
+def _statistic_dummy_route_details(router: Router) -> dict[str, Any]:
+    """Return dummy legacy metrics with three gates per SWAP and additive errors.
+
+    输入 dummy router；输出 raw-distance legacy 统计，保留每次 SWAP 三门计数和稳定负对数误差。
+    """
     intra_gate_num = 0
     inter_gate_num = 0
     qst_distance = 0
     meas_num = 0
-    total_fidelity = 1.0
+    total_neglog_fidelity = 0.0
 
     for action_id in router.dummy_circuit.action_depend_graph:
         if action_id == -1:
@@ -239,14 +252,16 @@ def _statistic_dummy_route_results(
                     intra_gate_num += 1
                 else:
                     inter_gate_num += 1
-                total_fidelity *= router.package.get_coupler_fide(balise, parent)
+                total_neglog_fidelity += probability_cost(
+                    router.package.get_coupler_fide(balise, parent)
+                )
         elif isinstance(action, (Board, Alight, Interchange)):
             inter_gate_num += 3
-            total_fidelity *= router.package.fab_model.inter_fide**3
+            total_neglog_fidelity += probability_cost(router.package.fab_model.inter_fide, 3)
         elif isinstance(action, Transport):
             qst_distance += action.get_distance()
-            total_fidelity *= (
-                router.package.fab_model.enhanced_fide ** action.get_distance()
+            total_neglog_fidelity += probability_cost(
+                router.package.fab_model.enhanced_fide, action.get_distance()
             )
         elif isinstance(action, Teleport):
             if action.inter_flag:
@@ -254,9 +269,9 @@ def _statistic_dummy_route_results(
             else:
                 intra_gate_num += 1
             meas_num += 1
-            total_fidelity *= router.package.get_coupler_fide(
+            total_neglog_fidelity += probability_cost(router.package.get_coupler_fide(
                 action.ancilla_node, action.data_node
-            )
+            ))
         elif isinstance(action, (Enter, Exit, SwapGate)):
             if action.inter_flag:
                 inter_gate_num += 3
@@ -266,23 +281,43 @@ def _statistic_dummy_route_results(
                 qubit_u, qubit_v = action.platform, action.register
             else:
                 qubit_u, qubit_v = action.qubit_u, action.qubit_v
-            total_fidelity *= router.package.get_coupler_fide(qubit_u, qubit_v) ** 3
+            total_neglog_fidelity += probability_cost(
+                router.package.get_coupler_fide(qubit_u, qubit_v), 3
+            )
         elif isinstance(action, DirectGate):
             if action.inter_flag:
                 inter_gate_num += 1
             else:
                 intra_gate_num += 1
-            total_fidelity *= router.package.get_coupler_fide(
+            total_neglog_fidelity += probability_cost(router.package.get_coupler_fide(
                 action.phy_ctrl_qubit, action.phy_targ_qubit
-            )
+            ))
 
-    return (
-        intra_gate_num,
-        inter_gate_num,
-        qst_distance,
-        meas_num,
-        float(total_fidelity),
-    )
+    return {
+        "intra_gate": intra_gate_num,
+        "inter_gate": inter_gate_num,
+        "qst_dist": qst_distance,
+        "meas_num": meas_num,
+        "total_fide": math.exp(-total_neglog_fidelity),
+        "qst_effective_dist": float(qst_distance),
+        "qst_neglog_fidelity": probability_cost(router.package.fab_model.enhanced_fide, qst_distance),
+        "total_neglog_fidelity": total_neglog_fidelity,
+        "eqst_model": "legacy",
+        "eqst_accounting_policy": "dummy_raw_distance_three_gate_swap_v1",
+        "eqst_config": router.package.op_config.get_eqst_config(),
+        "eqst_batch_count": None,
+    }
+
+
+def _statistic_dummy_route_results(router: Router) -> tuple[int, int, int, int, float]:
+    """Return the compatibility five-tuple from a dummy router's legacy details.
+
+    输入 dummy router；输出历史五元组，保留每次 SWAP 三门和原始距离语义。
+    """
+    details = _statistic_dummy_route_details(router)
+    return tuple(details[name] for name in (
+        "intra_gate", "inter_gate", "qst_dist", "meas_num", "total_fide"
+    ))
 
 
 def _layout_path(args: argparse.Namespace, size: int) -> Path:
@@ -337,6 +372,7 @@ def _run_qunoc(
     package_path = _layout_path(args, size).resolve()
     package = Package.from_pickle(filepath=str(package_path))
     _validate_package(package, package_path, size, args)
+    _copy_package_eqst_config(package, force_legacy=True)
 
     _seed_everything(args.seed)
     program = get_program(
@@ -361,13 +397,12 @@ def _run_qunoc(
         gate_order_strategy="as_is",
     )
     circuit = router.dummy_route_program_on_package(args.mapping_strategy)
-    stats = _statistic_dummy_route_results(router)
+    details = _statistic_dummy_route_details(router)
     duration_ns = router.estimate_dummy_circuit_duration()
 
     if args.save_circuits:
         circuit.to_pickle(str(case_dir / "qunoc_wo_opt_circuit.pkl"))
 
-    intra_gate_num, inter_gate_num, qst_distance, meas_num, total_fidelity = stats
     mapping = _mapping_entries(router.init_l2p_map)
     return {
         "data_qubit_num": data_qubits,
@@ -376,15 +411,11 @@ def _run_qunoc(
         "gate_fidelity": _logic_gate_fidelity(
             package,
             benchmark["logic_gate_num"],
-            int(intra_gate_num),
-            int(inter_gate_num),
-            int(qst_distance),
+            details["intra_gate"],
+            details["inter_gate"],
+            details["qst_dist"],
         ),
-        "intra_gate": int(intra_gate_num),
-        "inter_gate": int(inter_gate_num),
-        "qst_dist": int(qst_distance),
-        "meas_num": int(meas_num),
-        "total_fide": float(total_fidelity),
+        **details,
         "initial_mapping": mapping,
         "initial_mapping_hash": _sha256_json(mapping),
         "layout_package_path": str(package_path),
@@ -458,6 +489,14 @@ def _run_mech(
         "qst_dist": int(result.get("eqst_dist", 0)),
         "meas_num": int(result.get("meas_num", 0)),
         "total_fide": None,
+        "qst_effective_dist": float(result.get("eqst_dist", 0)),
+        "qst_neglog_fidelity": probability_cost(model.enhanced_fide, result.get("eqst_dist", 0)),
+        # MECH exposes normalized counts, not an exact staged circuit fidelity.
+        "total_neglog_fidelity": None,
+        "eqst_model": "legacy",
+        "eqst_accounting_policy": "mech_eqst_raw_distance_v1",
+        "eqst_config": None,
+        "eqst_batch_count": None,
         "initial_mapping": None,
         "initial_mapping_hash": None,
         "layout_package_path": None,
@@ -520,22 +559,32 @@ def _signature(
         "inter_sparsity": args.inter_sparsity,
         "inter_fidelity": args.inter_fidelity,
         "chiplet_length": args.chiplet_length,
+        "eqst_model": "legacy",
     }
     if strategy in QUNOC_STRATEGIES:
         path = _layout_path(args, size).resolve()
-        stat = path.stat()
+        package = Package.from_pickle(filepath=str(path))
+        _copy_package_eqst_config(package, force_legacy=True)
         signature.update(
             {
+                **_package_evaluation_signature(package, path),
                 "layout_strategy": args.layout_strategy,
-                "layout_package_path": str(path),
-                "layout_package_size_bytes": stat.st_size,
-                "layout_package_mtime_ns": stat.st_mtime_ns,
                 "mapping_strategy": args.mapping_strategy,
                 "dummy_statistics": "aligned_physical_gate_counts_v1",
+                "eqst_accounting_policy": "dummy_raw_distance_three_gate_swap_v1",
             }
         )
     if strategy == "mech_eqst":
-        signature["mech_eqst_basic_time_ns"] = args.mech_eqst_basic_time_ns
+        model = comparison_fab_model(
+            geometry=args.geometry, inter_sparsity=args.inter_sparsity,
+            inter_fide=args.inter_fidelity,
+        )
+        signature.update({
+            "mech_eqst_basic_time_ns": args.mech_eqst_basic_time_ns,
+            "eqst_accounting_policy": "mech_eqst_raw_distance_v1",
+            "enhanced_fide": float(model.enhanced_fide),
+            "normalized_intra_fide": float(model.get_intra_fide(model.max_length)),
+        })
     return signature
 
 
@@ -589,6 +638,10 @@ def _result_row(result: dict[str, Any]) -> dict[str, Any]:
         "QSTDist": int(result["qst_dist"]),
         "MeasNum": int(result["meas_num"]),
         "TotalFide": result.get("total_fide"),
+        "QSTEffectiveDist": result.get("qst_effective_dist"),
+        "QSTNegLogFidelity": result.get("qst_neglog_fidelity"),
+        "TotalNegLogFidelity": result.get("total_neglog_fidelity"),
+        "EQSTModel": result.get("eqst_model", "legacy"),
     }
 
 
@@ -609,7 +662,7 @@ def _load_existing_rows(
         reader = csv.DictReader(file)
         if reader.fieldnames == ROW_FIELDS:
             migrated = False
-        elif reader.fieldnames == LEGACY_ROW_FIELDS:
+        elif reader.fieldnames in (PRE_EQST_ROW_FIELDS, LEGACY_ROW_FIELDS):
             migrated = True
         elif reader.fieldnames is not None and {
             "PackageSize",
@@ -648,6 +701,11 @@ def _load_existing_rows(
                 row = {field: source_row.get(field, "") for field in ROW_FIELDS}
                 if not row.get("QuantumProgram"):
                     row["QuantumProgram"] = source_row.get("Algorithm", "")
+            if migrated:
+                # Historical ablation rows used raw-distance legacy accounting.
+                # Do not manufacture negative-log metrics from underflowed totals.
+                row["EQSTModel"] = "legacy"
+                row["QSTEffectiveDist"] = row.get("QSTDist", "")
             rows[_row_key(row)] = row
         return rows, migrated
 
@@ -714,6 +772,13 @@ def _validate_cross_strategy_results(
 
 
 def _preflight(args: argparse.Namespace) -> None:
+    if getattr(args, "eqst_model", "legacy") != "legacy":
+        raise ValueError(
+            "Ablation strategies mech_eqst and qunoc_wo_opt use legacy accounting: "
+            "their MECH/dummy circuits do not provide staged Hamiltonian batches. "
+            "Use evaluate/test_routing_scalability.py --eqst-model hamiltonian "
+            "for full QuNoC routing."
+        )
     if any(size <= 0 for size in args.sizes):
         raise ValueError("Package sizes must be positive integers.")
     if args.chiplet_length <= 0:
@@ -764,6 +829,10 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--strategies", nargs="+", choices=STRATEGIES, default=STRATEGIES
+    )
+    parser.add_argument(
+        "--eqst-model", choices=["legacy", "hamiltonian"], default="legacy",
+        help="Ablation uses legacy accounting; Hamiltonian is rejected (use full routing scalability).",
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(

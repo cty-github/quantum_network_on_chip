@@ -4,7 +4,7 @@ from copy import deepcopy
 
 from ..utils.config import config
 from ..element.benchmark import *
-from ..element.chiplet import OperationConfig
+from ..element.chiplet import OperationConfig, TransferChiplet
 from ..element.package import Package
 
 
@@ -981,6 +981,8 @@ class RidingStage(CircuitStage):
         self.paired_registers_to_free = set()
 
         self.locked_balises: set[tuple[int, int]] = set()
+        # Stage-owned operands survive shared actions / 阶段独立记录真实 SWAP 操作数.
+        self.swap_logical_ids: dict[int, tuple[int, int]] = {}
 
     def add_action_immediate(self, action: CircuitAction) -> bool:
         if isinstance(action, BoardingAction):
@@ -1145,6 +1147,9 @@ class RidingStage(CircuitStage):
 
         logic_qubit_u = self.curr_p2l_map[action.qubit_u]
         logic_qubit_v = self.curr_p2l_map[action.qubit_v]
+        if not hasattr(self, "swap_logical_ids"):
+            self.swap_logical_ids = {}
+        self.swap_logical_ids[action.id] = (logic_qubit_u, logic_qubit_v)
         self.curr_p2l_map[action.qubit_u] = logic_qubit_v
         self.curr_p2l_map[action.qubit_v] = logic_qubit_u
         if logic_qubit_u != -1:
@@ -1409,6 +1414,7 @@ class Circuit:
         self.init_l2p_map = init_l2p_map
         self.init_p2l_map = init_p2l_map
         self.action_depend_graph = action_depend_graph
+        self.routing_mode = "immediate" if action_depend_graph is None else "concurrent"
         self.op_config = op_config
         
         self.stages: list[CircuitStage] = [] # only use extend_stage to add new stage
@@ -1517,13 +1523,290 @@ class Circuit:
         elif isinstance(action, DirectGate):
             return self.op_config.inter_time if action.inter_flag else self.op_config.intra_time
 
-    def estimate_duration(self, package: Package = None) -> float:
-        """
-        Estimate the duration of the circuit.
+    def _replay_stage_mappings(self):
+        """Replay finalized history, yielding independent Riding boundary maps.
+        重放最终动作历史，输出独立的 Riding 阶段边界映射，不读取阶段共享映射。
 
-        Returns:
-            float: The estimated duration of the circuit in nanoseconds.
+        Inputs / 输入: initial map and stored stage/action order / 初始映射及最终动作顺序.
+        Yields / 输出: (stage index, start l2p, end l2p) / 阶段索引及始末逻辑映射.
+        Raises / 异常: ValueError for ambiguous or inconsistent history / 历史歧义或不一致.
         """
+        mode = getattr(self, "routing_mode", None)
+        if mode is None:
+            mode = "immediate" if self.action_depend_graph is None else "concurrent"
+        if mode not in {"immediate", "concurrent"}:
+            raise ValueError(f"Unknown circuit routing mode: {mode!r}")
+        l2p = dict(self.init_l2p_map)
+        residents = {}
+        for logical_id, node in l2p.items():
+            residents.setdefault(node, set()).add(logical_id)
+
+        def validate_boundary(label):
+            """Check unique positions / 检查边界位置唯一性.
+            Input / 输入: boundary label / 边界名. Output / 输出: None; raises on collision / 冲突时抛错.
+            """
+            collisions = {node: sorted(ids) for node, ids in residents.items() if len(ids) > 1}
+            if collisions:
+                raise ValueError(f"EQST history has duplicate logical positions at {label}: {collisions}; recompile the circuit")
+
+        def place(logical_id, node):
+            """Move one known ID / 移动已知逻辑 ID.
+            Inputs / 输入: logical ID and target / 逻辑 ID 与目标. Output / 输出: None; updates replay / 更新重放映射.
+            """
+            if logical_id not in l2p:
+                raise ValueError(f"EQST history references missing logical ID {logical_id}; recompile the circuit")
+            old_node = l2p[logical_id]
+            residents[old_node].remove(logical_id)
+            if not residents[old_node]:
+                del residents[old_node]
+            l2p[logical_id] = node
+            residents.setdefault(node, set()).add(logical_id)
+
+        def occupant(node, action):
+            """Invert one unambiguous endpoint / 反查无歧义端点.
+            Inputs / 输入: node and action / 端点与动作. Output / 输出: resident ID or -1 / 驻留 ID 或 -1.
+            """
+            ids = residents.get(node, set())
+            if len(ids) > 1:
+                raise ValueError(
+                    f"Ambiguous SwapGate {action.id} at {node}: missing stage-owned pre-swap logical IDs; "
+                    "recompile the circuit"
+                )
+            return next(iter(ids), -1)
+
+        validate_boundary("initial mapping")
+        for stage_index, stage in enumerate(self.stages):
+            before = dict(l2p) if isinstance(stage, RidingStage) else None
+            for action in stage.circuit_actions:
+                if isinstance(action, GhzPreparation):
+                    if len(action.ancilla_qubits) != len(action.source_physical_qubits):
+                        raise ValueError(f"Invalid GHZ operands in action {action.id}; recompile the circuit")
+                    for logical_id, node in zip(action.ancilla_qubits, action.source_physical_qubits):
+                        if logical_id in l2p:
+                            raise ValueError(f"GHZ action {action.id} recreates live logical ID {logical_id}")
+                        if mode == "immediate" and residents.get(node):
+                            raise ValueError(f"GHZ action {action.id} overwrites occupied node {node}")
+                        l2p[logical_id] = node
+                        residents.setdefault(node, set()).add(logical_id)
+                    continue
+                if isinstance(action, Teleport):
+                    if action.ancilla_qubit not in l2p:
+                        raise ValueError(f"Teleport {action.id} releases missing ancilla {action.ancilla_qubit}")
+                    node = l2p.pop(action.ancilla_qubit)
+                    residents[node].remove(action.ancilla_qubit)
+                    if not residents[node]:
+                        del residents[node]
+                    continue
+                if isinstance(action, DirectGate):
+                    continue
+                if isinstance(action, SwapGate):
+                    pair = getattr(stage, "swap_logical_ids", {}).get(action.id) if mode == "concurrent" else None
+                    if pair is None:
+                        if mode == "concurrent" and any(len(ids) > 1 for ids in residents.values()):
+                            raise ValueError(
+                                f"Ambiguous SwapGate {action.id}: missing stage-owned pre-swap logical IDs "
+                                "while concurrent positions overlap; recompile the circuit"
+                            )
+                        pair = (occupant(action.qubit_u, action), occupant(action.qubit_v, action))
+                        if pair[0] != action.logic_qubit:
+                            raise ValueError(
+                                f"Ambiguous SwapGate {action.id}: cannot infer pre-swap logical IDs; recompile the circuit"
+                            )
+                    if len(pair) != 2 or pair[0] != action.logic_qubit or (pair[0] != -1 and pair[0] == pair[1]):
+                        raise ValueError(f"Invalid pre-swap logical IDs for SwapGate {action.id}; recompile the circuit")
+                    if pair[0] != -1:
+                        place(pair[0], action.qubit_v)
+                    if pair[1] != -1:
+                        place(pair[1], action.qubit_u)
+                    continue
+                if isinstance(action, Transport):
+                    source, target = action.source_physical_qubit, action.target_physical_qubit
+                elif isinstance(action, Board):
+                    source, target = action.platform, action.station
+                elif isinstance(action, Alight):
+                    source, target = action.station, action.platform
+                elif isinstance(action, Interchange):
+                    source, target = action.interchange
+                elif isinstance(action, Enter):
+                    source, target = action.register, action.platform
+                elif isinstance(action, Exit):
+                    source, target = action.platform, action.register
+                else:
+                    raise ValueError(f"Unsupported EQST history action: {type(action).__name__}")
+                if mode == "immediate":
+                    if l2p.get(action.logic_qubit) != source:
+                        raise ValueError(
+                            f"EQST history action {action.id} source disagrees with logical ID {action.logic_qubit}; "
+                            "recompile the circuit"
+                        )
+                    exchanged = occupant(target, action)
+                    place(action.logic_qubit, target)
+                    if exchanged != -1 and exchanged != action.logic_qubit:
+                        place(exchanged, source)
+                else:
+                    # Directed concurrent requests are not consecutive endpoint swaps.
+                    # 并发请求按逻辑 ID 更新，允许同阶段尚未配对的临时位置重叠。
+                    place(action.logic_qubit, target)
+            validate_boundary(f"stage {stage_index}")
+            if before is not None:
+                yield stage_index, before, dict(l2p)
+        if l2p != self.curr_l2p_map:
+            raise ValueError("Final EQST replay disagrees with Circuit.curr_l2p_map; recompile the circuit")
+        expected_p2l = {node: logical_id for logical_id, node in l2p.items()}
+        actual_p2l = {node: logical_id for node, logical_id in self.curr_p2l_map.items() if logical_id != -1}
+        if expected_p2l != actual_p2l:
+            raise ValueError(
+                "Final EQST replay disagrees with Circuit.curr_p2l_map; historical physical-map maintenance "
+                "may be missing; recompile the circuit"
+            )
+
+    def estimate_eqst_batches(self, package: Package) -> list[dict]:
+        """Estimate each Riding/die net map once, paired by every resident logical ID.
+        按阶段与传输裸片估计净映射；所有驻留逻辑 ID（含静止态）一一配对。
+
+        Args / 输入: package supplies actual chiplets and full chain geometry / 封装提供裸片与完整链几何.
+        Returns / 输出: batch dictionaries with frozen boundary tuples, time and distance / 批次边界、时间及等效距离.
+        This is net-map resynthesis, not a replay of physical trajectories / 本结果为净映射重合成成本.
+        """
+        if package is None:
+            raise ValueError("Hamiltonian EQST estimation requires a package")
+        settings = self.op_config.get_eqst_config()
+        node_dies = {}
+
+        def die_at(node):
+            """Resolve a physical die within this call / 本次调用内查询节点裸片.
+            Input / 输入: physical node / 物理节点. Output / 输出: owning chiplet / 所属裸片.
+            """
+            if node not in node_dies:
+                node_dies[node] = package.get_node_chiplet(node)
+            return node_dies[node]
+
+        def by_die(mapping):
+            """Group logical positions by actual die / 按实际裸片分组逻辑位置.
+            Input / 输入: l2p map / 逻辑映射. Output / 输出: die-local position dictionaries / 裸片局部位置字典.
+            """
+            result = {}
+            for logical_id, node in mapping.items():
+                die = die_at(node)
+                if isinstance(die, TransferChiplet):
+                    if not die.has_node(node):
+                        raise ValueError(f"Physical node {node} is outside its transfer die {die}")
+                    result.setdefault(die, {})[logical_id] = node[die.axis] - die.start
+            return result
+
+        batches = []
+        for stage_index, before, after in self._replay_stage_mappings():
+            starts, ends = by_die(before), by_die(after)
+            transports = {}
+            for action in self.stages[stage_index].circuit_actions:
+                if isinstance(action, Transport):
+                    die = die_at(action.source_physical_qubit)
+                    if not isinstance(die, TransferChiplet) or die_at(action.target_physical_qubit) is not die:
+                        raise ValueError(f"Transport {action.id} must stay within one TransferChiplet; use Interchange between dies")
+                    transports.setdefault(die, []).append(action.id)
+            dies = starts.keys() | ends.keys() | transports.keys()
+            for die in sorted(dies, key=lambda item: (item.axis, item.pos, item.start, item.end)):
+                start_positions, end_positions = starts.get(die, {}), ends.get(die, {})
+                if start_positions.keys() != end_positions.keys():
+                    raise ValueError(
+                        f"Riding stage {stage_index} changes resident logical IDs on {die}; "
+                        "die entry/exit belongs in a BoardingStage"
+                    )
+                logical_ids = tuple(sorted(start_positions))
+                batches.append({
+                    "stage_index": stage_index,
+                    "die": (die.axis, die.pos, die.start, die.end),
+                    "logical_ids": logical_ids,
+                    "sources": tuple(start_positions[q] for q in logical_ids),
+                    "targets": tuple(end_positions[q] for q in logical_ids),
+                    "chain_length": die.end - die.start + 1,
+                    "transport_action_ids": tuple(transports.get(die, ())),
+                })
+        # Exhaust replay (including final-map checks) before invoking any planner.
+        # 完整验证重放终态后再调用规划器；不按可变 Circuit 身份缓存。
+        from ..hamiltonian import estimate_transfer
+        for batch in batches:
+            result = estimate_transfer(
+                batch["sources"], batch["targets"], chain_length=batch["chain_length"],
+                reference_time_ns=settings["reference_time_ns"],
+                reference_distance=settings["reference_distance"], g_max=settings["g_max"],
+                max_segment_steps=settings["max_segment_steps"], beam_width=settings["beam_width"],
+                ordered=True,
+            )
+            batch["transfer_time_ns"] = result["transfer_time_ns"]
+            batch["effective_distance_edges"] = result["effective_distance_edges"]
+        return batches
+
+    def _estimate_hamiltonian_duration(self, package: Package, eqst_batches=None) -> float:
+        """Contract same-die Transport nodes while preserving all external dependencies.
+        收缩同裸片 Transport 节点并保留外部依赖；内部旧传输腿不重复计时。
+
+        Inputs / 输入: package and optional freshly computed batches / 封装及可选本次批次.
+        Returns / 输出: sum of stage critical paths in ns / 阶段关键路径之和(ns).
+        Raises / 异常: ValueError if contraction hides an observed intermediate state / 收缩掩盖中间态时拒绝.
+        """
+        batches = self.estimate_eqst_batches(package) if eqst_batches is None else eqst_batches
+        by_stage = {}
+        for batch in batches:
+            by_stage.setdefault(batch["stage_index"], []).append(batch)
+        duration = 0.0
+        for stage_index, stage in enumerate(self.stages):
+            actions = {action.id: action for action in stage.circuit_actions}
+            if self.action_depend_graph is not None:
+                original = self.action_depend_graph.subgraph(actions).copy()
+            else:
+                original = stage.get_action_depend_graph()
+                # Keep any explicitly recorded Transport dependencies before contraction.
+                # 收缩前保留已有节点记录中的传输依赖；正常阶段中传输与计算并行。
+                for action_ids in stage.node_action_ids.values():
+                    original.add_edges_from(zip(action_ids, action_ids[1:]))
+            original.add_nodes_from(actions)
+            if not nx.is_directed_acyclic_graph(original):
+                raise ValueError(f"Action dependency graph is cyclic in stage {stage_index}")
+            graph = nx.DiGraph()
+            replacement = {}
+            weights = {}
+            for batch in by_stage.get(stage_index, ()):
+                node = ("eqst", stage_index, tuple(batch["die"]))
+                weights[node] = batch["transfer_time_ns"]
+                for action_id in batch["transport_action_ids"]:
+                    replacement[action_id] = node
+            for action_id, action in actions.items():
+                if isinstance(action, Transport):
+                    if action_id not in replacement:
+                        raise ValueError(f"Missing Hamiltonian batch for Transport {action_id}")
+                else:
+                    replacement[action_id] = action_id
+                    weights[action_id] = self.get_action_duration(action)
+            graph.add_nodes_from(weights)
+            for source, target in original.edges:
+                source, target = replacement[source], replacement[target]
+                if source != target:
+                    graph.add_edge(source, target)
+            if not nx.is_directed_acyclic_graph(graph):
+                raise ValueError(
+                    f"Hamiltonian batch contraction in stage {stage_index} creates a dependency cycle: "
+                    "a non-Transport operation observes an intermediate transfer state; cannot resynthesize one net batch"
+                )
+            depths = dict(weights)
+            for node in nx.topological_sort(graph):
+                for successor in graph.successors(node):
+                    depths[successor] = max(depths[successor], depths[node] + weights[successor])
+            duration += max(depths.values(), default=0.0)
+        return duration
+
+    def estimate_duration(self, package: Package = None, eqst_batches=None) -> float:
+        """
+        Estimate duration using the configured EQST model / 按所选 EQST 模型估计时长.
+
+        Args / 输入:
+            package: Physical package (needed for transfer timing) / 物理封装.
+            eqst_batches: Optional batches freshly computed for the same circuit / 可选本次计算的同电路批次.
+        Returns / 输出:
+            float: The estimated duration in nanoseconds / 估计总时长(ns).
+        """
+        if self.op_config.get_eqst_config()["model"] == "hamiltonian":
+            return self._estimate_hamiltonian_duration(package, eqst_batches)
         duration = 0
         for stage in self.stages:
             if len(stage.circuit_actions) == 0:

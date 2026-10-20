@@ -2,6 +2,7 @@
 *.pkl
 *.log
 *.console.log
+*backup*
 .vscode
 __pycache__
 .pytest_cache/

@@ -1,6 +1,7 @@
 import argparse
 import copy
 import csv
+import hashlib
 import json
 import logging
 import math
@@ -17,6 +18,7 @@ import yaml
 
 from qunoc.element.benchmark import get_program
 from qunoc.element.package import Package
+from qunoc.routing.circuit import Circuit
 from qunoc.routing.router import Router
 
 
@@ -45,11 +47,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "output_csv": "output.csv",
     "defaults": {
         "layout_root_dir": "./result/layout_scalability",
-        "quantum_programs": ["vqe", "qft", "qaoa", "bv"],
+        "quantum_programs": ["vqe", "qaoa", "bv", "s_ghz"],
         "layout_design_strategy": "greedy",
         "package_size": [100, 100],
         "package_area": 10000,
         "reuse_result": True,
+        "eqst": {"model": "legacy"},
     },
     "experiments": {
         "package_size": {
@@ -113,6 +116,24 @@ AXIS_LABELS = {
     "chiplet_sparsity_to_test": "ChipletSparsity",
 }
 
+# Bump when evaluation/cache semantics change; old linear-only results are not reusable.
+EVALUATION_SCHEMA_VERSION = 3
+COMPILATION_SCHEMA_VERSION = 1
+EQST_OPTION_NAMES = (
+    "model",
+    "reference_time_ns",
+    "reference_distance",
+    "g_max",
+    "max_segment_steps",
+    "beam_width",
+)
+EQST_CSV_FIELDS = [
+    "QSTEffectiveDist",
+    "QSTNegLogFidelity",
+    "TotalNegLogFidelity",
+    "EQSTModel",
+]
+
 ROUTING_OPTION_DEFAULTS: dict[str, Any] = {
     "route_strategy": "immediate",
     "mapping_strategy": "random",
@@ -136,6 +157,170 @@ def _deep_update(base: dict[str, Any], override: dict[str, Any]) -> dict[str, An
         else:
             result[key] = copy.deepcopy(value)
     return result
+
+
+def _copy_package_eqst_config(
+    package: Package,
+    options: dict[str, Any] | None = None,
+    *,
+    force_legacy: bool = False,
+) -> dict[str, Any]:
+    """Apply EQST options to an isolated operation config and return JSON settings.
+
+    输入 package、短键配置和 legacy 强制标志；复制后覆盖，返回可序列化配置，避免共享修改。
+    """
+    options = {} if options is None else options
+    if not isinstance(options, dict):
+        raise ValueError("eqst must be a mapping.")
+    unknown = set(options) - set(EQST_OPTION_NAMES)
+    if unknown:
+        raise ValueError(f"Unknown eqst settings: {sorted(unknown)}")
+    package.op_config = copy.deepcopy(package.op_config)
+    # Never inherit an opt-in model silently from an existing package artifact.
+    package.op_config.eqst_model = "legacy"
+    for name, value in options.items():
+        setattr(package.op_config, f"eqst_{name}", value)
+    if force_legacy:
+        package.op_config.eqst_model = "legacy"
+    return package.op_config.get_eqst_config()
+
+
+def _add_eqst_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add optional model/calibration flags to a parser; return None.
+
+    输入命令行解析器，添加 EQST 模型、标定及规划参数；无返回值。
+    """
+    parser.add_argument(
+        "--eqst-model", choices=["legacy", "hamiltonian"], default=None,
+        help="EQST model for full QuNoC routes (default: legacy); baselines stay legacy.",
+    )
+    for name, value_type, help_text in (
+        ("reference_time_ns", float, "Hamiltonian reference transfer time in ns (default: 125)."),
+        ("reference_distance", float, "Hamiltonian reference distance (default: 5)."),
+        ("g_max", float, "Maximum Hamiltonian coupling in rad/ns (default: 3*pi/250)."),
+        ("max_segment_steps", int, "Heuristic planner stage limit (default: 10); fallback may exceed it."),
+        ("beam_width", int, "Hamiltonian batch planner beam width (default: 128)."),
+    ):
+        parser.add_argument(
+            "--eqst-" + name.replace("_", "-"), type=value_type, default=None,
+            help=help_text,
+        )
+
+
+def _eqst_cli_overrides(args: argparse.Namespace) -> dict[str, Any]:
+    """Return only explicitly supplied EQST CLI settings from parsed arguments.
+
+    输入已解析命令行参数，输出显式指定的短键配置，避免覆盖 YAML 中未指定的值。
+    """
+    return {
+        name: getattr(args, f"eqst_{name}")
+        for name in EQST_OPTION_NAMES
+        if getattr(args, f"eqst_{name}", None) is not None
+    }
+
+
+def _package_evaluation_signature(package: Package, package_path: str | Path) -> dict[str, Any]:
+    """Return JSON-ready package identity, effective EQST, timing and fidelity inputs.
+
+    输入 package 及其文件路径；输出缓存签名，防止旧模型、标定或 package 结果误复用。
+    """
+    path = Path(package_path).resolve()
+    stat = path.stat()
+    op_config = package.op_config
+    model = package.fab_model
+    return {
+        "evaluation_schema_version": EVALUATION_SCHEMA_VERSION,
+        "layout_package_path": str(path),
+        "layout_package_size_bytes": stat.st_size,
+        "layout_package_mtime_ns": stat.st_mtime_ns,
+        "layout_package_ctime_ns": stat.st_ctime_ns,
+        "layout_package_device": stat.st_dev,
+        "layout_package_inode": stat.st_ino,
+        "eqst_config": op_config.get_eqst_config(),
+        "operation_timing_ns": {
+            name: float(getattr(op_config, name))
+            for name in (
+                "single_time", "intra_time", "inter_time", "qst_time_constant",
+                "measure_time", "reset_time",
+            )
+        },
+        "fabrication": {
+            "max_capacity": int(model.max_capacity),
+            "max_length": int(model.max_length),
+            "compute_geometry": str(model.compute_geometry),
+            "inter_sparsity": int(model.inter_sparsity),
+            "single_fide": float(model.single_fide),
+            "intra_fide_params": [float(value) for value in model.intra_fide_params],
+            "normalized_intra_fide": float(model.get_intra_fide(model.max_length)),
+            "inter_fide": float(model.inter_fide),
+            "enhanced_fide": float(model.enhanced_fide),
+        },
+    }
+
+
+def _package_topology_digest(package: Package) -> str:
+    """Hash physical placement/connectivity without timing or fidelity calibration.
+
+    输入 package；输出拓扑摘要，区分布局变化但允许只改标定后重新统计已有电路。
+    """
+    def chiplet_key(chiplet: Any) -> tuple[Any, ...] | None:
+        """Return chiplet geometry only / 输入裸片，返回不含保真度的几何标识。"""
+        if chiplet is None:
+            return None
+        return (type(chiplet).__name__, *(
+            getattr(chiplet, name, None)
+            for name in ("axis", "pos", "start", "end", "left", "top", "right", "bottom", "geometry")
+        ))
+
+    graph = package.package_graph
+    nodes = []
+    for node, attrs in sorted(graph.nodes(data=True)):
+        qubit = attrs.get("qubit")
+        nodes.append((
+            node, str(attrs.get("type")), str(getattr(qubit, "role", None)),
+            chiplet_key(getattr(qubit, "chiplet", None)),
+        ))
+    edges = sorted(
+        (min(source, target), max(source, target), str(attrs.get("type")))
+        for source, target, attrs in graph.edges(data=True)
+    )
+    payload = {"shape": list(package.package_size), "nodes": nodes, "edges": edges}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _compiled_circuit_identity(path: str | Path) -> dict[str, Any]:
+    """Return identity/stat fields for a compiled artifact without loading it.
+
+    输入已保存电路路径；输出身份和文件状态，防止将另一份电路与旧统计混用。
+    """
+    path = Path(path).resolve()
+    stat = path.stat()
+    return {
+        "path": str(path), "size_bytes": stat.st_size, "mtime_ns": stat.st_mtime_ns,
+        "ctime_ns": stat.st_ctime_ns, "device": stat.st_dev, "inode": stat.st_ino,
+    }
+
+
+def _legacy_compilation_metadata_matches(
+    cached: dict[str, Any], compilation_signature: dict[str, Any]
+) -> bool:
+    """Check available old-cache metadata for explicit statistics-only migration.
+
+    输入旧结果与当前编译签名；输出是否具备一致元数据，不能证明旧 package 拓扑未变。
+    """
+    program = cached.get("quantum_program", cached.get("algorithm"))
+    path = cached.get("layout_package_path")
+    return (
+        program == compilation_signature["quantum_program"]
+        and isinstance(path, str)
+        and str(Path(path).resolve()) == compilation_signature["layout_package_path"]
+        and cached.get("data_qubit_num") == compilation_signature["data_qubit_num"]
+        and cached.get("routing_options") == compilation_signature["routing_options"]
+        and cached.get("program_options", {}) == compilation_signature["program_options"]
+        and isinstance(cached.get("logic_gate_num"), int)
+        and not isinstance(cached["logic_gate_num"], bool)
+        and cached["logic_gate_num"] > 0
+    )
 
 
 def _normalize_package_size(value: Any) -> tuple[int, int]:
@@ -368,73 +553,133 @@ def _route_once(
         )
 
     package = Package.from_pickle(filepath=package_path)
+    _copy_package_eqst_config(package, run_config.get("eqst"))
     package_size = package.package_size
     data_qubit_num = _data_qubit_num(package_size)
     quantum_program = str(quantum_program)
     routing_options = _resolve_routing_options(run_config, quantum_program)
     program_options = _resolve_program_options(run_config, quantum_program)
-    program = get_program(quantum_program, data_qubit_num, **program_options)
+    signature = {
+        **_package_evaluation_signature(package, package_path),
+        "quantum_program": quantum_program,
+        "data_qubit_num": data_qubit_num,
+        "routing_options": routing_options,
+        "program_options": program_options,
+    }
 
+    compilation_signature = {
+        "compilation_schema_version": COMPILATION_SCHEMA_VERSION,
+        "layout_package_path": str(Path(package_path).resolve()),
+        "package_topology_sha256": _package_topology_digest(package),
+        "package_size": list(package_size),
+        "quantum_program": quantum_program,
+        "data_qubit_num": data_qubit_num,
+        "routing_options": routing_options,
+        "program_options": program_options,
+    }
+    statistics_only = bool(run_config.get("statistics_only", False))
+    recompile = bool(run_config.get("recompile", False))
+    if statistics_only and recompile:
+        raise ValueError("statistics_only and recompile cannot both be enabled.")
     result_dir = os.path.join(spec.exp_dir, _build_result_dir_name(spec.name, run_config, quantum_program))
     os.makedirs(result_dir, exist_ok=True)
 
     cache_path = os.path.join(result_dir, "exp_result.json")
     circuit_path = os.path.join(result_dir, "qunoc_circuit.pkl")
-    if bool(run_config.get("reuse_result", True)) and os.path.exists(cache_path):
+    try:
         with open(cache_path, "r", encoding="utf-8") as file:
             cached = json.load(file)
-        if "quantum_program" not in cached and "algorithm" in cached:
-            cached["quantum_program"] = cached["algorithm"]
-        cached.pop("algorithm", None)
-        if (
-            cached.get("routing_options") == routing_options
-            and cached.get("program_options", {}) == program_options
-        ):
-            return cached
+        if not isinstance(cached, dict):
+            cached = {}
+    except (OSError, json.JSONDecodeError):
+        cached = {}
+    circuit_identity = _compiled_circuit_identity(circuit_path) if os.path.isfile(circuit_path) else None
+    compilation_matches = cached.get("compilation_signature") == compilation_signature
+    artifact_matches = circuit_identity is not None and cached.get("compiled_circuit_identity") == circuit_identity
+    legacy_reuse = (
+        statistics_only and "compilation_signature" not in cached
+        and circuit_identity is not None
+        and _legacy_compilation_metadata_matches(cached, compilation_signature)
+    )
+    reusable_circuit = (compilation_matches and artifact_matches) or legacy_reuse
+    if (
+        not statistics_only and not recompile
+        and bool(run_config.get("reuse_result", True))
+        and reusable_circuit and cached.get("signature") == signature
+    ):
+        return cached
+    if statistics_only and not reusable_circuit:
+        raise ValueError(
+            f"Cannot run statistics-only for {result_dir}: missing or incompatible "
+            "qunoc_circuit.pkl / exp_result.json compilation metadata. "
+            "Use the original package/program/routing settings or recompile explicitly."
+        )
 
-    router = Router(
-        package,
-        program,
-        route_strategy=str(routing_options["route_strategy"]),
-        result_dir=result_dir,
-        block_strategy=str(routing_options["block_strategy"]),
-        move_min_gate_per_migrated_qubit=float(
-            routing_options["move_min_gate_per_migrated_qubit"]
-        ),
-        move_cost_ratio=float(routing_options["move_cost_ratio"]),
-        move_density_divisor=float(routing_options["move_density_divisor"]),
-        ghz_source_strategy=str(routing_options["ghz_source_strategy"]),
-        ghz_pairing_strategy=str(routing_options["ghz_pairing_strategy"]),
-        tele_platform_strategy=str(routing_options["tele_platform_strategy"]),
-        gate_select_strategy=str(routing_options["gate_select_strategy"]),
-        gate_order_strategy=str(routing_options["gate_order_strategy"]),
-    )
-    circuit = router.route_program_on_package(
-        mapping_strategy=str(routing_options["mapping_strategy"])
-    )
-    circuit.to_pickle(circuit_path)
-    intra_gate_num, inter_gate_num, qst_dist, meas_num, total_fide = router.statistic_route_results()
-    circuit_duration = router.estimate_qunoc_circuit_duration()
-    logic_gate_fide = router.estimate_qunoc_logic_gate_fide()
+    legacy_metadata_trusted = False
+    if reusable_circuit and not recompile:
+        legacy_metadata_trusted = legacy_reuse or cached.get("legacy_compilation_metadata_trusted", False)
+        if legacy_reuse:
+            logging.warning(
+                "Re-estimating legacy circuit %s using matching path/program/routing metadata; "
+                "old metadata has no topology fingerprint, so package topology must be unchanged.",
+                circuit_path,
+            )
+        circuit = Circuit.from_pickle(circuit_path)
+        logic_gate_num = cached["logic_gate_num"]
+        metrics = Router.reestimate_compiled_circuit(package, circuit, logic_gate_num)
+        statistics_source = "saved_circuit"
+    else:
+        program = get_program(quantum_program, data_qubit_num, **program_options)
+        router = Router(
+            package,
+            program,
+            route_strategy=str(routing_options["route_strategy"]),
+            result_dir=result_dir,
+            block_strategy=str(routing_options["block_strategy"]),
+            move_min_gate_per_migrated_qubit=float(
+                routing_options["move_min_gate_per_migrated_qubit"]
+            ),
+            move_cost_ratio=float(routing_options["move_cost_ratio"]),
+            move_density_divisor=float(routing_options["move_density_divisor"]),
+            ghz_source_strategy=str(routing_options["ghz_source_strategy"]),
+            ghz_pairing_strategy=str(routing_options["ghz_pairing_strategy"]),
+            tele_platform_strategy=str(routing_options["tele_platform_strategy"]),
+            gate_select_strategy=str(routing_options["gate_select_strategy"]),
+            gate_order_strategy=str(routing_options["gate_order_strategy"]),
+        )
+        circuit = router.route_program_on_package(
+            mapping_strategy=str(routing_options["mapping_strategy"])
+        )
+        circuit.to_pickle(circuit_path)
+        circuit_identity = _compiled_circuit_identity(circuit_path)
+        logic_gate_num = program.get_gate_depend_graph().number_of_nodes() - 1
+        details = router.statistic_route_details()
+        metrics = {
+            **details,
+            "circuit_duration": router.estimate_qunoc_circuit_duration(details["eqst_batches"]),
+            "gate_fidelity": router.estimate_qunoc_logic_gate_fide(details),
+        }
+        statistics_source = "new_compilation"
 
     exp_result = {
         "quantum_program": quantum_program,
         "data_qubit_num": data_qubit_num,
-        "logic_gate_num": program.get_gate_depend_graph().number_of_nodes() - 1,
-        "circuit_duration": circuit_duration,
-        "gate_fidelity": logic_gate_fide,
-        "intra_gate": intra_gate_num,
-        "inter_gate": inter_gate_num,
-        "qst_dist": qst_dist,
-        "meas_num": meas_num,
-        "total_fide": total_fide,
+        "logic_gate_num": logic_gate_num,
+        **{key: value for key, value in metrics.items() if key != "eqst_batches"},
+        "signature": signature,
+        "compilation_signature": compilation_signature,
+        "compiled_circuit_identity": circuit_identity,
+        "statistics_source": statistics_source,
+        "legacy_compilation_metadata_trusted": legacy_metadata_trusted,
         "layout_package_path": package_path,
         "routing_options": routing_options,
         "program_options": program_options,
     }
 
-    with open(cache_path, "w", encoding="utf-8") as file:
+    temporary = cache_path + ".tmp"
+    with open(temporary, "w", encoding="utf-8") as file:
         json.dump(exp_result, file, ensure_ascii=False, indent=2)
+    os.replace(temporary, cache_path)
 
     return exp_result
 
@@ -473,25 +718,26 @@ def _run_experiment(common_defaults: dict[str, Any], spec: ExperimentSpec) -> No
         return
 
     output_path = os.path.join(spec.exp_dir, spec.output_csv)
-    reset_output = not bool(run_defaults.get("reuse_result", True))
-    if reset_output or not os.path.exists(output_path):
-        with open(output_path, mode="w", newline="", encoding="utf-8") as file:
-            writer = csv.writer(file)
-            writer.writerow(
-                [AXIS_LABELS.get(name, name) for name in axis_names]
-                + [
-                    "QuantumProgram",
-                    "#DataQubit",
-                    "#LogicGate",
-                    "CircuitDuration",
-                    "GateFidelity",
-                    "IntraGate",
-                    "InterGate",
-                    "QSTDist",
-                    "MeasNum",
-                    "TotalFide",
-                ]
-            )
+    # CSV is a snapshot of this sweep. Rebuild even when reusing per-case JSON,
+    # so old-schema rows and results from another EQST model cannot be mixed in.
+    with open(output_path, mode="w", newline="", encoding="utf-8") as file:
+        writer = csv.writer(file)
+        writer.writerow(
+            [AXIS_LABELS.get(name, name) for name in axis_names]
+            + [
+                "QuantumProgram",
+                "#DataQubit",
+                "#LogicGate",
+                "CircuitDuration",
+                "GateFidelity",
+                "IntraGate",
+                "InterGate",
+                "QSTDist",
+                "MeasNum",
+                "TotalFide",
+            ]
+            + EQST_CSV_FIELDS
+        )
 
     for values in product(*axis_values):
         run_config = copy.deepcopy(run_defaults)
@@ -523,6 +769,10 @@ def _run_experiment(common_defaults: dict[str, Any], spec: ExperimentSpec) -> No
                         exp_result["qst_dist"],
                         exp_result["meas_num"],
                         exp_result["total_fide"],
+                        exp_result["qst_effective_dist"],
+                        exp_result["qst_neglog_fidelity"],
+                        exp_result["total_neglog_fidelity"],
+                        exp_result["eqst_model"],
                     ]
                 )
 
@@ -546,6 +796,16 @@ def main() -> None:
         default=str(Path(__file__).with_name("test_routing_scalability.yaml")),
         help="Path to a JSON/YAML config file.",
     )
+    _add_eqst_arguments(parser)
+    execution = parser.add_mutually_exclusive_group()
+    execution.add_argument(
+        "--statistics-only", action="store_true",
+        help="Re-estimate saved circuits only; never regenerate programs or compile routing.",
+    )
+    execution.add_argument(
+        "--recompile", action="store_true",
+        help="Force new routing compilation instead of reusing a compatible saved circuit.",
+    )
     args = parser.parse_args()
 
     config_path = Path(args.config)
@@ -558,7 +818,14 @@ def main() -> None:
     if not cfg.experiments:
         raise ValueError("No experiments were defined in the config file.")
 
+    eqst_overrides = _eqst_cli_overrides(args)
     for spec in cfg.experiments.values():
+        # Explicit CLI settings take precedence over both default scopes.
+        if eqst_overrides:
+            spec.defaults = _deep_update(spec.defaults, {"eqst": eqst_overrides})
+        if args.statistics_only or args.recompile:
+            spec.defaults["statistics_only"] = args.statistics_only
+            spec.defaults["recompile"] = args.recompile
         _run_experiment(cfg.defaults, spec)
 
 

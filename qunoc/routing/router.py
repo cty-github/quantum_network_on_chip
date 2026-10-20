@@ -1,13 +1,14 @@
 import logging
+import math
 import os
-from copy import deepcopy
+from copy import copy, deepcopy
 
 import networkx as nx
 from matplotlib import pyplot as plt
 from qiskit import transpile
 from qiskit.transpiler import CouplingMap, Layout
 
-from ..element.chiplet import ComputeChiplet, ComputeModule, EdgeType, QubitRole
+from ..element.chiplet import ComputeChiplet, ComputeModule, EdgeType, OperationConfig, QubitRole
 from ..element.package import (
     InterChipletRoad,
     IntraTransferRoad,
@@ -17,6 +18,7 @@ from ..element.package import (
     make_save_gif_file,
 )
 from ..utils.config import config
+from .fidelity import normalized_gate_fidelity, probability_cost
 from .circuit import (
     Alight,
     Board,
@@ -2948,74 +2950,113 @@ class Router:
         #     logging.warning(f"Failed to draw qubit mapping block: {e}")
 
     # Functions for statistics and estimation
-    def statistic_route_results(self) -> tuple[int, int, int, int, float]:
-        """
-        Statistic the number of intra and inter gates, the distance of quantum state transfer, and the total fidelity of the circuit.
+    @classmethod
+    def reestimate_compiled_circuit(cls, package: Package, circuit: Circuit, logic_gate_num: int) -> dict:
+        """功能 / Purpose: Recompute metrics without program construction or routing / 无需程序重建或路由地重新统计。
 
-        Returns:
-            tuple[int, int, int, int, float]: A tuple containing the number of intra gates, inter gates, quantum state transfer distance, measurement, and total fidelity.
+        输入 / Inputs: Existing package, compiled Circuit, original logical-gate count / 封装、已编译电路、原逻辑门数。
+        输出 / Outputs: Detailed statistics plus duration and gate fidelity / 详细统计、时长及逻辑门保真度。
+        Uses a shallow circuit view with copied operation settings; no artifact is modified / 不修改输入对象或磁盘文件。
         """
-        intra_gate_num = 0
-        inter_gate_num = 0
-        qst_distance = 0
-        meas_num = 0
-        total_fidelity = 1.0
+        if not isinstance(logic_gate_num, int) or isinstance(logic_gate_num, bool) or logic_gate_num <= 0:
+            raise ValueError("logic_gate_num must be a positive integer from the compiled program metadata")
+        # 只替换统计视图配置，原始动作/DAG/映射只读。 Share immutable history, not mutable settings.
+        view = copy(circuit)
+        view.op_config = deepcopy(package.op_config)
+        accountant = cls.__new__(cls)
+        accountant.package = package
+        accountant.package_graph = package.package_graph
+        accountant.circuit = view
+        details = accountant.statistic_route_details()
+        details["circuit_duration"] = view.estimate_duration(package=package, eqst_batches=details["eqst_batches"])
+        details["gate_fidelity"] = normalized_gate_fidelity(
+            details["intra_gate"], details["inter_gate"], details["qst_neglog_fidelity"], logic_gate_num,
+            package.fab_model.get_intra_fide(package.fab_model.max_length), package.fab_model.inter_fide,
+        )
+        details["logic_gate_num"] = logic_gate_num
+        return details
+
+    def statistic_route_details(self, *, include_total_fidelity: bool = True) -> dict:
+        """功能 / Purpose: Accumulate stable full-route statistics / 累计稳定的真实电路统计。
+
+        输入 / Inputs: Whether to materialize total probability / 是否计算展示用全电路概率。
+        输出 / Outputs: Counts, raw/model distances, additive costs and batch audit / 计数、距离、负对数及批次明细。
+        """
+        eqst_config = OperationConfig.get_eqst_config(self.circuit.op_config)
+        hamiltonian = eqst_config["model"] == "hamiltonian"
+        batches = self.circuit.estimate_eqst_batches(self.package) if hamiltonian else []
+        intra_gate_num = inter_gate_num = qst_distance = meas_num = 0
+        non_qst_costs = []
         for stage in self.circuit.stages:
             for action in stage.circuit_actions:
                 if isinstance(action, GhzPreparation):
                     for balise, parent in action.ghz_balise_graph:
-                        if parent:
-                            if (
-                                self.package_graph.edges[balise, parent]["type"]
-                                == EdgeType.Intra
-                            ):
+                        if parent is not None:
+                            if self.package_graph.edges[balise, parent]["type"] == EdgeType.Intra:
                                 intra_gate_num += 1
                             else:
                                 inter_gate_num += 1
-                            total_fidelity *= self.package.get_coupler_fide(
-                                balise, parent
-                            )
+                            non_qst_costs.append(probability_cost(self.package.get_coupler_fide(balise, parent)))
                 elif isinstance(action, (Board, Alight, Interchange)):
                     inter_gate_num += 3
-                    total_fidelity *= self.package.fab_model.inter_fide**3
+                    non_qst_costs.append(probability_cost(self.package.fab_model.inter_fide, 3))
                 elif isinstance(action, Transport):
+                    # 原始动作距离单独保留，不能再次计入批次误差。 Preserve raw distance, no double charge.
                     qst_distance += action.get_distance()
-                    total_fidelity *= (
-                        self.package.fab_model.enhanced_fide ** action.get_distance()
-                    )
                 elif isinstance(action, Teleport):
                     if action.inter_flag:
                         inter_gate_num += 1
                     else:
                         intra_gate_num += 1
                     meas_num += 1
-                    total_fidelity *= self.package.get_coupler_fide(
-                        action.ancilla_node, action.data_node
-                    )
+                    non_qst_costs.append(probability_cost(self.package.get_coupler_fide(
+                        action.ancilla_node, action.data_node)))
                 elif isinstance(action, (Enter, Exit, SwapGate)):
                     if action.inter_flag:
                         inter_gate_num += 3
                     else:
                         intra_gate_num += 3
                     if isinstance(action, (Enter, Exit)):
-                        phy_qubit_u = action.platform
-                        phy_qubit_v = action.register
-                    elif isinstance(action, SwapGate):
-                        phy_qubit_u = action.qubit_u
-                        phy_qubit_v = action.qubit_v
-                    total_fidelity *= (
-                        self.package.get_coupler_fide(phy_qubit_u, phy_qubit_v) ** 3
-                    )
+                        qubit_u, qubit_v = action.platform, action.register
+                    else:
+                        qubit_u, qubit_v = action.qubit_u, action.qubit_v
+                    non_qst_costs.append(probability_cost(self.package.get_coupler_fide(qubit_u, qubit_v), 3))
                 elif isinstance(action, DirectGate):
                     if action.inter_flag:
                         inter_gate_num += 1
                     else:
                         intra_gate_num += 1
-                    total_fidelity *= self.package.get_coupler_fide(
-                        action.phy_ctrl_qubit, action.phy_targ_qubit
-                    )
-        return intra_gate_num, inter_gate_num, qst_distance, meas_num, total_fidelity
-    
+                    non_qst_costs.append(probability_cost(self.package.get_coupler_fide(
+                        action.phy_ctrl_qubit, action.phy_targ_qubit)))
+
+        effective_distance = (sum(batch["effective_distance_edges"] for batch in batches)
+                              if hamiltonian else qst_distance)
+        # fab 的每边概率是路由校准权威，不从可能下溢的批次概率反推距离。
+        # Use the package per-edge calibration and the directly accumulated model distance.
+        qst_cost = probability_cost(self.package.fab_model.enhanced_fide, effective_distance)
+        total_cost = math.fsum(non_qst_costs + [qst_cost])
+        return {
+            "intra_gate": intra_gate_num, "inter_gate": inter_gate_num,
+            "qst_dist": qst_distance, "meas_num": meas_num,
+            "total_fide": math.exp(-total_cost) if include_total_fidelity else None,
+            "qst_effective_dist": effective_distance,
+            "qst_neglog_fidelity": qst_cost,
+            "total_neglog_fidelity": total_cost,
+            "eqst_model": eqst_config["model"], "eqst_config": eqst_config,
+            "eqst_batch_count": len(batches), "eqst_batches": batches,
+            "eqst_fidelity_per_edge": self.package.fab_model.enhanced_fide,
+        }
+
+    def statistic_route_results(self) -> tuple[int, int, int, int, float]:
+        """功能 / Purpose: Preserve the legacy five-field statistics API / 保留五元组接口。
+
+        输入 / Inputs: Router's compiled circuit and package / 已编译电路与封装。
+        输出 / Outputs: Intra/inter counts, raw QST distance, measurements, total probability / 原有五项统计。
+        """
+        details = self.statistic_route_details()
+        return (details["intra_gate"], details["inter_gate"], details["qst_dist"],
+                details["meas_num"], details["total_fide"])
+
     def statistic_dummy_route_results(self) -> tuple[int, int, int, int, float]:
         """
         Statistic the number of intra and inter gates, the distance of quantum state transfer, and the total fidelity of the circuit.
@@ -3094,38 +3135,29 @@ class Router:
         _, _, _, _, total_fidelity = self.statistic_route_results()
         return total_fidelity
 
-    def estimate_qunoc_logic_gate_fide(self) -> float:
-        """
-        Estimate the average fidelity of each quantum gate in the circuit.
+    def estimate_qunoc_logic_gate_fide(self, route_details: dict | None = None) -> float:
+        """功能 / Purpose: Normalize additive errors before exponentiation / 指数化前归一化逻辑门误差。
 
-        Returns:
-            float: The estimated average fidelity of quantum gate operations.
+        输入 / Inputs: Optional statistics from the same unchanged circuit / 可选的同一未变电路统计。
+        输出 / Outputs: Mean logical-gate fidelity using model distance / 使用模型距离的平均逻辑门保真度。
         """
-        intra_num, inter_num, qst_dist, _, total_fidelity = self.statistic_route_results()
+        details = (self.statistic_route_details(include_total_fidelity=False)
+                   if route_details is None else route_details)
         logic_gate_num = self.program.get_gate_depend_graph().number_of_nodes() - 1
-        average_intra_num = intra_num / logic_gate_num
-        average_inter_num = inter_num / logic_gate_num
-        average_qst_dist = qst_dist / logic_gate_num
-        return (
-            (
-                self.package.fab_model.get_intra_fide(self.package.fab_model.max_length)
-                ** average_intra_num
-            )
-            * (self.package.fab_model.inter_fide**average_inter_num)
-            * (self.package.fab_model.enhanced_fide**average_qst_dist)
-        )
-        return total_fidelity ** (
-            1 / (self.program.get_gate_depend_graph().number_of_nodes() - 1)
+        return normalized_gate_fidelity(
+            details["intra_gate"], details["inter_gate"], details["qst_neglog_fidelity"],
+            logic_gate_num,
+            self.package.fab_model.get_intra_fide(self.package.fab_model.max_length),
+            self.package.fab_model.inter_fide,
         )
 
-    def estimate_qunoc_circuit_duration(self) -> float:
-        """
-        Estimate the duration of the circuit.
+    def estimate_qunoc_circuit_duration(self, eqst_batches: list | None = None) -> float:
+        """功能 / Purpose: Estimate staged circuit duration / 估计分阶段电路时长。
 
-        Return:
-            float, the estimated duration of the circuit in nanoseconds.
+        输入 / Inputs: Optional current Hamiltonian batches shared with statistics / 可选的当前共享批次。
+        输出 / Outputs: Completion duration in ns / 纳秒完成时长。
         """
-        return self.circuit.estimate_duration(package=self.package)
+        return self.circuit.estimate_duration(package=self.package, eqst_batches=eqst_batches)
 
     def estimate_dummy_logic_gate_fide(self) -> float:
         intra_gate_num, inter_gate_num, qst_distance, meas_num, total_fidelity = self.statistic_dummy_route_results()

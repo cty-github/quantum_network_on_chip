@@ -191,9 +191,15 @@ class OperationConfig:
         # qst_time_constant: float = 125 / (5 ** 0.5),
         measure_time: float = 2280,
         reset_time: float = 220,
+        eqst_model: str = "legacy",
+        eqst_reference_time_ns: float = 125,
+        eqst_reference_distance: float = 5,
+        eqst_g_max: float | None = 3 * math.pi / 250,
+        eqst_max_segment_steps: int = 10,
+        eqst_beam_width: int = 128,
     ):
         """
-        Initialize the operation configuration.
+        Initialize the operation configuration / 初始化操作与 EQST 计时配置.
 
         Args:
             single_time (float): The time of single gate.
@@ -202,13 +208,75 @@ class OperationConfig:
             qst_time_constant (float): The time constant of the enhanced QST.
             measure_time (float): The time of measurement.
             reset_time (float): The time of reset.
+            eqst_model (str): legacy or Hamiltonian net-map timing / 线性或净映射计时.
+            eqst_reference_time_ns (float): Reference transfer time / 参考传输时间(ns).
+            eqst_reference_distance (float): Reference edge distance / 参考边数.
+            eqst_g_max (float | None): Angular cap in rad/ns, default 6 MHz; None disables / 角耦合上限，None 不限幅.
+            eqst_max_segment_steps (int): Planner segment limit / 规划分段上限.
+            eqst_beam_width (int): Planner search width / 规划搜索宽度.
+
+        Returns / 输出:
+            None: Initializes operation timing and EQST settings / 初始化操作计时与 EQST 配置.
         """
+        if eqst_model not in {"legacy", "hamiltonian"}:
+            raise ValueError("eqst_model must be 'legacy' or 'hamiltonian'")
         self.single_time: float = single_time
         self.intra_time: float = intra_time
         self.inter_time: float = inter_time
         self.qst_time_constant: float = qst_time_constant
         self.measure_time: float = measure_time
         self.reset_time: float = reset_time
+        self.eqst_model = eqst_model
+        self.eqst_reference_time_ns = eqst_reference_time_ns
+        self.eqst_reference_distance = eqst_reference_distance
+        self.eqst_g_max = eqst_g_max
+        self.eqst_max_segment_steps = eqst_max_segment_steps
+        self.eqst_beam_width = eqst_beam_width
+
+    def get_eqst_config(self) -> dict:
+        """Return JSON-ready model/timing settings, including old-pickle defaults.
+        返回可 JSON 序列化的模型与计时配置；旧 pickle 缺失字段时采用兼容默认值。
+
+        Inputs / 输入: this operation configuration / 当前操作配置.
+        Returns / 输出: model/version, planner calibration and operation times / 配置字典.
+        """
+        model = getattr(self, "eqst_model", "legacy")
+        if model not in {"legacy", "hamiltonian"}:
+            raise ValueError("eqst_model must be 'legacy' or 'hamiltonian'")
+        settings = {
+            "model": model,
+            "version": "hamiltonian-net-v1" if model == "hamiltonian" else "legacy-v1",
+            "reference_time_ns": getattr(self, "eqst_reference_time_ns", 125),
+            "reference_distance": getattr(self, "eqst_reference_distance", 5),
+            "g_max": getattr(self, "eqst_g_max", 3 * math.pi / 250),
+            "max_segment_steps": getattr(self, "eqst_max_segment_steps", 10),
+            "beam_width": getattr(self, "eqst_beam_width", 128),
+            "ordered": True,
+        }
+        for name in ("reference_time_ns", "reference_distance", "g_max"):
+            value = settings[name]
+            if name == "g_max" and value is None:
+                continue
+            if isinstance(value, (bool, str)):
+                raise ValueError(f"eqst_{name} must be positive and finite")
+            try:
+                value = float(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"eqst_{name} must be positive and finite") from exc
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"eqst_{name} must be positive and finite")
+            settings[name] = value
+        for name in ("max_segment_steps", "beam_width"):
+            value = settings[name]
+            if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or value <= 0:
+                raise ValueError(f"eqst_{name} must be a positive integer")
+            settings[name] = int(value)
+        for name in ("single_time", "intra_time", "inter_time", "qst_time_constant", "measure_time", "reset_time"):
+            value = float(getattr(self, name))
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"{name} must be nonnegative and finite")
+            settings[name] = value
+        return settings
 
 
 class Qubit:
