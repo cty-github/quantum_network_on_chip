@@ -197,11 +197,22 @@ class OperationConfig:
         eqst_g_max: float | None = 3 * math.pi / 250,
         eqst_max_segment_steps: int = 10,
         eqst_beam_width: int = 128,
+        eqst_t1_ns: float = 141500.0,
+        eqst_gamma_phi_ns: float | None = None,
+        eqst_solver: str = "auto",
+        eqst_trajectories: int = 2048,
+        eqst_min_trajectories: int = 128,
+        eqst_seed: int = 0,
+        eqst_atol: float = 0.002,
+        eqst_rtol: float = 0.02,
+        eqst_confidence: float = 0.95,
+        eqst_master_max_dim: int = 128,
+        eqst_coupling_policy: str = "preserve-request",
     ):
         """
-        Initialize the operation configuration / 初始化操作与 EQST 计时配置.
+        功能 / Purpose: Initialize operation timing and dynamical EQST noise / 初始化操作计时与动力学噪声.
 
-        Args:
+        Inputs / 输入:
             single_time (float): The time of single gate.
             intra_time (float): The time of intra-chiplet CZ.
             inter_time (float): The time of inter-chiplet CZ.
@@ -214,6 +225,15 @@ class OperationConfig:
             eqst_g_max (float | None): Angular cap in rad/ns, default 6 MHz; None disables / 角耦合上限，None 不限幅.
             eqst_max_segment_steps (int): Planner segment limit / 规划分段上限.
             eqst_beam_width (int): Planner search width / 规划搜索宽度.
+            eqst_t1_ns (float): Actual relaxation time; fitted baseline stays 141500 ns / 实际弛豫时间，拟合基准不变.
+            eqst_gamma_phi_ns (float | None): Dephasing rate per ns; None uses the frozen reference fit / 每纳秒纯退相干率，None 使用固定参考拟合.
+            eqst_solver (str): auto, master, or trajectories / 自动、主方程或轨迹后端.
+            eqst_trajectories, eqst_min_trajectories (int): Maximum/minimum MC samples / 最大与最小轨迹数.
+            eqst_seed (int): Reproducible sampling seed / 可复现采样种子.
+            eqst_atol, eqst_rtol (float): Absolute/relative sampling tolerance / 绝对与相对采样容差.
+            eqst_confidence (float): Per-batch confidence level / 单批次置信水平.
+            eqst_master_max_dim (int): Density-sector dimension limit (at most 128) / 密度矩阵扇区维数上限.
+            eqst_coupling_policy (str): Preserve requested time or run at coupling cap / 保持请求时间或按耦合上限加速.
 
         Returns / 输出:
             None: Initializes operation timing and EQST settings / 初始化操作计时与 EQST 配置.
@@ -232,28 +252,55 @@ class OperationConfig:
         self.eqst_g_max = eqst_g_max
         self.eqst_max_segment_steps = eqst_max_segment_steps
         self.eqst_beam_width = eqst_beam_width
+        self.eqst_t1_ns = eqst_t1_ns
+        self.eqst_gamma_phi_ns = eqst_gamma_phi_ns
+        self.eqst_solver = eqst_solver
+        self.eqst_trajectories = eqst_trajectories
+        self.eqst_min_trajectories = eqst_min_trajectories
+        self.eqst_seed = eqst_seed
+        self.eqst_atol = eqst_atol
+        self.eqst_rtol = eqst_rtol
+        self.eqst_confidence = eqst_confidence
+        self.eqst_master_max_dim = eqst_master_max_dim
+        self.eqst_coupling_policy = eqst_coupling_policy
 
     def get_eqst_config(self) -> dict:
-        """Return JSON-ready model/timing settings, including old-pickle defaults.
-        返回可 JSON 序列化的模型与计时配置；旧 pickle 缺失字段时采用兼容默认值。
+        """功能 / Purpose: Validate JSON-ready timing/noise settings with old-pickle defaults / 校验可序列化计时与噪声设置，兼容旧文件。
 
         Inputs / 输入: this operation configuration / 当前操作配置.
-        Returns / 输出: model/version, planner calibration and operation times / 配置字典.
+        Outputs / 输出: version, planner/noise controls and operation times, without fitting / 模型版本、规划与噪声控制及操作时间，不触发拟合.
         """
         model = getattr(self, "eqst_model", "legacy")
         if model not in {"legacy", "hamiltonian"}:
             raise ValueError("eqst_model must be 'legacy' or 'hamiltonian'")
         settings = {
             "model": model,
-            "version": "hamiltonian-net-v1" if model == "hamiltonian" else "legacy-v1",
+            "version": "hamiltonian-lindblad-v2" if model == "hamiltonian" else "legacy-v1",
             "reference_time_ns": getattr(self, "eqst_reference_time_ns", 125),
             "reference_distance": getattr(self, "eqst_reference_distance", 5),
             "g_max": getattr(self, "eqst_g_max", 3 * math.pi / 250),
             "max_segment_steps": getattr(self, "eqst_max_segment_steps", 10),
             "beam_width": getattr(self, "eqst_beam_width", 128),
+            "coupling_policy": getattr(self, "eqst_coupling_policy", "preserve-request"),
+            "noise_model_version": "hamiltonian-lindblad-v2",
+            "t1_ns": getattr(self, "eqst_t1_ns", 141500.0),
+            "gamma_phi_ns": getattr(self, "eqst_gamma_phi_ns", None),
+            # Hardware sensitivity never changes the reference used to fit gamma.
+            # 器件敏感性实验不得随实际 T1 改动参考拟合，避免重新拟合掩盖损耗。
+            "calibration_t1_ns": 141500.0,
+            "calibration_time_ns": 125.0,
+            "calibration_fidelity": 0.992,
+            "solver": getattr(self, "eqst_solver", "auto"),
+            "trajectories": getattr(self, "eqst_trajectories", 2048),
+            "min_trajectories": getattr(self, "eqst_min_trajectories", 128),
+            "seed": getattr(self, "eqst_seed", 0),
+            "atol": getattr(self, "eqst_atol", 0.002),
+            "rtol": getattr(self, "eqst_rtol", 0.02),
+            "confidence": getattr(self, "eqst_confidence", 0.95),
+            "master_max_dim": getattr(self, "eqst_master_max_dim", 128),
             "ordered": True,
         }
-        for name in ("reference_time_ns", "reference_distance", "g_max"):
+        for name in ("reference_time_ns", "reference_distance", "g_max", "t1_ns", "atol", "confidence"):
             value = settings[name]
             if name == "g_max" and value is None:
                 continue
@@ -266,11 +313,37 @@ class OperationConfig:
             if not math.isfinite(value) or value <= 0:
                 raise ValueError(f"eqst_{name} must be positive and finite")
             settings[name] = value
-        for name in ("max_segment_steps", "beam_width"):
+        for name in ("gamma_phi_ns", "rtol"):
             value = settings[name]
-            if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or value <= 0:
-                raise ValueError(f"eqst_{name} must be a positive integer")
+            if name == "gamma_phi_ns" and value is None:
+                continue
+            if isinstance(value, (bool, str)):
+                raise ValueError(f"eqst_{name} must be nonnegative and finite")
+            try:
+                value = float(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"eqst_{name} must be nonnegative and finite") from exc
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"eqst_{name} must be nonnegative and finite")
+            settings[name] = value
+        for name in ("max_segment_steps", "beam_width", "trajectories", "min_trajectories", "master_max_dim", "seed"):
+            value = settings[name]
+            minimum = 0 if name == "seed" else 1
+            if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or value < minimum:
+                raise ValueError(f"eqst_{name} must be an integer >= {minimum}")
             settings[name] = int(value)
+        if not 2 <= settings["min_trajectories"] <= settings["trajectories"]:
+            raise ValueError("EQST trajectories must satisfy 2 <= min_trajectories <= trajectories")
+        if settings["master_max_dim"] > 128:
+            raise ValueError("eqst_master_max_dim must not exceed the resource ceiling 128")
+        if settings["confidence"] >= 1:
+            raise ValueError("eqst_confidence must lie strictly between 0 and 1")
+        if settings["solver"] not in ("auto", "master", "trajectories"):
+            raise ValueError("eqst_solver must be 'auto', 'master', or 'trajectories'")
+        if settings["coupling_policy"] not in ("preserve-request", "cap-limited-fast"):
+            raise ValueError("eqst_coupling_policy must be 'preserve-request' or 'cap-limited-fast'")
+        if settings["coupling_policy"] == "cap-limited-fast" and settings["g_max"] is None:
+            raise ValueError("cap-limited-fast requires a finite eqst_g_max")
         for name in ("single_time", "intra_time", "inter_time", "qst_time_constant", "measure_time", "reset_time"):
             value = float(getattr(self, name))
             if not math.isfinite(value) or value < 0:

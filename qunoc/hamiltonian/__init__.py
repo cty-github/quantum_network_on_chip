@@ -6,6 +6,7 @@ This package imports no routing, circuit, Qiskit, or plotting modules.
 
 from .chain_evolution import (
     MODEL_VERSION,
+    build_single_chain_plan,
     SimulationConfig,
     TransferPlan,
     estimate_transfer,
@@ -14,7 +15,10 @@ from .chain_evolution import (
     simulate_transfer,
 )
 
+from .noise import NoiseConfig, calibration_reference, evaluate_plan_noise, noise_self_test
+
 __all__ = [
     "MODEL_VERSION", "SimulationConfig", "TransferPlan", "estimate_transfer",
-    "plan_transfer", "run_simulation", "simulate_transfer",
+    "plan_transfer", "run_simulation", "simulate_transfer", "build_single_chain_plan",
+    "NoiseConfig", "calibration_reference", "evaluate_plan_noise", "noise_self_test",
 ]

@@ -1,11 +1,12 @@
 # Evaluation Workflow
 
-本目录保留四个推荐入口，对应项目的完整实验流程：
+本目录按以下五类任务组织实验流程，所有命令从项目根目录执行：
 
 1. 训练 package layout 的 RL 模型。
 2. 使用训练好的模型完成 package layout design / scalability，并与其他 layout 策略比较。
 3. 基于已设计好的 package 运行 program routing，对比 QuNoC routing 与 baseline MECH。
 4. 运行 ablation 实验。
+5. 运行统一噪声 Hamiltonian 自检、单链扫描、参数优化与真实编译样本仿真。
 
 旧的 shared-RL、单独 RL 训练配置、notebook 和 monolithic MECH runner 仅作为历史参考，不再作为推荐入口。
 
@@ -136,7 +137,24 @@ defaults:
     g_max: 0.03769911184307752  # 3*pi/250, rad/ns
     max_segment_steps: 10
     beam_width: 128
+    t1_ns: 141500
+    gamma_phi_ns: null  # fixed six-site calibration; not refitted to planner time
+    solver: auto
+    trajectories: 2048
+    min_trajectories: 128
+    seed: 0
+    atol: 0.002
+    rtol: 0.02
+    confidence: 0.95
+    master_max_dim: 128
+    coupling_policy: preserve-request
 ```
+
+These noise controls are shared with the Hamiltonian core. The default reference fit
+uses 125 ns, 0.992 and baseline T1=141500 ns regardless of changed planner timing or
+actual T1. `--eqst-t1-ns` is in **ns**, whereas the standalone runner's `--t1-us`
+is in microseconds. `--eqst-coupling-policy cap-limited-fast` changes the actual
+primitive coupling/timing; it is not a post-hoc duration multiplier.
 
 The model can also be selected from the CLI:
 
@@ -157,11 +175,15 @@ Hamiltonian estimates use actual staged Router batches for both duration and
 fidelity. `reference_time_ns` and `reference_distance` calibrate the Hamiltonian
 transfer timing; `g_max` caps coupling, `max_segment_steps` limits heuristic
 planner stages (the fallback may exceed it), and `beam_width` bounds the ordered
-batch search. Effective fidelity
-distance is the sum of primitive transport displacements in the resynthesized
-net-map plan, **not** duration converted to distance. It can differ from raw
-Transport action distance in either direction. All times are in ns. Calibration
-values must be positive and finite, and planner limits must be positive integers.
+batch search. In `hamiltonian-lindblad-v2`, fidelity comes from the same calibrated
+relaxation/dephasing dynamics as the standalone Hamiltonian experiments, not a
+per-edge distance envelope. The reference is the six-site nearest-neighbor chain
+at 125 ns and probability 0.992; baseline T1 is 141.5 microseconds and one effective
+pure-dephasing rate is fitted once. Changed T1/coupling scenarios retain that baseline
+fit. Effective distance remains a path diagnostic: the sum of primitive resident
+transport displacements, **not** duration converted to distance. All times are ns.
+Numerical or trajectory-uncertainty metadata accompanies noisy estimates; a batch
+probability is not arbitrary-state/process fidelity or full-circuit decoherence.
 
 CSV retains the existing raw `QSTDist` column and appends:
 
@@ -171,7 +193,18 @@ CSV retains the existing raw `QSTDist` column and appends:
 - `EQSTModel`: `legacy` or `hamiltonian`; never infer the model from `QSTDist`.
 
 `GateFidelity` is computed by the Router from normalized additive cost, not by
-rooting an underflowed `TotalFide`. JSON also records `eqst_config`, model/version,
+rooting an underflowed `TotalFide`. For Hamiltonian mode, each batch supplies its
+noisy log-fidelity directly; `enhanced_fide` no longer determines this cost (it
+still applies to legacy statistics). `QSTEffectiveDist` is diagnostic only.
+JSON includes `eqst_uncertainty`, convergence/budget counts and conservative
+log-confidence endpoints. Reusing a cached noisy estimate does not reduce its
+uncertainty by the square root of the reuse count. A per-batch 95% interval is
+**not** automatically a whole-circuit 95% interval; the reported union-bound
+confidence can be low or zero for many distinct sampled batches. Do not label
+unconverged results as precise. The model covers noise during each resynthesized
+transfer batch, not full algorithmic density-matrix evolution or unmodeled extra
+compute/inter-batch idle times. Signed infinite costs are exported as explicit
+strings with a serialization-policy marker; NaN is rejected. JSON also records `eqst_config`, model/version,
 `eqst_batch_count`, and a cache `signature`. Signatures include effective EQST
 calibration/caps/planner settings, all operation timing, fabrication fidelities
 (including `enhanced_fide`), program/routing options, and resolved package path,
@@ -243,7 +276,7 @@ MECH outputs are written under `evaluate/result/mechbaseline/<experiment>/`:
 - `output.csv`
 - `<case>_mech.json`
 
-The old per-axis MECH wrappers remain as compatibility shims, but the recommended entry is now `evaluate/run_mech_routing.py`.
+The old per-axis MECH wrappers are archived under `backup/evaluate/`; the active entry is `evaluate/run_mech_routing.py`.
 
 ## 4. Ablation
 
@@ -277,30 +310,152 @@ package timing/fidelity settings.
 中文说明：消融实验没有完整的分阶段 Hamiltonian 批次，因此仍作为独立 legacy 基线；
 不以新增参数将 dummy 或 MECH 结果重新标注为 Hamiltonian。
 
-Lightweight integration checks (synthetic cases, no long experiments):
+Hamiltonian regression scripts have been archived under `backup/evaluate/`; they are not active evaluation commands.
+
+## 5. Hamiltonian 论文实验
+
+唯一实验脚本为 `evaluate/run_hamiltonian_simulation.py`，核心计算由
+`qunoc.hamiltonian` 提供；原辅助/回归脚本仅归档，不是当前运行入口。
+本文已合并原 `hamiltonian_simulation.md`，以下是统一使用说明。
+
+所有模式使用六站点最近邻参考链（125 ns、目标占据概率0.992）标定的
+T1＋有效纯退相干动力学。基准T1为141.5 μs，退相干只拟合一次，
+不随链长或实际T1扫描重新拟合。图的横轴统一为 `Time (ns)`。
+下述概率是目标占据态概率，不是任意未知逻辑态的过程保真度。
+
+### 5.1 自检
 
 ```bash
-python -m unittest evaluate.test_hamiltonian_evaluation
+python evaluate/run_hamiltonian_simulation.py --self-test
 ```
 
-## Standalone Hamiltonian diagnostics
+检查参考标定、主方程与轨迹求解的一致性、耦合关断、参数传递和实验编排。
+自检不是论文实验数据，也不会重跑routing编译。
 
-The reusable implementation lives in `qunoc.hamiltonian`; the active diagnostic,
-plotting and CSV/JSON runner is `evaluate/run_hamiltonian_simulation.py`.
-The former top-level `hamiltonian_simulation/` directory is preserved under
-`backup/hamiltonian_simulation/` as historical material, not an active import path.
-See [Hamiltonian usage](hamiltonian_simulation.md) for the APIs, calibration and limitations.
+### 5.2 含噪声单激发链长扫描
+
+默认链长为 **6、8、10、…、80（共38个）**。以下命令等价：
 
 ```bash
-python evaluate/run_hamiltonian_simulation.py -n 20 --pairs 0:9,5:19,2:13 \
-  --output-dir evaluate/result/hamiltonian_simulation/nonconflicting
-python evaluate/run_hamiltonian_simulation.py -n 20 --pairs 0:9,9:10,5:19 \
-  --output-dir evaluate/result/hamiltonian_simulation/conflicting
-python -m unittest evaluate.test_chain_evolution
+python evaluate/run_hamiltonian_simulation.py --experiment single-chain
+
+python evaluate/run_hamiltonian_simulation.py \
+  --experiment single-chain \
+  --lengths "$(seq -s, 6 2 80)"
 ```
 
-中文说明：数值核心、无矩阵估计已在 `qunoc`，独立诊断与测试在 `evaluate`；
-旧资料完整归档，新的运行与测试不依赖归档目录。
+这是开放边界最近邻PST链，不是一个端到端直接长程边。默认峰值耦合为6 MHz，
+根据实际耦合确定传输时间；输出理想对照、含噪声曲线、逐链长数据和汇总图。
+
+```bash
+# 默认覆盖：本次指定的链长全部重新计算并覆盖对应文件
+python evaluate/run_hamiltonian_simulation.py \
+  --experiment single-chain --lengths 6,20,80 --existing overwrite
+
+# 跳过：仅复用参数一致、结果完整且满足验证条件的链长
+python evaluate/run_hamiltonian_simulation.py \
+  --experiment single-chain --lengths "$(seq -s, 6 2 80)" --existing skip
+```
+
+固定输出到 `evaluate/result/hamiltonian_revision/single_chain/`，不创建编号目录。
+`--existing skip` 不是“有同名目录就跳过”：噪声、耦合、采样、求解精度或模型版本不一致，
+以及结果不完整时均重新计算。**每次汇总CSV和绘图只使用本次指定的 lengths**；
+其他已有长度文件可留存，但不混入本次汇总。
+
+### 5.3 最长链参数优化
+
+```bash
+python evaluate/run_hamiltonian_simulation.py --experiment optimize
+```
+
+固定输出到 `evaluate/result/hamiltonian_revision/optimize/`，重复运行覆盖旧结果。
+扫描80站点的9组参数：T1为141.5/200/300 μs，最大边耦合为6/9/12 MHz，
+基准退相干率保持不变。保存全部参数点及基准对照，不自动把最好点改成默认配置。
+非基准点属于器件改进假设，并非已经实测的硬件能力。
+
+### 5.4 真实 compiler 样本：六组，每组3例
+
+| 分组 | 2激发 | 3激发 | 4激发 |
+|---|---:|---:|---:|
+| 无冲突：活动pair端点互不重叠 | 3 | 3 | 3 |
+| 有冲突：存在共享活动端点 | 3 | 3 | 3 |
+
+默认选择 `vqe,qaoa,bv,s_ghz` 的实际保存电路；显式 `--programs all` 可包括其他历史程序。
+激发数按该Travel stage/die的全部驻留态计数，**不丢弃静止居民**。
+默认至少两个实际移动请求；k=3/4可能包含静止居民，不能据此声称3/4个态都在净移动。
+占据集合相同的标签交换不会被当作有信息量的占据态传输验证。
+
+**扫描场景并选择18例：**
+
+```bash
+python evaluate/run_hamiltonian_simulation.py \
+  --experiment compiler \
+  --routing-root evaluate/result/routing_scalability \
+  --min-excitations 2 --max-excitations 4 \
+  --cases-per-class 3 --min-moving 2 \
+  --max-dimension 5000 --max-intervals 100 --max-state-mb 512 \
+  --scan-only
+```
+
+`--cases-per-class` 表示每个冲突类别、**每个激发数**各3例，不是每类混合取3例。
+保留扫描中符合条件的真实场景及来源、精确筛选计数和缺额；缺少某组时报告不完整，
+不用其他组或手工请求补位。优先不同完整位置映射和较长链，考虑计算成本及固定ID排序。
+资源限制可能使4激发样本链长短于2激发样本，应披露筛选规则。
+
+**复用同一路径清单进行仿真：**
+
+```bash
+python evaluate/run_hamiltonian_simulation.py \
+  --experiment compiler \
+  --compiler-manifest evaluate/result/hamiltonian_revision/compiler/selection_report.json \
+  --min-excitations 2 --max-excitations 4 \
+  --cases-per-class 3 --min-moving 2 \
+  --num-steps 101 \
+  --trajectories 32768 --min-trajectories 256 \
+  --atol 0.001 --rtol 0.005 --seed 0
+```
+
+compiler扫描和仿真统一写入 `evaluate/result/hamiltonian_revision/compiler/`。
+仿真先完整读取输入清单，再更新同目录的报告和各case文件，避免输入/输出同路径时丢失场景。
+复用清单不重扫历史电路、不重新编译routing，扫描的场景与来源仍保留；
+重复运行覆盖对应选中case结果，汇总只列本次结果。
+`--scan-only` 不重新演化，也不改写既有case数值结果及 `case_summary.csv`；报告状态明确区分扫描与仿真，这时旧CSV不代表新扫描已经完成仿真。
+不再选中的case目录不主动删除，引用本次结果应以报告/汇总清单为准。
+
+需要扫描后立即仿真时，去掉扫描命令中的 `--scan-only` 即可。
+原 `routing_scalability` 的JSON、CSV、package和circuit pickle始终只读。
+
+### 5.5 固定目录、结果复用与精度
+
+默认根目录为 `evaluate/result/hamiltonian_revision/`，可用 `--output-dir` 指定其他根目录：
+
+```text
+hamiltonian_revision/
+├── compiler/
+│   ├── selection_report.json       # 扫描场景、六组选择和本次状态
+│   ├── case_summary.csv            # 本次仿真结果表
+│   └── selected_cases/<case-id>/    # 来源、summary、曲线CSV与PNG/PDF
+├── single_chain/
+│   ├── summary.json
+│   ├── case_summary.csv            # 只包含本次指定 lengths
+│   ├── length_summary.png/.pdf
+│   └── N_006/ ... N_080/           # 每长度单独覆盖或复用
+└── optimize/
+    ├── summary.json
+    ├── all_points.csv
+    └── ...                        # 参数点结果与优化图
+```
+
+这三个论文实验不再产生 `_run_002` 等新路径。历史编号目录不会自动删除或合并。
+手工 `transfer` 模式保留原行为，不受本次固定目录调整影响。
+
+数值输出区分 ideal 振幅和 noisy probability；后者有轨迹样本数、误差和置信区间时，
+须检查 `precision_met`/最终状态。未达预算精度不代表验证完成，不能只选择较高随机值。
+运行较慢时可在命令前加 `OPENBLAS_NUM_THREADS=1`，不改变物理参数。
+
+**与系统重统计的区别：**本节compiler实验对选出的批次做演化曲线；
+第3节 `test_routing_scalability.py --statistics-only` 更新整电路duration/fidelity统计。
+二者使用相同核心噪声接口，但输出路径、样本范围和用途不同，不能互相替代。
 
 ## Plotting
 
@@ -310,18 +465,18 @@ Use the scripted plotting entry instead of the old notebook workflow:
 python evaluate/plot_result_figures.py
 ```
 
-Figures are written under `evaluate/figure/` by default, at the same level as `evaluate/result/`. The old notebook is kept under `evaluate/backup/plot_results.ipynb` as historical reference only.
+Figures are written under `evaluate/figure/` by default, at the same level as `evaluate/result/`. The old notebook is kept under `backup/evaluate/plot_results.ipynb` as historical reference only.
 
 ## Legacy files
 
-These files are retained under `evaluate/backup/` for reference or compatibility, but are not recommended as primary workflow entrypoints:
+These files are retained under `backup/evaluate/` for reference or compatibility, but are not recommended as primary workflow entrypoints:
 
-- `evaluate/backup/shared_rl_layout.yaml`: legacy shared-RL config replaced by train-only + inference-only layout flow.
-- `evaluate/backup/RL_only_layout.yaml`: legacy inline-RL layout config; migrate to `train_layout_model.yaml` and `test_layout_scalability.yaml`.
-- `evaluate/backup/main_exp.py`: legacy overall summary script; prefer canonical routing/MECH CSVs and `plot_result_figures.py`.
-- `evaluate/backup/plot_results.ipynb`: legacy plotting notebook.
-- `evaluate/backup/run_mech_routing_all.py`: legacy monolithic MECH runner replaced by `evaluate/run_mech_routing.py --experiment all`.
-- `evaluate/backup/run_mech_routing_package_size.py`, `evaluate/backup/run_mech_routing_package_shape.py`, `evaluate/backup/run_mech_routing_geometry.py`, `evaluate/backup/run_mech_routing_inter_fidelity.py`: compatibility wrappers for the consolidated MECH CLI.
+- `backup/evaluate/shared_rl_layout.yaml`: legacy shared-RL config replaced by train-only + inference-only layout flow.
+- `backup/evaluate/RL_only_layout.yaml`: legacy inline-RL layout config; migrate to `train_layout_model.yaml` and `test_layout_scalability.yaml`.
+- `backup/evaluate/main_exp.py`: legacy overall summary script; prefer canonical routing/MECH CSVs and `plot_result_figures.py`.
+- `backup/evaluate/plot_results.ipynb`: legacy plotting notebook.
+- `backup/evaluate/run_mech_routing_all.py`: legacy monolithic MECH runner replaced by `evaluate/run_mech_routing.py --experiment all`.
+- `backup/evaluate/run_mech_routing_package_size.py`, `backup/evaluate/run_mech_routing_package_shape.py`, `backup/evaluate/run_mech_routing_geometry.py`, `backup/evaluate/run_mech_routing_inter_fidelity.py`: compatibility wrappers for the consolidated MECH CLI.
 
 ## Generated files
 

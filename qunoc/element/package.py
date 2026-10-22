@@ -731,22 +731,18 @@ class Package:
         """
         return (right >= left) and (bottom >= top)
 
-    def design_module_top_down(
+    def plan_module_top_down(
         self,
         old_module: ComputeModule,
         template: DesignTemplate,
         orient: DesignOrientation,
         interval: tuple[int, int],
-        record: bool = True,
-    ):
-        """
-        Design the module with the given template and arguments.
+    ) -> tuple[list[ComputeModule], list[TransferLine]]:
+        """Plan a split without changing this package / 规划切分，不修改现有封装。
 
-        Args:
-            module (ComputeModule): The module to be designed.
-            template (DesignTemplate): The template to be used.
-            orient (DesignOrientation): The orientation of the template.
-            interval (tuple[int, int]): The x/y intervals between compute modules.
+        Given a module, template, orientation and x/y intervals, return new modules
+        and transfer lines, preserving existing boundary references.
+        输入模块、模板、方向及 x/y 间隔，返回新模块和传输线，保留原边界引用。
         """
         assert Package.is_valid_to_design(old_module, template, orient, interval), (
             f"Invalid design: module_{old_module}, template_{template}, orient_{orient}, interval_{interval}"
@@ -1094,6 +1090,24 @@ class Package:
                                 new_bottom_arg,
                             )
                         )
+        return new_compute_modules, new_transfer_lines
+
+    def design_module_top_down(
+        self,
+        old_module: ComputeModule,
+        template: DesignTemplate,
+        orient: DesignOrientation,
+        interval: tuple[int, int],
+        record: bool = True,
+    ):
+        """Apply the shared split plan / 应用共享切分规划，更新封装。
+
+        Inputs select the module and split; record controls design-history output.
+        输入指定模块及切分方式；record 控制历史记录，无返回值。
+        """
+        new_compute_modules, new_transfer_lines = self.plan_module_top_down(
+            old_module, template, orient, interval
+        )
         self.compute_modules.remove(old_module)
         self.compute_modules.extend(new_compute_modules)
         self.transfer_lines.extend(new_transfer_lines)

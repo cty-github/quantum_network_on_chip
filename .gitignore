@@ -2,7 +2,6 @@
 *.pkl
 *.log
 *.console.log
-*backup*
 .vscode
 __pycache__
 .pytest_cache/
@@ -10,5 +9,7 @@ setup.py
 test.py
 Dockerfile
 result
-evaluate/logs/
-evaluate/figure/
+figure
+logs
+backup
+paper

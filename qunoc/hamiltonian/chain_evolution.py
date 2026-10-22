@@ -3,10 +3,10 @@
 
 Disjoint moving endpoints use simultaneous direct XY edges. Any shared endpoint
 sends the entire task through contiguous PST mirrors (greedy + beam heuristic).
-Time is in ns, couplings in rad/ns. A user-provided N=6, k=1, 125 ns, F=0.992
-anchor sets sqrt(distance) transfer times and exponential distance attenuation.
-This phenomenological design rule is not an experimental reproduction.
-Ideal and calibrated target probabilities are NOT labeled or process fidelities.
+Time is in ns, couplings in rad/ns. N=6, k=1, 125 ns, F=0.992 calibrates
+uniform T1 plus genuine local pure dephasing on the true nearest-neighbor chain.
+Requested sqrt(distance) timings remain a design rule, with physical cap limits.
+Ideal and noisy target probabilities are NOT labeled or process fidelities.
 """
 
 from __future__ import annotations
@@ -21,14 +21,16 @@ import numpy as np
 from scipy.sparse import coo_matrix, csr_matrix
 from scipy.sparse.linalg import expm_multiply
 
+from .noise import NOISE_MODEL_VERSION, NoiseConfig, evaluate_plan_noise
+
 __all__ = ["MODEL_VERSION", "SimulationConfig", "TransferPlan", "plan_transfer", "estimate_transfer",
-           "run_simulation", "simulate_transfer"]
+           "run_simulation", "simulate_transfer", "NoiseConfig", "build_single_chain_plan"]
 
 Pair = tuple[int, int]
 Stage = tuple[Pair, ...]
 Stages = tuple[Stage, ...]
 
-# 用户指定的单激发校准点；不是逐字文献数值。 User-prescribed, not a literal paper quote.
+# 补充材料第18页表1给出六站点参考值。 Six-site anchor verified in Supplementary Table 1, p18.
 REFERENCE_SITES = 6
 REFERENCE_DISTANCE = REFERENCE_SITES - 1
 REFERENCE_TIME_NS = 125.0
@@ -36,7 +38,7 @@ REFERENCE_FIDELITY = 0.992
 REFERENCE_G_RAD_PER_NS = math.pi / (2.0 * REFERENCE_TIME_NS)
 # 六站点参考剖面的峰值，不是宣称设备硬件极限。 Six-site peak used as a modeling cap.
 DEFAULT_G_MAX_RAD_PER_NS = 3.0 * REFERENCE_G_RAD_PER_NS
-MODEL_VERSION = "hamiltonian-net-v1"
+MODEL_VERSION = NOISE_MODEL_VERSION
 PLAN_CACHE_MAXSIZE = 256
 # 限制启发式组合爆炸；大任务直接使用多项式兜底。 Bound combinatorial search work.
 MAX_HEURISTIC_STEPS = 32
@@ -62,10 +64,12 @@ class SimulationConfig:
     ideal: bool = False
     # 独立数值接口保留占据目标；估计接口默认要求标签逐一到达。 Legacy occupation default.
     ordered: bool = False
+    noise: NoiseConfig = NoiseConfig()
+    coupling_policy: str = "preserve-request"
 
     @property
     def attenuation_per_edge(self) -> float:
-        """功能 / Purpose: Fit the distance attenuation coefficient / 拟合距离衰减系数。
+        """功能 / Purpose: Deprecated distance coefficient, unused by noise / 已弃用距离系数，噪声求解不使用。
 
         输入 / Inputs: Reference probability, distance and ideal flag / 参考概率、距离与无损标记。
         输出 / Outputs: alpha=-ln(F_ref)/d_ref per edge, or zero / 每边衰减系数或零。
@@ -153,6 +157,7 @@ class TransferPlan:
         """
         return {
             "model_version": MODEL_VERSION, "ordered": self.config.ordered,
+            "coupling_policy": self.config.coupling_policy,
             "planner": self.planner, "pairs_are_disjoint": self.route == "direct-xy",
             "direct_pairs": self.direct_pairs, "segment_stages": self.segment_stages,
             "manual_segments": self.config.segments is not None,
@@ -198,6 +203,11 @@ class SimulationResult:
     calibrated_peak_fidelity: float
     calibrated_final_fidelity: float
     route_details: dict[str, object]
+    noise: dict[str, object]
+    noisy_fidelities: tuple[float, ...]
+    noisy_standard_errors: tuple[float, ...]
+    noisy_ci_lower: tuple[float, ...]
+    noisy_ci_upper: tuple[float, ...]
 
 
 def are_disjoint_edges(edges: Sequence[Pair]) -> bool:
@@ -240,6 +250,12 @@ def validate_config(config: SimulationConfig) -> None:
                                  ("--beam-width", config.beam_width, 1)):
         if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or value < minimum:
             raise ValueError(f"{name} must be an integer at least {minimum}")
+    if not isinstance(config.noise, NoiseConfig):
+        raise ValueError("noise must be a NoiseConfig")
+    if config.coupling_policy not in ("preserve-request", "cap-limited-fast"):
+        raise ValueError("coupling_policy must be preserve-request or cap-limited-fast")
+    if config.coupling_policy == "cap-limited-fast" and config.g_max is None:
+        raise ValueError("cap-limited-fast requires a finite g_max")
     if not isinstance(config.ordered, bool):
         raise ValueError("ordered must be a boolean")
     if config.segments is not None:
@@ -654,7 +670,7 @@ def simulate_schedule_time_grid(
 
 
 def distance_exposure(times: np.ndarray, primitives: Sequence[dict[str, object]]) -> np.ndarray:
-    """功能 / Purpose: Accumulate traveled-distance budgets / 累积传输距离预算。
+    """功能 / Purpose: Deprecated legacy distance diagnostic / 已弃用的旧距离诊断。
 
     输入 / Inputs: Nanosecond times and scheduled primitive metadata / 纳秒时间及基本操作调度元数据。
     输出 / Outputs: L(t), each primitive's distance growing linearly until shutoff / 各操作线性累积至完成的总距离。
@@ -667,7 +683,7 @@ def distance_exposure(times: np.ndarray, primitives: Sequence[dict[str, object]]
 
 
 def distance_survival(config: SimulationConfig, exposure: np.ndarray) -> np.ndarray:
-    """功能 / Purpose: Evaluate the phenomenological distance envelope / 计算唯象距离衰减包络。
+    """功能 / Purpose: Deprecated legacy distance envelope / 已弃用的旧距离包络。
 
     输入 / Inputs: Validated config and accumulated nonnegative distance / 合法配置及累计非负距离。
     输出 / Outputs: exp(-alpha*L), with no independent idle-time penalty / 无额外静止时间惩罚的包络数组。
@@ -678,7 +694,7 @@ def distance_survival(config: SimulationConfig, exposure: np.ndarray) -> np.ndar
 def calibrated_target_fidelities(
     config: SimulationConfig, exposure: np.ndarray, ideal_fidelities: np.ndarray,
 ) -> np.ndarray:
-    """功能 / Purpose: Apply the distance-error design envelope / 应用距离误差设计包络。
+    """功能 / Purpose: Deprecated old distance-error envelope, never active noise / 已弃用距离包络，非活动噪声模型。
 
     输入 / Inputs: Validated config, distance exposure and ideal probabilities / 合法配置、距离暴露及理想概率。
     输出 / Outputs: exp(-alpha*L(t))*F_ideal(t); not a Lindblad solution / 校准概率数组；并非 Lindblad 解。
@@ -746,7 +762,9 @@ def _cached_transfer_plan(config: SimulationConfig) -> TransferPlan:
             # max sqrt(j*(L-j)) has a closed form; no O(L) coupling profile for estimation.
             # 最大耦合剖面用闭式，估计不创建 O(L) 数组。
             max_profile = 1.0 if disjoint else math.sqrt((length // 2) * ((length + 1) // 2))
-            g, duration = stage_scale(max_profile, g_requested, config.g_max)
+            g, duration = stage_scale(
+                max_profile, config.g_max / max_profile if config.coupling_policy == "cap-limited-fast" else g_requested,
+                config.g_max)
             cost = span if disjoint else sum(
                 abs(left + right - 2 * site) for site in labeled_path[-1] if left <= site <= right)
             end_time = elapsed + duration
@@ -811,8 +829,9 @@ def estimate_transfer(
     reference_time_ns: float = REFERENCE_TIME_NS, reference_distance: float = float(REFERENCE_DISTANCE),
     reference_fidelity: float = REFERENCE_FIDELITY, g_max: float | None = DEFAULT_G_MAX_RAD_PER_NS,
     max_segment_steps: int = 10, beam_width: int = 128, ordered: bool = True,
+    noise: NoiseConfig | None = None, coupling_policy: str = "preserve-request", ideal: bool = False,
 ) -> dict[str, object]:
-    """功能 / Purpose: Estimate paired transfer cost without Fock-space evolution / 不演化 Fock 空间地估计逐对传输成本。
+    """功能 / Purpose: Estimate paired transfer with shared structured noise / 以共享结构化噪声估计逐对传输成本。
 
     输入 / Inputs: All modeled residents including i:i holds, N, calibration/budgets / 全部建模居民含静止 i:i、链长、校准与预算。
     输出 / Outputs: Fresh dict with ns time, edge distance, stable log_fidelity and immutable plan / 含纳秒时间、边距离、稳定对数保真度及不可变方案的新字典。
@@ -822,16 +841,18 @@ def estimate_transfer(
         sources, targets, chain_length, reference_time_ns=reference_time_ns,
         reference_distance=reference_distance, reference_fidelity=reference_fidelity,
         g_max=g_max, max_segment_steps=max_segment_steps, beam_width=beam_width, ordered=ordered,
+        noise=NoiseConfig() if noise is None else noise, coupling_policy=coupling_policy, ideal=ideal,
     )
     plan = plan_transfer(config)
     # 直接累计对数误差，不先计算会下溢的概率。 Never take log of an underflowed probability.
-    log_fidelity = (-plan.config.attenuation_per_edge * plan.effective_distance_edges
-                    if plan.effective_distance_edges else 0.0)
+    noisy = evaluate_plan_noise(plan, (plan.transfer_time_ns,))
+    log_fidelity = noisy["log_fidelities"][-1]
     return {
         "transfer_time_ns": plan.transfer_time_ns,
         "effective_distance_edges": plan.effective_distance_edges,
         "log_fidelity": log_fidelity, "neglog_fidelity": -log_fidelity,
         "model_version": MODEL_VERSION, "plan": plan,
+        "fidelity": noisy["fidelities"][-1], "noise": noisy["metadata"],
     }
 
 
@@ -843,6 +864,9 @@ def run_simulation(config: SimulationConfig) -> tuple[SimulationResult, np.ndarr
     Numerical probability is occupation-only even for ordered plans / 即使方案有序，数值概率仍仅验证占据。
     """
     plan = plan_transfer(config)
+    dimension = math.comb(config.chain_length, len(config.pairs))
+    if dimension > 100000:
+        raise ValueError("ideal sampled simulation exceeds 100000 fixed-k states; use estimate_transfer")
     basis, index = build_fixed_excitation_basis(config.chain_length, len(config.pairs))
     matrices = []
     for primitive in plan.primitives:
@@ -862,8 +886,8 @@ def run_simulation(config: SimulationConfig) -> tuple[SimulationResult, np.ndarr
         len(basis), index[tuple(sorted(config.sources))], index[tuple(sorted(config.targets))],
         hamiltonians, plan.interval_durations, config.num_steps)
     details = plan.to_route_details()
-    exposure = distance_exposure(times, details["primitives"])
-    calibrated = calibrated_target_fidelities(config, exposure, fidelities)
+    noisy = evaluate_plan_noise(plan, times)
+    calibrated = np.asarray(noisy["fidelities"])
     peak, calibrated_peak = int(np.argmax(fidelities)), int(np.argmax(calibrated))
     result = SimulationResult(
         config=config, route=plan.route, hilbert_dim=len(basis),
@@ -872,6 +896,9 @@ def run_simulation(config: SimulationConfig) -> tuple[SimulationResult, np.ndarr
         calibrated_peak_time=float(times[calibrated_peak]),
         calibrated_peak_fidelity=float(calibrated[calibrated_peak]),
         calibrated_final_fidelity=float(calibrated[-1]), route_details=details,
+        noise=noisy["metadata"], noisy_fidelities=noisy["fidelities"],
+        noisy_standard_errors=noisy["standard_errors"],
+        noisy_ci_lower=noisy["ci_lower"], noisy_ci_upper=noisy["ci_upper"],
     )
     return result, times, target_amps, source_amps, fidelities
 
@@ -881,6 +908,7 @@ def simulate_transfer(
     reference_time_ns: float = REFERENCE_TIME_NS, reference_distance: float = REFERENCE_DISTANCE,
     reference_fidelity: float = REFERENCE_FIDELITY,
     g_max: float | None = DEFAULT_G_MAX_RAD_PER_NS, ideal: bool = False,
+    noise: NoiseConfig | None = None, coupling_policy: str = "preserve-request",
 ) -> dict[str, float]:
     """功能 / Purpose: Public source/target-to-time/fidelity interface / 公共源目标到时间保真度接口。
 
@@ -891,9 +919,44 @@ def simulate_transfer(
     config = _request_config(
         sources, targets, chain_length, reference_time_ns=reference_time_ns,
         reference_distance=reference_distance, reference_fidelity=reference_fidelity,
-        g_max=g_max, ideal=ideal,
+        g_max=g_max, ideal=ideal, noise=NoiseConfig() if noise is None else noise,
+        coupling_policy=coupling_policy,
     )
-    result = run_simulation(config)[0]
-    return {"transfer_time_ns": result.final_time, "fidelity": result.calibrated_final_fidelity}
+    plan = plan_transfer(config)
+    noisy = evaluate_plan_noise(plan, (plan.transfer_time_ns,))
+    return {"transfer_time_ns": plan.transfer_time_ns, "fidelity": noisy["fidelities"][-1]}
 
 
+def build_single_chain_plan(
+    length: int, g_max: float = DEFAULT_G_MAX_RAD_PER_NS, *, noise: NoiseConfig | None = None,
+    coupling_policy: str = "preserve-request", reference_time_ns: float = REFERENCE_TIME_NS,
+    reference_fidelity: float = REFERENCE_FIDELITY, ideal: bool = False,
+) -> TransferPlan:
+    """Purpose / 功能: Construct a true NN fixed-peak single-chain experiment / 构造真实最近邻固定峰值单链实验。
+
+    Inputs / 输入: N>=2, peak edge coupling rad/ns, noise/reference controls / 链长、峰值耦合及噪声参考控制。
+    Outputs / 输出: Explicit one-primitive PST plan, never automatic direct XY / 显式单操作 PST 方案，不走自动直接边。
+    The single-chain protocol always fills the peak cap; policy labels only apply to general routing.
+    单链协议始终使用峰值上限，策略标签仅影响一般路由。
+    """
+    if isinstance(length, bool) or not isinstance(length, (int, np.integer)) or length < 2:
+        raise ValueError("single-chain length must be an integer at least two")
+    config = SimulationConfig(length, ((0, length - 1),), g_max=g_max, num_steps=2,
+                              noise=NoiseConfig() if noise is None else noise,
+                              coupling_policy=coupling_policy, reference_time_ns=reference_time_ns,
+                              reference_fidelity=reference_fidelity, ideal=ideal)
+    validate_config(config)
+    if g_max is None:
+        raise ValueError("single-chain fixed-peak protocol requires g_max")
+    profile = math.sqrt((length // 2) * ((length + 1) // 2))
+    g = g_max / profile
+    duration = math.pi / (2 * g)
+    requested = reference_time_ns * math.sqrt((length - 1) / REFERENCE_DISTANCE)
+    primitive = TransferPrimitive(0, "pst-segment", (0, length - 1), length - 1, length - 1,
+                                  requested, duration, 0.0, duration, g, g_max, duration > requested)
+    return TransferPlan(config=config, route="pst-segments", planner="single-chain-fixed-peak",
+                        direct_pairs=(), segment_stages=(((0, length - 1),),), primitives=(primitive,),
+                        stage_durations=(duration,), stage_requested_durations=(requested,),
+                        interval_durations=(duration,), interval_primitive_indices=((0,),),
+                        labeled_path=((0,), (length - 1,)), transfer_time_ns=duration,
+                        effective_distance_edges=length - 1)

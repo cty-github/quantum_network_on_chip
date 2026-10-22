@@ -1,5 +1,7 @@
 import pickle
 import logging
+import hashlib
+import json
 from copy import deepcopy
 
 from ..utils.config import config
@@ -1661,12 +1663,12 @@ class Circuit:
             )
 
     def estimate_eqst_batches(self, package: Package) -> list[dict]:
-        """Estimate each Riding/die net map once, paired by every resident logical ID.
-        按阶段与传输裸片估计净映射；所有驻留逻辑 ID（含静止态）一一配对。
+        """功能 / Purpose: Estimate noisy Riding/die net maps for all resident logical IDs / 对所有驻留逻辑 ID 估计有噪净映射。
 
-        Args / 输入: package supplies actual chiplets and full chain geometry / 封装提供裸片与完整链几何.
-        Returns / 输出: batch dictionaries with frozen boundary tuples, time and distance / 批次边界、时间及等效距离.
-        This is net-map resynthesis, not a replay of physical trajectories / 本结果为净映射重合成成本.
+        Inputs / 输入: package supplies actual chiplets and full chain geometry / 封装提供裸片与完整链几何.
+        Outputs / 输出: Boundary tuples, duration, diagnostic distance, log cost and uncertainty / 批次边界、时长、诊断距离、对数成本与不确定度.
+        Noise includes stationary residents during this batch, not cross-stage/compute idle.
+        噪声覆盖本批次执行期间的静止居民，但不包括跨阶段或计算等待；仍为净映射重合成而非历史轨迹重放。
         """
         if package is None:
             raise ValueError("Hamiltonian EQST estimation requires a package")
@@ -1724,17 +1726,35 @@ class Circuit:
                 })
         # Exhaust replay (including final-map checks) before invoking any planner.
         # 完整验证重放终态后再调用规划器；不按可变 Circuit 身份缓存。
-        from ..hamiltonian import estimate_transfer
+        from ..hamiltonian import NoiseConfig, estimate_transfer
+        noise = NoiseConfig(**{
+            name: settings[name] for name in (
+                "t1_ns", "gamma_phi_ns", "calibration_t1_ns", "calibration_time_ns", "calibration_fidelity",
+                "solver", "trajectories",
+                "min_trajectories", "seed", "atol", "rtol", "confidence", "master_max_dim",
+            )
+        })
         for batch in batches:
             result = estimate_transfer(
                 batch["sources"], batch["targets"], chain_length=batch["chain_length"],
                 reference_time_ns=settings["reference_time_ns"],
                 reference_distance=settings["reference_distance"], g_max=settings["g_max"],
                 max_segment_steps=settings["max_segment_steps"], beam_width=settings["beam_width"],
-                ordered=True,
+                ordered=True, noise=noise, coupling_policy=settings["coupling_policy"],
             )
-            batch["transfer_time_ns"] = result["transfer_time_ns"]
-            batch["effective_distance_edges"] = result["effective_distance_edges"]
+            for name in ("transfer_time_ns", "effective_distance_edges", "log_fidelity", "neglog_fidelity", "model_version"):
+                batch[name] = result[name]
+            batch["noise"] = deepcopy(result["noise"])
+            # Match content, not stage/die IDs: repeated cached samples are correlated.
+            # 按内容而非阶段/裸片编号识别重复估计，同一缓存样本不可当作独立试验。
+            request = {
+                "sources": batch["sources"], "targets": batch["targets"],
+                "chain_length": batch["chain_length"], "settings": settings,
+            }
+            batch["noise_estimate_key"] = hashlib.sha256(
+                json.dumps(request, sort_keys=True, allow_nan=False).encode("utf-8")
+            ).hexdigest()
+            batch["noise_scope"] = "resident_occupations_during_resynthesized_batch_only"
         return batches
 
     def _estimate_hamiltonian_duration(self, package: Package, eqst_batches=None) -> float:

@@ -116,8 +116,9 @@ AXIS_LABELS = {
     "chiplet_sparsity_to_test": "ChipletSparsity",
 }
 
-# Bump when evaluation/cache semantics change; old linear-only results are not reusable.
-EVALUATION_SCHEMA_VERSION = 3
+# Noise/cache semantics changed; old distance results cannot be reused, compilation can.
+# 噪声与统计缓存版本更新：旧距离结果作废，但独立编译签名保持不变，可复用 pickle。
+EVALUATION_SCHEMA_VERSION = 4
 COMPILATION_SCHEMA_VERSION = 1
 EQST_OPTION_NAMES = (
     "model",
@@ -126,12 +127,27 @@ EQST_OPTION_NAMES = (
     "g_max",
     "max_segment_steps",
     "beam_width",
+    "t1_ns",
+    "gamma_phi_ns",
+    "solver",
+    "trajectories",
+    "min_trajectories",
+    "seed",
+    "atol",
+    "rtol",
+    "confidence",
+    "master_max_dim",
+    "coupling_policy",
 )
 EQST_CSV_FIELDS = [
     "QSTEffectiveDist",
     "QSTNegLogFidelity",
     "TotalNegLogFidelity",
     "EQSTModel",
+    "EQSTVersion",
+    "EQSTMCBatchCount",
+    "EQSTUnconvergedBatchCount",
+    "EQSTConfidenceLowerBound",
 ]
 
 ROUTING_OPTION_DEFAULTS: dict[str, Any] = {
@@ -186,9 +202,10 @@ def _copy_package_eqst_config(
 
 
 def _add_eqst_arguments(parser: argparse.ArgumentParser) -> None:
-    """Add optional model/calibration flags to a parser; return None.
+    """功能 / Purpose: Add optional EQST planning and dynamical-noise flags / 添加规划与动力学噪声选项。
 
-    输入命令行解析器，添加 EQST 模型、标定及规划参数；无返回值。
+    Inputs / 输入: Argument parser / 命令行解析器。
+    Outputs / 输出: None; registers flags without overriding unspecified YAML values / 无返回值，未指定项不覆盖 YAML。
     """
     parser.add_argument(
         "--eqst-model", choices=["legacy", "hamiltonian"], default=None,
@@ -200,11 +217,28 @@ def _add_eqst_arguments(parser: argparse.ArgumentParser) -> None:
         ("g_max", float, "Maximum Hamiltonian coupling in rad/ns (default: 3*pi/250)."),
         ("max_segment_steps", int, "Heuristic planner stage limit (default: 10); fallback may exceed it."),
         ("beam_width", int, "Hamiltonian batch planner beam width (default: 128)."),
+        ("t1_ns", float, "Actual relaxation T1 in ns (default: 141500); does not refit dephasing."),
+        ("gamma_phi_ns", float, "Pure dephasing rate per ns (default: frozen N6/.992/125ns reference fit)."),
+        ("trajectories", int, "Maximum stochastic trajectories (default: 2048)."),
+        ("min_trajectories", int, "Minimum stochastic trajectories (default: 128; at least 2)."),
+        ("seed", int, "Noise sampling seed (default: 0)."),
+        ("atol", float, "Absolute sampling tolerance (default: .002)."),
+        ("rtol", float, "Relative sampling tolerance (default: .02)."),
+        ("confidence", float, "Per-batch confidence level, not circuit confidence (default: .95)."),
+        ("master_max_dim", int, "Maximum deterministic density-sector dimension (default/hard cap: 128)."),
     ):
         parser.add_argument(
             "--eqst-" + name.replace("_", "-"), type=value_type, default=None,
             help=help_text,
         )
+    parser.add_argument(
+        "--eqst-solver", choices=["auto", "master", "trajectories"], default=None,
+        help="Noise solver (default: auto); unsupported/resource-limited cases fail explicitly.",
+    )
+    parser.add_argument(
+        "--eqst-coupling-policy", choices=["preserve-request", "cap-limited-fast"], default=None,
+        help="Keep requested timing or use the actual coupling cap to accelerate primitives.",
+    )
 
 
 def _eqst_cli_overrides(args: argparse.Namespace) -> dict[str, Any]:
@@ -256,6 +290,24 @@ def _package_evaluation_signature(package: Package, package_path: str | Path) ->
             "enhanced_fide": float(model.enhanced_fide),
         },
     }
+
+
+def _json_fidelity_export(value: Any) -> Any:
+    """功能 / Purpose: Export exact infinite log bounds as signed JSON strings / 将精确无限对数界导出为带符号 JSON 字符串。
+
+    Inputs / 输入: Nested statistics payload, with numeric internal infinities / 嵌套统计结果，内部无限值为数值。
+    Outputs / 输出: JSON-safe copy; infinities become 'Infinity'/'-Infinity', NaN raises / 可序列化副本，无限值转字符串，NaN 报错。
+    """
+    if isinstance(value, dict):
+        return {key: _json_fidelity_export(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_fidelity_export(item) for item in value]
+    if isinstance(value, float):
+        if math.isnan(value):
+            raise ValueError("Cannot export NaN fidelity statistics")
+        if math.isinf(value):
+            return "Infinity" if value > 0 else "-Infinity"
+    return value
 
 
 def _package_topology_digest(package: Package) -> str:
@@ -545,6 +597,11 @@ def _route_once(
     run_config: dict[str, Any],
     quantum_program: str,
 ) -> dict[str, Any]:
+    """功能 / Purpose: Reuse compilation and evaluate versioned routing/noise metrics / 复用编译结果并评估带版本的路由噪声统计。
+
+    Inputs / 输入: Defaults, experiment, per-case settings and program name / 默认项、实验、单例配置与程序名。
+    Outputs / 输出: Metrics and strict JSON cache; infinite log bounds export as signed strings / 指标与严格 JSON 缓存，无限对数界导出为带符号字符串。
+    """
     package_path = _build_layout_package_path(common_defaults, spec.name, run_config)
     if not os.path.exists(package_path):
         raise FileNotFoundError(
@@ -670,6 +727,7 @@ def _route_once(
         "compilation_signature": compilation_signature,
         "compiled_circuit_identity": circuit_identity,
         "statistics_source": statistics_source,
+        "nonfinite_export_policy": "signed_infinity_strings_for_log_bounds_and_costs_nan_rejected",
         "legacy_compilation_metadata_trusted": legacy_metadata_trusted,
         "layout_package_path": package_path,
         "routing_options": routing_options,
@@ -678,13 +736,18 @@ def _route_once(
 
     temporary = cache_path + ".tmp"
     with open(temporary, "w", encoding="utf-8") as file:
-        json.dump(exp_result, file, ensure_ascii=False, indent=2)
+        json.dump(_json_fidelity_export(exp_result), file, ensure_ascii=False, indent=2, allow_nan=False)
     os.replace(temporary, cache_path)
 
     return exp_result
 
 
 def _run_experiment(common_defaults: dict[str, Any], spec: ExperimentSpec) -> None:
+    """功能 / Purpose: Evaluate a routing sweep and export versioned uncertainty-aware rows / 评估路由扫描并导出含版本及不确定度的行。
+
+    Inputs / 输入: Shared defaults and experiment specification / 公共默认值与实验规格。
+    Outputs / 输出: None; writes per-case JSON and sweep CSV without rerouting reusable circuits / 无返回值，写入结果但不重新路由可复用电路。
+    """
     os.makedirs(spec.exp_dir, exist_ok=True)
     logging.basicConfig(
         filename=os.path.join(spec.exp_dir, f"{spec.log_filename}.txt"),
@@ -773,6 +836,10 @@ def _run_experiment(common_defaults: dict[str, Any], spec: ExperimentSpec) -> No
                         exp_result["qst_neglog_fidelity"],
                         exp_result["total_neglog_fidelity"],
                         exp_result["eqst_model"],
+                        exp_result["eqst_config"]["version"],
+                        (exp_result.get("eqst_uncertainty") or {}).get("mc_batch_count"),
+                        (exp_result.get("eqst_uncertainty") or {}).get("unconverged_batch_count"),
+                        (exp_result.get("eqst_uncertainty") or {}).get("simultaneous_confidence_lower_bound"),
                     ]
                 )
 

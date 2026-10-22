@@ -85,7 +85,9 @@ except ModuleNotFoundError as error:
     ) from error
 
 
-SCHEMA_VERSION = 2
+# Invalidate statistics only; these unstaged baselines remain explicitly legacy.
+# 仅更新统计缓存版本；无阶段边界的基线仍明确采用 legacy，不伪装成 Lindblad 批次。
+SCHEMA_VERSION = 3
 DEFAULT_SIZES = [40, 60, 80, 100, 120]
 QUANTUM_PROGRAMS = ["vqe", "qaoa", "bv", "s_ghz"]
 STRATEGIES = ["mech_eqst", "qunoc_wo_opt"]
@@ -124,6 +126,9 @@ ROW_FIELDS = [
 PRE_EQST_ROW_FIELDS = ROW_FIELDS.copy()
 LEGACY_ROW_FIELDS = [
     "Algorithm" if field == "QuantumProgram" else field for field in PRE_EQST_ROW_FIELDS
+]
+PRE_LINDBLAD_ROW_FIELDS = ROW_FIELDS + [
+    "QSTEffectiveDist", "QSTNegLogFidelity", "TotalNegLogFidelity", "EQSTModel",
 ]
 ROW_FIELDS += EQST_CSV_FIELDS
 
@@ -624,6 +629,11 @@ def _load_cached_result(
 
 
 def _result_row(result: dict[str, Any]) -> dict[str, Any]:
+    """功能 / Purpose: Export aligned baseline metrics with explicit model version / 导出对齐基线指标及明确版本。
+
+    Inputs / 输入: Cached or freshly computed result / 缓存或新计算的结果。
+    Outputs / 输出: CSV row; no Monte Carlo claim for legacy baselines / CSV 行，legacy 不声称蒙特卡洛精度。
+    """
     result = _normalize_result_schema(result)
     return {
         "Baseline": result["strategy"],
@@ -642,6 +652,10 @@ def _result_row(result: dict[str, Any]) -> dict[str, Any]:
         "QSTNegLogFidelity": result.get("qst_neglog_fidelity"),
         "TotalNegLogFidelity": result.get("total_neglog_fidelity"),
         "EQSTModel": result.get("eqst_model", "legacy"),
+        "EQSTVersion": (result.get("eqst_config") or {}).get("version", "legacy-v1"),
+        "EQSTMCBatchCount": None,
+        "EQSTUnconvergedBatchCount": None,
+        "EQSTConfidenceLowerBound": None,
     }
 
 
@@ -656,13 +670,18 @@ def _row_key(row: dict[str, Any]) -> tuple[int, str, str]:
 def _load_existing_rows(
     path: Path,
 ) -> tuple[dict[tuple[int, str, str], dict[str, Any]], bool]:
+    """功能 / Purpose: Load baseline rows and recognize historical CSV headers / 读取基线行并识别历史表头。
+
+    Inputs / 输入: Existing CSV path / 已有 CSV 路径。
+    Outputs / 输出: Indexed rows and whether their header needs migration / 索引行及是否需要迁移表头。
+    """
     if not path.is_file():
         return {}, False
     with path.open("r", newline="", encoding="utf-8") as file:
         reader = csv.DictReader(file)
         if reader.fieldnames == ROW_FIELDS:
             migrated = False
-        elif reader.fieldnames in (PRE_EQST_ROW_FIELDS, LEGACY_ROW_FIELDS):
+        elif reader.fieldnames in (PRE_EQST_ROW_FIELDS, LEGACY_ROW_FIELDS, PRE_LINDBLAD_ROW_FIELDS):
             migrated = True
         elif reader.fieldnames is not None and {
             "PackageSize",

@@ -588,160 +588,20 @@ class QuNoCEnv(gym.Env):
             self.compute_ratio_target - self.feasible_tolerance
         )
 
-    @staticmethod
-    def _add_line_nodes(
-        nodes: set[tuple[int, int]],
-        axis: int,
-        pos: int,
-        start: int,
-        end: int,
-    ) -> None:
-        for coordinate in range(start, end + 1):
-            nodes.add((coordinate, pos) if axis == 0 else (pos, coordinate))
-
-    def _top_down_transfer_nodes(self, action_dict: dict) -> set[tuple[int, int]]:
-        old_module = action_dict["old_module"]
-        template = action_dict["template"]
-        orient = action_dict["orient"]
-        x_interval, y_interval = action_dict["interval"]
-        old_left = old_module.left[0]
-        old_top = old_module.top[0]
-        old_right = old_module.right[0]
-        old_bottom = old_module.bottom[0]
-        nodes: set[tuple[int, int]] = set()
-
-        if template == DesignTemplate.Stripe:
-            if orient == DesignOrientation.X:
-                stripe_interval = y_interval
-                n_blocks = (old_bottom - old_top + 2) // (stripe_interval + 1)
-                for index in range(n_blocks - 1):
-                    self._add_line_nodes(
-                        nodes,
-                        0,
-                        old_top + (index + 1) * (stripe_interval + 1) - 1,
-                        old_left,
-                        old_right,
-                    )
-            elif orient == DesignOrientation.Y:
-                stripe_interval = x_interval
-                n_blocks = (old_right - old_left + 2) // (stripe_interval + 1)
-                for index in range(n_blocks - 1):
-                    self._add_line_nodes(
-                        nodes,
-                        1,
-                        old_left + (index + 1) * (stripe_interval + 1) - 1,
-                        old_top,
-                        old_bottom,
-                    )
-        elif template == DesignTemplate.Radial:
-            if orient == DesignOrientation.X:
-                self._add_line_nodes(
-                    nodes,
-                    0,
-                    old_top + y_interval,
-                    old_left,
-                    old_right - x_interval - 1,
-                )
-                self._add_line_nodes(
-                    nodes,
-                    1,
-                    old_right - x_interval,
-                    old_top,
-                    old_bottom - y_interval - 1,
-                )
-                self._add_line_nodes(
-                    nodes,
-                    0,
-                    old_bottom - y_interval,
-                    old_left + x_interval + 1,
-                    old_right,
-                )
-                self._add_line_nodes(
-                    nodes,
-                    1,
-                    old_left + x_interval,
-                    old_top + y_interval + 1,
-                    old_bottom,
-                )
-            elif orient == DesignOrientation.Y:
-                self._add_line_nodes(
-                    nodes,
-                    1,
-                    old_left + x_interval,
-                    old_top,
-                    old_bottom - y_interval - 1,
-                )
-                self._add_line_nodes(
-                    nodes,
-                    0,
-                    old_bottom - y_interval,
-                    old_left,
-                    old_right - x_interval - 1,
-                )
-                self._add_line_nodes(
-                    nodes,
-                    1,
-                    old_right - x_interval,
-                    old_top + y_interval + 1,
-                    old_bottom,
-                )
-                self._add_line_nodes(
-                    nodes,
-                    0,
-                    old_top + y_interval,
-                    old_left + x_interval + 1,
-                    old_right,
-                )
-        elif template == DesignTemplate.Grid:
-            if orient == DesignOrientation.X:
-                n_blocks = (old_bottom - old_top + 2) // (y_interval + 1)
-                n_units = (old_right - old_left + 2) // (x_interval + 1)
-                for block_index in range(n_blocks):
-                    for unit_index in range(n_units - 1):
-                        self._add_line_nodes(
-                            nodes,
-                            1,
-                            old_left + (unit_index + 1) * (x_interval + 1) - 1,
-                            old_top + block_index * (y_interval + 1),
-                            old_bottom
-                            if block_index == n_blocks - 1
-                            else old_top + block_index * (y_interval + 1) + y_interval - 1,
-                        )
-                    if block_index < n_blocks - 1:
-                        self._add_line_nodes(
-                            nodes,
-                            0,
-                            old_top + (block_index + 1) * (y_interval + 1) - 1,
-                            old_left,
-                            old_right,
-                        )
-            elif orient == DesignOrientation.Y:
-                n_blocks = (old_right - old_left + 2) // (x_interval + 1)
-                n_units = (old_bottom - old_top + 2) // (y_interval + 1)
-                for block_index in range(n_blocks):
-                    for unit_index in range(n_units - 1):
-                        self._add_line_nodes(
-                            nodes,
-                            0,
-                            old_top + (unit_index + 1) * (y_interval + 1) - 1,
-                            old_left + block_index * (x_interval + 1),
-                            old_right
-                            if block_index == n_blocks - 1
-                            else old_left + block_index * (x_interval + 1) + x_interval - 1,
-                        )
-                    if block_index < n_blocks - 1:
-                        self._add_line_nodes(
-                            nodes,
-                            1,
-                            old_left + (block_index + 1) * (x_interval + 1) - 1,
-                            old_top,
-                            old_bottom,
-                        )
-        return nodes
-
     def _would_preserve_compute_ratio(self, action_dict: dict) -> bool:
-        transfer_nodes = self._top_down_transfer_nodes(action_dict)
-        next_compute_count = len(self.package.compute_nodes - transfer_nodes)
+        """Check a split's true compute population / 按切分后的真实计算节点判断比例。
+
+        Input a semantic action; return whether its planned geometry meets the limit.
+        输入语义动作，返回规划几何是否满足比例约束，不修改当前布局。
+        """
+        new_modules, _ = self.package.plan_module_top_down(**action_dict)
+        old_module = action_dict["old_module"]
+        # Retiling sparse chiplets can both remove and add sites outside transfer lines.
+        # 稀疏芯粒重新划分会在传输线以外增减节点，必须替换整个旧模块的计算节点集合。
+        next_compute_nodes = self.package.compute_nodes.difference(old_module.get_nodes())
+        for module in new_modules:
+            next_compute_nodes.update(module.get_nodes())
+        next_compute_count = len(next_compute_nodes)
         minimum_compute_count = math.ceil(
             self.compute_ratio_target
             * getattr(self, "initial_compute_node_count", len(self.package.compute_nodes))

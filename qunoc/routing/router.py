@@ -18,7 +18,7 @@ from ..element.package import (
     make_save_gif_file,
 )
 from ..utils.config import config
-from .fidelity import normalized_gate_fidelity, probability_cost
+from .fidelity import aggregate_batch_uncertainty, normalized_gate_fidelity, probability_cost
 from .circuit import (
     Alight,
     Board,
@@ -2980,7 +2980,9 @@ class Router:
         """功能 / Purpose: Accumulate stable full-route statistics / 累计稳定的真实电路统计。
 
         输入 / Inputs: Whether to materialize total probability / 是否计算展示用全电路概率。
-        输出 / Outputs: Counts, raw/model distances, additive costs and batch audit / 计数、距离、负对数及批次明细。
+        输出 / Outputs: Counts, diagnostic distances, noisy log costs and conservative MC bounds / 计数、诊断距离、有噪对数成本与保守采样界。
+        Only per-batch resident occupation loss is modeled; cross-stage/compute idle is not exact.
+        仅覆盖各批次居民的占据损耗，不宣称精确计算跨阶段或计算等待的全电路退相干。
         """
         eqst_config = OperationConfig.get_eqst_config(self.circuit.op_config)
         hamiltonian = eqst_config["model"] == "hamiltonian"
@@ -3029,12 +3031,19 @@ class Router:
                     non_qst_costs.append(probability_cost(self.package.get_coupler_fide(
                         action.phy_ctrl_qubit, action.phy_targ_qubit)))
 
-        effective_distance = (sum(batch["effective_distance_edges"] for batch in batches)
+        effective_distance = (math.fsum(batch["effective_distance_edges"] for batch in batches)
                               if hamiltonian else qst_distance)
-        # fab 的每边概率是路由校准权威，不从可能下溢的批次概率反推距离。
-        # Use the package per-edge calibration and the directly accumulated model distance.
-        qst_cost = probability_cost(self.package.fab_model.enhanced_fide, effective_distance)
-        total_cost = math.fsum(non_qst_costs + [qst_cost])
+        # Hamiltonian uses actual noisy completion logs; distance is diagnostic only.
+        # Hamiltonian 直接采用有噪完成概率对数，等效距离仅供诊断；legacy 保持原每边校准。
+        qst_cost = (math.fsum(batch["neglog_fidelity"] for batch in batches) if hamiltonian
+                    else probability_cost(self.package.fab_model.enhanced_fide, qst_distance))
+        non_qst_cost = math.fsum(non_qst_costs)
+        total_cost = math.fsum((non_qst_cost, qst_cost))
+        uncertainty = aggregate_batch_uncertainty(batches) if hamiltonian else None
+        if uncertainty is not None:
+            uncertainty["total_neglog_fidelity_interval"] = [
+                math.fsum((non_qst_cost, bound)) for bound in uncertainty["neglog_fidelity_interval"]
+            ]
         return {
             "intra_gate": intra_gate_num, "inter_gate": inter_gate_num,
             "qst_dist": qst_distance, "meas_num": meas_num,
@@ -3044,7 +3053,13 @@ class Router:
             "total_neglog_fidelity": total_cost,
             "eqst_model": eqst_config["model"], "eqst_config": eqst_config,
             "eqst_batch_count": len(batches), "eqst_batches": batches,
-            "eqst_fidelity_per_edge": self.package.fab_model.enhanced_fide,
+            "eqst_fidelity_per_edge": None if hamiltonian else self.package.fab_model.enhanced_fide,
+            "eqst_uncertainty": uncertainty,
+            "eqst_noise_parameters": batches[0]["noise"]["parameters"] if batches else None,
+            "eqst_reference_fit": batches[0]["noise"]["reference_fit"] if batches else None,
+            "eqst_noise_scope": ("resident_occupations_during_resynthesized_batch_only" if hamiltonian else None),
+            "eqst_cross_stage_idle_included": False if hamiltonian else None,
+            "eqst_accounting_policy": ("batch_lindblad_neglog_v2" if hamiltonian else "legacy_distance_v1"),
         }
 
     def statistic_route_results(self) -> tuple[int, int, int, int, float]:
@@ -3139,7 +3154,7 @@ class Router:
         """功能 / Purpose: Normalize additive errors before exponentiation / 指数化前归一化逻辑门误差。
 
         输入 / Inputs: Optional statistics from the same unchanged circuit / 可选的同一未变电路统计。
-        输出 / Outputs: Mean logical-gate fidelity using model distance / 使用模型距离的平均逻辑门保真度。
+        输出 / Outputs: Mean logical-gate fidelity using additive noisy batch cost / 使用加性有噪批次成本的平均逻辑门保真度。
         """
         details = (self.statistic_route_details(include_total_fidelity=False)
                    if route_details is None else route_details)
