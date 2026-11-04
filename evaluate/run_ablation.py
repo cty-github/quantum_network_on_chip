@@ -881,7 +881,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--benchmark-options",
         type=str,
-        default="{}",
+        default='{"qaoa":{"problem_graph":"QAOAcycle","order_strategy":"control_grouped","seed":52}}',
         help="JSON mapping of per-benchmark options, e.g. '{\"qaoa\": {\"problem_graph\": \"cycle\"}}'.",
     )
     parser.add_argument(

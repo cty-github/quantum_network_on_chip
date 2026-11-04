@@ -1744,12 +1744,16 @@ class Circuit:
             )
             for name in ("transfer_time_ns", "effective_distance_edges", "log_fidelity", "neglog_fidelity", "model_version"):
                 batch[name] = result[name]
+            batch["request_class"] = result["request_class"]
+            batch["topology"] = result["topology"]
             batch["noise"] = deepcopy(result["noise"])
             # Match content, not stage/die IDs: repeated cached samples are correlated.
             # 按内容而非阶段/裸片编号识别重复估计，同一缓存样本不可当作独立试验。
             request = {
                 "sources": batch["sources"], "targets": batch["targets"],
                 "chain_length": batch["chain_length"], "settings": settings,
+                # Separate estimates across physical models / 区分不同物理模型的估计。
+                "model_version": result["model_version"],
             }
             batch["noise_estimate_key"] = hashlib.sha256(
                 json.dumps(request, sort_keys=True, allow_nan=False).encode("utf-8")

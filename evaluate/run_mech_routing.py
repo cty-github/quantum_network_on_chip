@@ -26,7 +26,7 @@ from baseline.mech_utils import (
 
 
 DEFAULT_QUANTUM_PROGRAMS = ["vqe", "qft", "qaoa", "bv"]
-BASE_OUT = PROJECT_ROOT / "evaluate" / "result" / "mechbaseline"
+BASE_OUT = PROJECT_ROOT / "evaluate" / "result" / "baseline_mech"
 
 
 EXPERIMENT_HEADERS = {

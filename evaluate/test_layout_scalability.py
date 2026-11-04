@@ -522,7 +522,7 @@ def _persist_package(package: Package, result_dir: str, save_package: bool, save
     if save_package:
         package.to_pickle()
         if getattr(package, "record_design_history", True):
-            package.save_design_history()
+            package.save_design_history(save_gif=False)
     if save_figure:
         try:
             figure, _ = package.draw_qubits(axis_off=False)

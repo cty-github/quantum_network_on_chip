@@ -3059,7 +3059,7 @@ class Router:
             "eqst_reference_fit": batches[0]["noise"]["reference_fit"] if batches else None,
             "eqst_noise_scope": ("resident_occupations_during_resynthesized_batch_only" if hamiltonian else None),
             "eqst_cross_stage_idle_included": False if hamiltonian else None,
-            "eqst_accounting_policy": ("batch_lindblad_neglog_v2" if hamiltonian else "legacy_distance_v1"),
+            "eqst_accounting_policy": ("batch_nn_lindblad_neglog_v3" if hamiltonian else "legacy_distance_v1"),
         }
 
     def statistic_route_results(self) -> tuple[int, int, int, int, float]:

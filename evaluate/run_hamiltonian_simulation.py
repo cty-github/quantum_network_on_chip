@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Standalone XY/PST diagnostics / 独立 XY/PST 命令行、绘图和文件输出。
+"""Two Hamiltonian paper experiments / 两项哈密顿量论文实验。
 
 The numerical and matrix-free planning implementation lives in qunoc.hamiltonian.
 数值演化及无矩阵规划由 qunoc.hamiltonian 提供，本脚本只负责评估和导出。
@@ -28,6 +28,9 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
+
+from evaluate.plot_result_figures import (DEFAULT_FIGURE_ROOT, write_probability_plot,
+                                         write_length_plot, write_optimization_plot, write_real_case_plot)
 
 from qunoc.hamiltonian import chain_evolution as ce
 from qunoc.hamiltonian.noise import NOISE_MODEL_VERSION, NoiseConfig, calibration_reference, evaluate_plan_noise
@@ -107,48 +110,6 @@ def noise_summary(noisy, errors, lower, upper, metadata: dict) -> dict:
             "status": "complete" if metadata.get("converged", False) else "not_converged"}
 
 
-def write_probability_plot(path: Path, times, ideal, noisy, lower, upper, title: str, noise: dict) -> None:
-    """Purpose / 功能: Compare ideal and dynamical noise with uncertainty / 对比理想与动力学噪声及区间。
-
-    Inputs / 输入: File stem, aligned curves, title and solver / 文件前缀、对齐曲线、标题及求解器。
-    Outputs / 输出: Light PNG/PDF; CSV is supplied by caller / 浅色图像；调用方提供 CSV。
-    """
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    # Palette validated with dataviz, 2026-10-22; styles also encode identity / 已校验配色并用线型区分。
-    with plt.rc_context({"font.family": "DejaVu Sans", "font.size": 10, "text.color": "#0b0b0b",
-                         "axes.labelcolor": "#52514e", "xtick.color": "#52514e", "ytick.color": "#52514e"}):
-        fig, ax = plt.subplots(figsize=(8.2, 4.9), constrained_layout=True, facecolor="#fcfcfb")
-        style_axis(ax)
-        parameters = noise.get("parameters", {})
-        noise_disabled = parameters.get("relaxation_disabled", False) and parameters.get("pure_dephasing_disabled", False)
-        ax.plot(times, noisy, color="#2a78d6", linewidth=2,
-                label="Noise disabled (ideal control)" if noise_disabled else "T1 + pure-dephasing dynamics")
-        ax.plot(times, ideal, color="#eb6834", linewidth=2, linestyle="--", label="Ideal coherent evolution")
-        if np.any(np.asarray(upper) > np.asarray(lower)):
-            confidence = noise.get("confidence", noise.get("parameters", {}).get("confidence", 0.95))
-            ax.fill_between(times, lower, upper, color="#2a78d6", alpha=0.16,
-                            label=f"{100 * confidence:g}% pointwise confidence interval")
-        for values, color, label, offset in ((ideal, "#eb6834", "Ideal", 15),
-                                              (noisy, "#2a78d6", "Noisy", -32)):
-            ax.plot(times[-1], values[-1], "o", color=color, markersize=8,
-                    markeredgewidth=2, markeredgecolor="#fcfcfb")
-            ax.annotate(f"{label}: {values[-1]:.6f}", (times[-1], values[-1]), xytext=(-12, offset),
-                        textcoords="offset points", ha="right", color="#0b0b0b",
-                        bbox={"facecolor": "#fcfcfb", "edgecolor": "none", "pad": 1})
-        ax.set(title=title, xlabel="Time (ns)", ylabel="Target occupation probability",
-               xlim=(0, max(float(times[-1]) * 1.04, 1)), ylim=(-0.025, 1.15))
-        ax.legend(loc="upper left", frameon=False)
-        ax.text(0.03, 0.70, f"Completion: {times[-1]:.3f} ns\n"
-                f"Solver: {noise.get('solver', 'unspecified')}\n"
-                f"Completion precision: {'converged' if noise.get('converged', False) else 'NOT CONVERGED'}",
-                transform=ax.transAxes, va="top", color="#52514e")
-        for suffix in (".png", ".pdf"):
-            fig.savefig(path.with_suffix(suffix), dpi=180)
-        plt.close(fig)
-
 
 def write_curve_outputs(output: Path, summary: dict, times, target, source, ideal,
                         noisy, errors, lower, upper, title: str) -> None:
@@ -165,7 +126,6 @@ def write_curve_outputs(output: Path, summary: dict, times, target, source, idea
                           float(f), float(n), float(e), float(lo), float(hi))
                          for t, a, b, f, n, e, lo, hi in zip(times, target, source, ideal, noisy, errors,
                                                             lower, upper, strict=True))
-    write_probability_plot(output / "fidelity", times, ideal, noisy, lower, upper, title, summary["noise"])
     # 最后发布摘要，哈希将完整工件绑定到本次计算。 Publish the summary last, binding all artifacts to this computation.
     summary["artifact_sha256"] = {name: hashlib.sha256((output / name).read_bytes()).hexdigest()
                                   for name in CURVE_FILES if name != "summary.json"}
@@ -192,11 +152,12 @@ def write_outputs(output_dir: Path, result: SimulationResult, times: np.ndarray,
 
 # Paper experiments / 论文实验：原辅助模块函数原样并入，保持数值与筛选规则。
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_OUTPUT_ROOT = ROOT / "evaluate/result/hamiltonian_revision"
+DEFAULT_OUTPUT_ROOT = ROOT / "evaluate/result/hamiltonian_simulation"
+DEFAULT_MANIFEST = ROOT / "evaluate/result/hamiltonian_revision/compiler/selection_report.json"
 DEFAULT_ROUTING_ROOT = ROOT / "evaluate/result/routing_scalability"
 DEFAULT_LENGTHS = tuple(range(6, 81, 2))
-SINGLE_CHAIN_CACHE_VERSION = 1
-CURVE_FILES = ("summary.json", "fidelity.csv", "fidelity.png", "fidelity.pdf")
+SINGLE_CHAIN_CACHE_VERSION = 2
+CURVE_FILES = ("summary.json", "fidelity.csv")
 CURVE_COLUMNS = ("time_ns", "ideal_target_amp_real", "ideal_target_amp_imag",
                  "ideal_source_amp_real", "ideal_source_amp_imag", "ideal_target_fidelity",
                  "noisy_target_fidelity", "noisy_standard_error", "noisy_ci_lower", "noisy_ci_upper")
@@ -334,9 +295,11 @@ def estimate_resources(dimension: int, excitations: int, intervals: int, primiti
     # 顶扇区密度矩阵为 D²，绝不分配 D⁴ Liouvillian；轨迹逐条流式统计。
     # Density buffers scale as D², never a dense D⁴ Liouvillian; trajectories stream.
     # --ideal disables dissipators, not solver allocations / 理想标记关闭噪声而非求解器内存。
-    if route == "direct-xy" and noise.solver != "master":
+    if intervals == 0 or excitations == n:
+        backend, noise_bytes = "exact-invariant-occupation", samples * 128
+    elif route == "direct-xy" and noise.solver != "master":
         backend, noise_bytes = "independent-pair density", excitations * samples * 128
-    elif noise.solver == "master" or (noise.solver == "auto" and dimension <= min(noise.master_max_dim, 128)):
+    elif noise.solver == "master" or (noise.solver == "auto" and dimension <= noise.master_max_dim):
         backend, noise_bytes = "top-sector density", (24 + 2 * num_steps) * dimension ** 2 * 16
     else:
         backend = "streamed Slater trajectories"
@@ -378,19 +341,6 @@ def validate_budgets(num_steps: int, max_dimension: int, max_intervals: int, max
         raise ValueError("max_state_mb must be finite and positive")
 
 
-def style_axis(ax) -> None:
-    """Purpose / 功能: Apply light single-series chart styling / 设置浅色单系列图样式。
-
-    Inputs / 输入: Matplotlib axis / 绘图轴。
-    Outputs / 输出: None; mutates axis / 无；修改轴样式。
-    """
-    ax.set_facecolor("#fcfcfb")
-    ax.grid(axis="y", color="#e1e0d9", linewidth=0.7)
-    ax.set_axisbelow(True)
-    ax.spines[["top", "right"]].set_visible(False)
-    for spine in ("left", "bottom"):
-        ax.spines[spine].set_color("#c3c2b7")
-
 
 def write_case_table(path: Path, rows: list[dict], fields: tuple[str, ...]) -> None:
     """Purpose / 功能: Export a stable summary table / 导出固定列摘要表。
@@ -404,44 +354,8 @@ def write_case_table(path: Path, rows: list[dict], fields: tuple[str, ...]) -> N
         writer.writerows(rows)
 
 
-def write_length_plot(output: Path, rows: list[dict], g_max: float) -> None:
-    """Purpose / 功能: Compare latency and ideal/noisy completion / 比较时延及理想与噪声完成概率。
 
-    Inputs / 输入: Directory, case rows, peak coupling / 目录、案例行及峰值耦合。
-    Outputs / 输出: Separate latency/probability panels, PNG/PDF / 独立时延与概率面板。
-    """
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    with plt.rc_context({"font.family": "DejaVu Sans", "font.size": 10, "text.color": "#0b0b0b"}):
-        fig, axes = plt.subplots(1, 2, figsize=(10.6, 4.5), constrained_layout=True, facecolor="#fcfcfb")
-        x = [r["chain_length"] for r in rows]
-        for ax in axes:
-            style_axis(ax)
-            ax.set_xlabel("Chain length (sites)")
-        axes[0].plot(x, [r["final_time_ns"] for r in rows], color="#2a78d6", linewidth=2,
-                     marker="o", markersize=8, markeredgewidth=2, markeredgecolor="#fcfcfb")
-        axes[0].set(ylabel="Transfer latency (ns)", ylim=(0, None))
-        for key, color, marker, label in (("noisy_final_fidelity", "#2a78d6", "o", "T1 + dephasing"),
-                                           ("ideal_final_fidelity", "#eb6834", "s", "Ideal")):
-            values = [r[key] for r in rows]
-            axes[1].plot(x, values, color=color, linewidth=2, marker=marker, markersize=8,
-                         markeredgewidth=2, markeredgecolor="#fcfcfb", linestyle="--" if label == "Ideal" else "-",
-                         label=label)
-            axes[1].annotate(label, (x[-1], values[-1]), xytext=(-8, 12 if label == "Ideal" else -20),
-                             textcoords="offset points", ha="right", color="#0b0b0b")
-        axes[1].fill_between(x, [r["noisy_final_ci_lower"] for r in rows],
-                            [r["noisy_final_ci_upper"] for r in rows], color="#2a78d6", alpha=0.16)
-        axes[1].set(ylabel="Target occupation probability", ylim=(0, 1.12))
-        axes[1].legend(loc="lower left", frameon=False)
-        fig.suptitle(f"Nearest-neighbor single-excitation PST · peak J/(2π) = {g_max / (2 * math.pi) * 1000:g} MHz")
-        for suffix in ("png", "pdf"):
-            fig.savefig(output / f"length_summary.{suffix}", dpi=180)
-        plt.close(fig)
-
-
-def single_chain_case(n: int, g_max: float, num_steps: int, noise: NoiseConfig, ideal: bool,
+def single_chain_case(n: int, g_max: float | None, num_steps: int, noise: NoiseConfig, ideal: bool,
                       reference_time_ns: float, reference_fidelity: float, coupling_policy: str,
                       resources: dict, case_output: Path) -> dict:
     """Purpose / 功能: Evolve one true NN chain with shared noise / 用公共噪声演化真实最近邻链。
@@ -467,9 +381,14 @@ def single_chain_case(n: int, g_max: float, num_steps: int, noise: NoiseConfig, 
                "peak_coupling_mhz": maximum / (2 * math.pi) * 1000,
                "effective_g_rad_per_ns": actual_g, "edge_couplings_rad_per_ns": (actual_g * profile).tolist(),
                "edges": [[j, j + 1] for j in range(n - 1)], "boundary": "open; nearest-neighbor only",
-               "timing_rule": "g=J_max/max_j sqrt(j*(N-j)); tau=pi/(2*g)",
+               "timing_rule": ("tau=reference_time_ns*sqrt((N-1)/5); g=pi/(2*tau)" if g_max is None else
+                               "g=J_max/max_j sqrt(j*(N-j)); tau=pi/(2*g)"),
+               "coupling_mode": "uncapped-request" if g_max is None else "fixed-peak",
+               "peak_coupling_meaning": "required coupling, not hardware maximum" if g_max is None else "hardware maximum",
+               "required_peak_coupling_rad_per_ns": maximum,
                "coupling_policy_requested": coupling_policy,
-               "coupling_policy_note": "single-chain is already cap-limited; policies coincide, not duplicated",
+               "coupling_policy_note": ("uncapped single-chain honors requested timing; policies coincide" if g_max is None else
+                                        "single-chain is already cap-limited; policies coincide, not duplicated"),
                "final_time_ns": float(times[-1]), "ideal_final_fidelity": float(fidelities[-1]),
                "ideal_peak_fidelity": float(fidelities.max()), "sample_count": len(times),
                "analytic_probability": "sin(g*t)^(2*(N-1))", "max_analytic_error": error,
@@ -572,12 +491,13 @@ def load_single_chain_cache(case_output: Path, signature: dict, duration: float)
 
 
 def run_single_chain(output_root: Path = DEFAULT_OUTPUT_ROOT, lengths: tuple[int, ...] = DEFAULT_LENGTHS,
-                     g_max: float = ce.DEFAULT_G_MAX_RAD_PER_NS, num_steps: int = 401,
+                     g_max: float | None = ce.DEFAULT_G_MAX_RAD_PER_NS, num_steps: int = 401,
                      max_dimension: int = 5000, max_intervals: int = 100, max_state_mb: float = 512,
                      protected: tuple[Path, ...] = (), noise: NoiseConfig | None = None, ideal: bool = False,
                      reference_time_ns: float = REFERENCE_TIME_NS, reference_fidelity: float = REFERENCE_FIDELITY,
-                     coupling_policy: str = "preserve-request", existing: str = "overwrite") -> dict:
-    """Purpose / 功能: Sweep fixed-cap NN chains under the common noise / 公共噪声下扫描固定峰值最近邻链。
+                     coupling_policy: str = "preserve-request", existing: str = "overwrite",
+                     output_name: str = "single_chain", figure_root: Path = DEFAULT_FIGURE_ROOT) -> dict:
+    """Purpose / 功能: Sweep fixed-peak or uncapped requested-time NN chains / 扫描固定峰值或无上限请求时序的最近邻链。
 
     Inputs / 输入: Lengths, physical controls, resource caps and paths / 链长、物理参数、预算及路径。
     Outputs / 输出: Fixed per-length artifacts and current-request-only summary / 固定逐链长文件及仅本次请求的汇总。
@@ -586,8 +506,8 @@ def run_single_chain(output_root: Path = DEFAULT_OUTPUT_ROOT, lengths: tuple[int
         raise ValueError("existing must be overwrite or skip")
     validate_budgets(num_steps, max_dimension, max_intervals, max_state_mb)
     noise = noise or NoiseConfig()
-    if g_max is None or isinstance(g_max, bool) or not math.isfinite(g_max) or g_max <= 0:
-        raise ValueError("single-chain requires a finite positive --g-max")
+    if g_max is not None and (isinstance(g_max, bool) or not math.isfinite(g_max) or g_max <= 0):
+        raise ValueError("single-chain requires a finite positive --g-max or no coupling cap")
     if not lengths or any(isinstance(n, bool) or not isinstance(n, int) or n < 2 for n in lengths):
         raise ValueError("single-chain lengths must be integers >=2")
     if len(set(lengths)) != len(lengths):
@@ -601,7 +521,8 @@ def run_single_chain(output_root: Path = DEFAULT_OUTPUT_ROOT, lengths: tuple[int
     plans = {n: ce.build_single_chain_plan(n, g_max, noise=noise, ideal=ideal, coupling_policy=coupling_policy,
                                           reference_time_ns=reference_time_ns, reference_fidelity=reference_fidelity)
              for n in lengths}
-    output = fixed_output(output_root, "single_chain", (DEFAULT_ROUTING_ROOT, *protected))
+    output = fixed_output(output_root, output_name, (DEFAULT_ROUTING_ROOT, DEFAULT_MANIFEST, *protected))
+    figure_root = fixed_output(figure_root, ".", (output_root, ROOT / "evaluate/result", DEFAULT_MANIFEST))
     write_json(output / "summary.json", {"experiment": "single-chain", "status": "running",
                                           "requested_lengths": lengths, "cases": []})
     rows = []
@@ -629,7 +550,7 @@ def run_single_chain(output_root: Path = DEFAULT_OUTPUT_ROOT, lengths: tuple[int
                      ("chain_length", "final_time_ns", "ideal_final_fidelity", "noisy_final_fidelity",
                       "noisy_final_standard_error", "noisy_final_ci_lower", "noisy_final_ci_upper",
                       "max_analytic_error", "sample_count", "runtime_seconds", "status", "output_dir"))
-    write_length_plot(output, rows, g_max)
+    write_length_plot(figure_root, rows, g_max)
     report = {"experiment": "single-chain", "status": "complete" if all(r["status"] == "complete" for r in rows) else "incomplete",
               "output_dir": str(output), "metric": METRIC, "max_numerical_chain_length": max(lengths),
               "requested_settings": {"lengths": lengths, "g_max_rad_per_ns": g_max, "num_steps": num_steps,
@@ -640,7 +561,8 @@ def run_single_chain(output_root: Path = DEFAULT_OUTPUT_ROOT, lengths: tuple[int
               "cache_actions": [{"chain_length": row["chain_length"], **row["cache"]} for row in rows],
               "artifact_scope": "only requested lengths; other retained N directories and numbered runs are ignored",
               "cases": rows, "generated_files": current_case_files(output, rows)
-                  + ["case_summary.csv", "length_summary.png", "length_summary.pdf", "summary.json"]}
+                  + ["case_summary.csv", "summary.json"],
+              "figure_files": [str(figure_root / f"maximum_chain_length.{ext}") for ext in ("png", "pdf", "svg")]}
     write_json(output / "summary.json", report)
     return report
 
@@ -692,7 +614,7 @@ def source_settings(package, circuit, metadata: dict) -> dict:
         raise ValueError("saved compiler EQST settings must use ordered=True")
     if merged.get("model") not in (None, "legacy", "hamiltonian"):
         raise ValueError("unknown saved EQST model")
-    if merged.get("model") == "hamiltonian" and merged.get("version", "hamiltonian-net-v1") not in {"hamiltonian-net-v1", "hamiltonian-net-v2", ce.MODEL_VERSION}:
+    if merged.get("model") == "hamiltonian" and merged.get("version", "hamiltonian-net-v1") not in {"hamiltonian-net-v1", "hamiltonian-net-v2", "hamiltonian-lindblad-v2", ce.MODEL_VERSION}:
         raise ValueError("unsupported saved Hamiltonian model version")
     for key in EQST_KEYS:
         if key in merged:
@@ -908,7 +830,7 @@ def scan_compiler(routing_root: Path, cases_per_class: int = 3, min_excitations:
             census["batches"] += 1
             pairs = list(zip(batch["sources"], batch["targets"], strict=True))
             moving = [(s, t) for s, t in pairs if s != t]
-            classification = "nonconflicting" if ce.are_disjoint_edges(moving) else "conflicting"
+            classification = ce.request_class(pairs)
             class_counts[classification] += 1
             local_classes[classification] += 1
             case_id = f"{relative}/stage_{batch['stage_index']}/die_" + "_".join(map(str, batch["die"]))
@@ -999,7 +921,7 @@ def reuse_compiler_manifest(path: Path, settings: dict) -> dict:
         # 驻留数包含静止粒子；复用不能先按类别截断，必须过滤与重规划后再分层。
         # Count idle residents too; re-filter/replan every saved selection before stratifying.
         record.update({"resident_count": len(pairs), "moving_count": len(moving),
-                       "class": "nonconflicting" if ce.are_disjoint_edges(moving) else "conflicting"})
+                       "class": ce.request_class(pairs)})
         reason = None
         if programs is not None and source.get("quantum_program") not in programs:
             reason = "program_filter"
@@ -1086,7 +1008,9 @@ def run_compiler(output_root: Path = DEFAULT_OUTPUT_ROOT, routing_root: Path = D
                        "coupling_policy": settings["coupling_policy"],
                        "parameter_sources": "saved reference_time/distance/cap/planner; current CLI noise and coupling policy",
                        "source_artifacts_modified": False,
-                       "qualification": "new noise evaluation, NOT exact reproduction of historical distance or ideal statistics"}})
+                       "topology": "open-nearest-neighbor-xy",
+                       "classification": "site-disjoint closed intervals preserving all resident targets",
+                       "qualification": "strict NN replanning and noise evaluation, NOT reproduction of historical direct-edge routes/statistics"}})
     scan_status = report["status"]
     if not scan_only:
         report["status"] = "running"
@@ -1145,47 +1069,6 @@ def run_compiler(output_root: Path = DEFAULT_OUTPUT_ROOT, routing_root: Path = D
     write_json(output / "selection_report.json", report)
     return report
 
-
-def write_optimization_plot(output: Path, rows: list[dict]) -> None:
-    """Purpose / 功能: Show projected hardware sensitivity and latency / 展示预测硬件敏感性及时延。
-
-    Inputs / 输入: Directory and complete grid rows / 目录与全部扫描行。
-    Outputs / 输出: Two-panel plot, paired with full CSV / 双面板图及配套完整 CSV。
-    """
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    t1_values = sorted({r["t1_us"] for r in rows})
-    with plt.rc_context({"font.family": "DejaVu Sans", "font.size": 10, "text.color": "#0b0b0b"}):
-        fig, axes = plt.subplots(1, 2, figsize=(11.8, 4.8), constrained_layout=True, facecolor="#fcfcfb")
-        for ax in axes:
-            style_axis(ax)
-            ax.set_xlabel("Peak J/(2π) (MHz)")
-        for t1, color, marker in zip(t1_values, ("#2a78d6", "#eb6834", "#1baf7a"), ("o", "s", "^"), strict=True):
-            points = sorted((r for r in rows if r["t1_us"] == t1), key=lambda r: r["peak_coupling_mhz"])
-            x = [r["peak_coupling_mhz"] for r in points]
-            y = [r["noisy_final_fidelity"] for r in points]
-            axes[1].plot(x, y, color=color, marker=marker, markersize=8, linewidth=2,
-                         markeredgewidth=2, markeredgecolor="#fcfcfb", label=f"T1 = {t1:g} μs")
-            axes[1].fill_between(x, [r["noisy_final_ci_lower"] for r in points],
-                                [r["noisy_final_ci_upper"] for r in points], color=color, alpha=0.12)
-        baseline_t1 = [r for r in rows if r["t1_us"] == t1_values[0]]
-        axes[0].plot([r["peak_coupling_mhz"] for r in baseline_t1], [r["final_time_ns"] for r in baseline_t1],
-                     color="#2a78d6", marker="o", markersize=8, linewidth=2,
-                     markeredgewidth=2, markeredgecolor="#fcfcfb")
-        axes[0].set(ylabel="Transfer latency (ns)", ylim=(0, None))
-        old = rows[0]["historical_distance_envelope_final"]
-        axes[1].axhline(1, color="#52514e", linestyle="--", linewidth=1, label="Historical ideal (no noise)")
-        axes[1].axhline(old, color="#898781", linestyle=":", linewidth=1,
-                       label="Historical distance envelope (NOT dynamics)")
-        axes[1].set(ylabel="Target occupation probability", ylim=(min(old, min(r["noisy_final_ci_lower"] for r in rows)) - .055, 1.025))
-        axes[1].legend(loc="lower right", fontsize=8, frameon=False)
-        fig.suptitle(f"N = {rows[0]['chain_length']} single-excitation sensitivity · PROJECTED hardware\n"
-                     "Baseline-fitted dephasing held fixed; no stronger-coupling hardware-error model")
-        for suffix in ("png", "pdf"):
-            fig.savefig(output / f"optimization.{suffix}", dpi=180)
-        plt.close(fig)
 
 
 def run_optimization(output_root: Path, num_steps: int = 101, noise: NoiseConfig | None = None,
@@ -1247,7 +1130,7 @@ def run_optimization(output_root: Path, num_steps: int = 101, noise: NoiseConfig
                       "historical_distance_envelope_final", "latency_ratio_to_baseline",
                       "noisy_fidelity_change_from_baseline", "gap_to_historical_ideal",
                       "pareto_latency_fidelity", "runtime_seconds", "status", "output_dir"))
-    write_optimization_plot(output, rows)
+    write_optimization_plot(fixed_output(DEFAULT_FIGURE_ROOT, ".", (output_root,)), rows)
     report = {"experiment": "optimize", "status": "complete" if equal_precision else "incomplete",
               "output_dir": str(output), "metric": METRIC, "reference_fit": fit, "cases": rows,
               "noise_controls": asdict(frozen), "precision_matched_and_converged": equal_precision,
@@ -1308,7 +1191,7 @@ def output_contract_self_test(payload: dict, controls: dict) -> dict:
             (case / "fidelity.csv").write_text("partial\n")
             repaired = run_single_chain(root, (4,), num_steps=5, existing="skip")
             assert repaired["cases"][0]["cache"]["reason"] == "csv_columns_mismatch"
-            (case / "fidelity.pdf").unlink()
+            (case / "fidelity.csv").unlink()
             repaired = run_single_chain(root, (4,), num_steps=5, existing="skip")
             assert "missing_artifacts" in repaired["cases"][0]["cache"]["reason"]
             changed = run_single_chain(root, (4,), num_steps=7, ideal=True, existing="skip")
@@ -1406,6 +1289,18 @@ def runner_self_test() -> dict:
     from qunoc.hamiltonian.noise import noise_self_test
     core = noise_self_test()
     checks = {}
+    # 分类必须基于区间及全部居民，而非端点唯一。 Classify intervals and all residents.
+    compatible = ce.plan_transfer(SimulationConfig(13, ((10, 0), (11, 12)), ordered=True))
+    assert compatible.segment_stages == (((0, 10), (11, 12)),)
+    assert compatible.planner == "parallel-disjoint-pst" and compatible.route == "pst-segments"
+    assert len(compatible.interval_durations) == 2
+    assert ce.request_class(((0, 4), (2, 6))) == "conflicting"
+    assert ce.request_class(((0, 6), (1, 1))) == "conflicting"
+    spectator = ce.plan_transfer(SimulationConfig(7, ((0, 6), (1, 1))))
+    assert spectator.labeled_path[-1] == (6, 1)
+    manual = ce.plan_transfer(SimulationConfig(5, ((0, 4),), segments=(((0, 2),), ((2, 4),))))
+    assert manual.planner == "manual" and manual.labeled_path[-1] == (4,)
+    checks["strict_nn_parallel_conflict_spectator_and_manual_dispatch"] = True
     noise = NoiseConfig()
     plan = ce.build_single_chain_plan(6, noise=noise)
     assert len(plan.config.pairs) == 1 and plan.primitives[0].kind == "pst-segment"
@@ -1478,6 +1373,15 @@ def runner_self_test() -> dict:
         assert all(r["resident_count"] == len(r["sources"]) and r["moving_count"] == 2 for r in reused["selected_cases"])
         assert all(r["resources"]["sample_count"] == 1 + r["resources"]["interval_count"] * 10 for r in reused["selected_cases"])
         assert manifest.read_bytes() == original_bytes
+        # 旧类别不能直接复用：端点不重合的重叠区间仍冲突。 Reclassify stale endpoint-only labels.
+        stale = copy.deepcopy(payload)
+        stale["selected_cases"] = [{**stale["selected_cases"][0], "class": "nonconflicting",
+                                    "sources": [0, 2], "targets": [4, 6], "chain_length": 7}]
+        stale_path = Path(directory) / "stale_intervals.json"
+        write_json(stale_path, stale)
+        corrected = reuse_compiler_manifest(stale_path, controls)
+        assert corrected["selected_cases"][0]["class"] == "conflicting"
+        assert corrected["selected_cases"][0]["route"] == "pst-segments"
         narrowed = reuse_compiler_manifest(manifest, {**controls, "min_excitations": 3})
         assert len(narrowed["selected_cases"]) == 12 and len(narrowed["strata"]) == 4
         budget = reuse_compiler_manifest(manifest, {**controls, "max_dimension": 1})
@@ -1494,179 +1398,215 @@ def runner_self_test() -> dict:
         assert shortage["class_shortfall"] == {"conflicting": 3} and not shortage["missing_classes"]
     checks["compiler_manifest_six_strata_filters_and_resource_rechecks"] = True
     assert parse_programs("vqe,qaoa,bv,s_ghz") == DEFAULT_PROGRAMS and parse_programs("all") is None
-    defaults = build_arg_parser().parse_args(["--experiment", "compiler"])
-    assert defaults.max_excitations == 4 and defaults.cases_per_class == 3 and defaults.programs == DEFAULT_PROGRAMS
-    checks["compiler_default_eighteen_current_programs"] = True
-    assert parse_lengths(defaults.lengths) == tuple(range(6, 81, 2)) and defaults.existing == "overwrite"
+    defaults = build_arg_parser().parse_args([])
+    assert defaults.experiment is None and defaults.num_steps is None
+    assert defaults.lengths == tuple(range(6, 81, 2))
+    checks["unified_default_both_and_38_even_lengths"] = True
     checks.update(output_contract_self_test({"experiment": "compiler",
                                              "sources": [{"quantum_program": "vqe", "effective_eqst_config": settings}],
                                              "selected_cases": selection["selected_cases"]}, controls))
     return {"status": "complete", "core_physics": core, "runner_checks": checks}
 
 
-def build_arg_parser() -> argparse.ArgumentParser:
-    """Purpose / 功能: Define one common-noise CLI / 定义公共噪声单入口。
+def target_position_scan(sources, targets, chain_length):
+    """Fix each target prefix by mirrors / 用镜像逐位固定目标前缀。
 
-    Inputs / 输入: None / 无。 Outputs / 输出: Argument parser / 参数解析器。
+    Every mirror updates ALL resident labels, including nominally stationary ones.
+    每次镜像更新全部居民标签，包括原本静止的居民。
     """
+    if (len(sources) != len(targets) or len(set(sources)) != len(sources)
+            or len(set(targets)) != len(targets)
+            or any(not 0 <= x < chain_length for x in (*sources, *targets))):
+        raise ValueError("invalid resident mapping")
+    current, stages = tuple(sources), []
+    desired = {position: label for label, position in enumerate(targets)}
+    for p in range(chain_length):
+        if p in desired:
+            q = current[desired[p]]
+        elif p in current:
+            q = next(q for q in range(p + 1, chain_length) if q not in current)
+        else:
+            q = p
+        if q != p:
+            assert q > p, "fixed prefix must never be disturbed"
+            stage = ((p, q),)
+            current = ce.apply_segment_stage_labeled(current, stage)
+            stages.append(stage)
+        assert all((current.index(x) if x in current else None) == desired.get(x)
+                   for x in range(p + 1))
+    assert current == tuple(targets)
+    return tuple(stages)
+
+
+def select_cases(manifest):
+    """Select before simulation using only structure / 仅根据结构预选，禁止按结果筛选。"""
+    snapshot = manifest.get("source_selection_snapshot", manifest)
+    candidates = snapshot["eligible_cases"] if "eligible_cases" in snapshot else snapshot["selected_cases"]
+    chosen = []
+    for cls in CLASSES:
+        for k in (2, 3, 4):
+            pool = [r for r in candidates if len(r["sources"]) == k
+                    and ce.request_class(tuple(zip(r["sources"], r["targets"]))) == cls
+                    and sorted(r["sources"]) != sorted(r["targets"])
+                    and math.comb(r["chain_length"], k) <= 4000]
+            # Explicit requested exemplar first; otherwise smallest N, stable source ID.
+            # 优先用户指定实例，否则最小链长及稳定来源编号。
+            pool.sort(key=lambda r: (not (cls == "nonconflicting" and k == 2
+                                         and r["sources"] == [10, 11] and r["targets"] == [0, 12]),
+                                     r["chain_length"], r["case_id"]))
+            if not pool:
+                raise ValueError(f"no bounded saved case for {cls}, k={k}")
+            row = copy.deepcopy(pool[0])
+            row["historical_class"] = row["class"]
+            row["class"] = cls
+            row["source"] = snapshot["sources"][row["source_index"]]
+            chosen.append(row)
+    return chosen
+
+
+def case_config(row, num_steps):
+    """Keep core physics; explicitly opt into manual scan / 保留核心物理，显式使用手动扫描。"""
+    noise = NoiseConfig(calibration_time_ns=125., calibration_fidelity=.992,
+                        atol=.001, rtol=.005, trajectories=32768, min_trajectories=256, seed=0)
+    settings = {**row["source"]["effective_eqst_config"],
+                "reference_time_ns": 62.5, "reference_distance": 5., "g_max": None}
+    config = batch_config(row, settings, num_steps, noise)
+    if row["class"] == "conflicting":
+        config = replace(config, segments=target_position_scan(config.sources, config.targets,
+                                                               config.chain_length))
+    return config
+
+
+def run_real_case_study(output_root: Path = DEFAULT_OUTPUT_ROOT, manifest: Path = DEFAULT_MANIFEST,
+                        num_steps: int = 101, select_only: bool = False,
+                        figure_root: Path = DEFAULT_FIGURE_ROOT) -> dict:
+    """Replay six structure-selected saved cases / 重放六个按结构预选的保存案例。"""
+    from types import SimpleNamespace
+    args = SimpleNamespace(output=output_root / "real_case_study", manifest=manifest,
+                           num_steps=num_steps, select_only=select_only)
+    if args.num_steps < 2:
+        raise ValueError("num-steps must be >=2")
+    raw = args.manifest.read_bytes()
+    rows = select_cases(json.loads(raw))
+    args.output = fixed_output(args.output.parent, args.output.name, (args.manifest, DEFAULT_ROUTING_ROOT))
+    figure_root = fixed_output(figure_root, ".", (output_root, args.manifest, ROOT / "evaluate/result"))
+    for index, row in enumerate(rows):
+        config = case_config(row, args.num_steps)
+        plan = ce.plan_transfer(config)
+        # Compare same schedule/timing separately from global planner changes.
+        # 分开比较相同调度的时序变化与全局规划器差异。
+        default_timing = ce.plan_transfer(replace(config, reference_time_ns=ce.REFERENCE_TIME_NS,
+                                                g_max=ce.DEFAULT_G_MAX_RAD_PER_NS))
+        default_core = ce.plan_transfer(replace(config, segments=None,
+                                              reference_time_ns=ce.REFERENCE_TIME_NS,
+                                              g_max=ce.DEFAULT_G_MAX_RAD_PER_NS))
+        row.update(directory=f"case_{index+1}", status="selected", simulation_config=asdict(config),
+                   experiment_planner="target-position-scan" if config.segments is not None else "parallel-disjoint-pst",
+                   plan=plan.to_route_details(), requested_time_ns=plan.transfer_time_ns,
+                   same_schedule_default_timing_ns=default_timing.transfer_time_ns,
+                   unchanged_core_default_time_ns=default_core.transfer_time_ns,
+                   unchanged_core_default_plan=default_core.to_route_details())
+    report = {"manifest_path": str(args.manifest.resolve()), "manifest_sha256": hashlib.sha256(raw).hexdigest(),
+              "selection_rule": "one per current class and k=2,3,4; known 10:0,11:12 preferred; otherwise minimum N then case_id; C(N,k)<=4000; no outcome selection",
+              "planner_note": "Experiment-level target-position scan uses core manual segments; global greedy/beam/fallback planner is unchanged.",
+              "calibration": calibration_reference(case_config(rows[0], args.num_steps).noise),
+              "metric": METRIC, "selected_cases": rows,
+              "figure_files": [str(figure_root / f"real_case_study.{ext}") for ext in ("png", "pdf", "svg")]}
+    report.update(status="scan_complete" if args.select_only else "selected", output_dir=str(args.output))
+    write_json(args.output / "selection.json", report)
+    if args.select_only:
+        return report
+    report.update(status="running", output_dir=str(args.output))
+    write_json(args.output / "summary.json", report)
+    for row in rows:
+        directory = args.output / row["directory"]
+        directory.mkdir(exist_ok=True)
+        (directory / "fidelity.csv").unlink(missing_ok=True)
+        write_json(directory / "summary.json", {"status": "running"})
+        try:
+            result, times, target, source, ideal = ce.run_simulation(case_config(row, args.num_steps))
+            summary = result_to_jsonable(result)
+            summary.update(noise_summary(result.noisy_fidelities, result.noisy_standard_errors,
+                                               result.noisy_ci_lower, result.noisy_ci_upper, result.noise))
+            with (directory / "fidelity.csv").open("w", newline="") as handle:
+                writer = csv.writer(handle)
+                writer.writerow(CURVE_COLUMNS)
+                writer.writerows(zip(times, target.real, target.imag, source.real, source.imag, ideal,
+                                     result.noisy_fidelities, result.noisy_standard_errors,
+                                     result.noisy_ci_lower, result.noisy_ci_upper))
+            row.update(status=summary["status"], noisy_final=summary["noisy_final_fidelity"],
+                       ideal_final=result.final_fidelity, solver=result.noise["solver"],
+                       uncertainty=result.noise["uncertainty"],
+                       trajectories=result.noise["uncertainty"]["trajectories"],
+                       ci_lower=summary["noisy_final_ci_lower"], ci_upper=summary["noisy_final_ci_upper"])
+        except Exception as error:
+            summary = {"status": "failed", "error": repr(error)}
+            row.update(summary)
+        summary["source_case"] = row
+        write_json(directory / "summary.json", summary)
+        print(row["case_id"], row["status"], row.get("noisy_final"), flush=True)
+        write_json(args.output / "summary.json", report)
+    report["status"] = "complete" if all(r["status"] == "complete" for r in rows) else "incomplete"
+    write_json(args.output / "summary.json", report)
+    fields = ("case_id", "class", "chain_length", "sources", "targets", "experiment_planner",
+              "requested_time_ns", "same_schedule_default_timing_ns", "unchanged_core_default_time_ns",
+              "status", "noisy_final", "ideal_final", "solver", "trajectories", "ci_lower", "ci_upper")
+    write_case_table(args.output / "case_summary.csv", rows, fields)
+    write_real_case_plot(args.output, rows, figure_root)
+    report["generated_files"] = ["selection.json", "summary.json", "case_summary.csv"] + [
+        str(path.relative_to(args.output)) for row in rows
+        for name in CURVE_FILES if (path := args.output / row["directory"] / name).is_file()]
+    write_json(args.output / "summary.json", report)
+    return report
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    """Two paper experiments, both by default / 两项论文实验，默认同时运行。"""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--experiment", choices=("transfer", "compiler", "single-chain", "all", "optimize"), default="transfer",
-                        help="all runs compiler and single-chain; optimize is the explicit nine-point N80 hardware projection")
-    parser.add_argument("--self-test", action="store_true", help="run core physics plus in-runner orchestration checks, no separate test script")
-    parser.add_argument("-n", "--chain-length", type=int, help="transfer sites, indexed 0..N-1")
-    parser.add_argument("--pairs", type=parse_edge_pairs, help="transfer source:target pairs, e.g. 0:9,9:10,5:19")
-    parser.add_argument("--routing-root", type=Path, help="trusted saved compiler artifacts; sources remain read-only")
-    parser.add_argument("--compiler-manifest", type=Path, help="reuse an immutable previous compiler selected_cases JSON; explicitly NO new census")
-    parser.add_argument("--cases-per-class", type=int, default=3,
-                        help="cases per class PER full resident k (default 3: two classes × k=2,3,4 = 18 total)")
-    parser.add_argument("--programs", type=parse_programs, default=DEFAULT_PROGRAMS,
-                        help="compiler metadata program filter (default vqe,qaoa,bv,s_ghz); use all to include historical programs explicitly")
-    parser.add_argument("--min-excitations", type=int, default=2, help="minimum full resident k, including stationary residents")
-    parser.add_argument("--max-excitations", type=int, default=4, help="maximum full resident k; independent quota for each integer k")
-    parser.add_argument("--min-moving", type=int, default=2)
-    parser.add_argument("--max-dimension", type=int, default=5000, help="ideal Fock-basis dimension cap; noise has additional density/Slater guards")
-    parser.add_argument("--max-intervals", type=int, default=100)
-    parser.add_argument("--max-state-mb", type=float, default=512, help="conservative total workspace MiB, including ideal states and noise density/Slater buffers")
-    parser.add_argument("--scan-only", action="store_true", help="compiler selection only; no numerical evolution")
-    parser.add_argument("--lengths", default=",".join(map(str, DEFAULT_LENGTHS)),
-                        help="requested single-chain lengths only (default every even N from 6 through 80); optimize uses N80")
-    parser.add_argument("--existing", choices=("overwrite", "skip"), default="overwrite",
-                        help="single-chain existing N: overwrite (default), or skip only matching complete artifacts; otherwise recompute")
-    cap = parser.add_mutually_exclusive_group()
-    cap.add_argument("--g-max", type=float, default=DEFAULT_G_MAX_RAD_PER_NS,
-                     help="edge cap in rad/ns (default 6 MHz); compiler inherits saved caps; optimize scans 6/9/12 MHz")
-    cap.add_argument("--no-coupling-cap", action="store_const", const=None, dest="g_max")
-    parser.add_argument("--reference-time-ns", type=float, default=REFERENCE_TIME_NS,
-                        help="reference calibration time; compiler retains saved timing (default 125 ns)")
-    parser.add_argument("--reference-distance", type=float, default=REFERENCE_DISTANCE, help="transfer timing reference distance (default 5 edges)")
-    parser.add_argument("--reference-fidelity", type=float, default=REFERENCE_FIDELITY, help="six-site noise calibration probability (default .992)")
-    parser.add_argument("--ideal", action="store_true", help="disable actual noise only; preserve timing and coupling caps")
-    parser.add_argument("--t1-us", type=float, default=141.5, help="actual relaxation T1 in us; gamma fit remains at baseline T1=141.5 us")
-    parser.add_argument("--solver", choices=("auto", "master", "trajectories"), default="auto")
-    parser.add_argument("--trajectories", type=int, default=2048, help="maximum streamed trajectories")
-    parser.add_argument("--min-trajectories", type=int, default=128)
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--atol", type=float, default=.002, help="absolute probability precision target")
-    parser.add_argument("--rtol", type=float, default=.02, help="relative probability precision target")
-    parser.add_argument("--confidence", type=float, default=.95)
-    parser.add_argument("--master-max-dim", type=int, default=128)
-    parser.add_argument("--coupling-policy", choices=("preserve-request", "cap-limited-fast"), default="preserve-request",
-                        help="compiler/transfer scheduling policy; single-chain already runs at its peak cap")
-    parser.add_argument("--segments", type=parse_segment_stages, help="manual conflicting-pair PST stages, e.g. '5:19;0:9,10:15'")
-    parser.add_argument("--max-segment-steps", type=int, default=10)
-    parser.add_argument("--beam-width", type=int, default=128)
-    parser.add_argument("--num-steps", type=int, default=401, help="samples per constant-Hamiltonian interval (not integrator steps)")
-    parser.add_argument("--output-dir", type=Path,
-                        help="output root; compiler/single_chain/optimize reuse fixed paths; only transfer reserves numbered directories")
+    parser.add_argument("--experiment", choices=("maximum-chain-length", "real-case-study", "single-chain"),
+                        help="omit to run both; single-chain is a compatibility alias")
+    parser.add_argument("--output-root", "--output-dir", type=Path, default=DEFAULT_OUTPUT_ROOT)
+    parser.add_argument("--figure-root", type=Path, default=DEFAULT_FIGURE_ROOT)
+    parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST, help="read-only saved selection manifest")
+    parser.add_argument("--lengths", type=parse_lengths, default=DEFAULT_LENGTHS)
+    parser.add_argument("--num-steps", type=int, help="override sampling: chain defaults 401, real cases 101")
+    parser.add_argument("--select-only", action="store_true", help="real-case-study only: save selection without evolution")
+    parser.add_argument("--self-test", action="store_true")
+    # Accepted legacy protocol spellings cannot change the paper protocol / 旧参数拼写不能修改论文协议。
+    parser.add_argument("--no-coupling-cap", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--reference-time-ns", type=float, default=62.5, help=argparse.SUPPRESS)
+    parser.add_argument("--reference-distance", type=float, default=5., help=argparse.SUPPRESS)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Purpose / 功能: Validate and execute one reproducible experiment / 校验并执行可复现实验。
-
-    Inputs / 输入: Optional command arguments / 可选命令参数。
-    Outputs / 输出: JSON summary and 0 on convergence, 1 on incomplete precision / 摘要与完成或精度不足退出码。
-    """
+    """Execute selected experiments with frozen physical controls / 使用冻结物理参数运行所选实验。"""
     parser = build_arg_parser()
-    raw = list(sys.argv[1:] if argv is None else argv)
-    args = parser.parse_args(raw)
+    args = parser.parse_args(argv)
     if args.self_test:
-        report = runner_self_test()
-        print(json.dumps(report, indent=2, allow_nan=False))
+        print(json.dumps(runner_self_test(), indent=2, allow_nan=False))
         return 0
-    supplied = {token.split("=", 1)[0] for token in raw if token.startswith("-")}
-    for token in tuple(supplied):
-        matches = [option for option in parser._option_string_actions if token.startswith("--") and option.startswith(token)]
-        if len(matches) == 1:
-            supplied.add(matches[0])
-    compiler_flags = {"--routing-root", "--compiler-manifest", "--cases-per-class", "--programs", "--min-excitations", "--max-excitations", "--min-moving", "--scan-only"}
-    transfer_flags = {"-n", "--chain-length", "--pairs", "--segments", "--reference-distance", "--max-segment-steps", "--beam-width"}
-    if args.experiment == "transfer":
-        if args.chain_length is None or args.pairs is None:
-            parser.error("transfer requires -n/--chain-length and --pairs")
-        forbidden = compiler_flags | {"--lengths"}
-    else:
-        forbidden = transfer_flags
-        if args.experiment in {"single-chain", "optimize"}:
-            forbidden |= compiler_flags | {"--no-coupling-cap"}
-        if args.experiment == "compiler":
-            forbidden |= {"--lengths", "--g-max", "--no-coupling-cap", "--reference-time-ns"}
-        if args.experiment == "all":
-            forbidden |= {"--no-coupling-cap", "--reference-time-ns"}
-        if args.experiment == "optimize":
-            forbidden |= {"--lengths", "--g-max", "--ideal", "--t1-us", "--coupling-policy"}
-    if args.experiment not in {"single-chain", "all"}:
-        forbidden |= {"--existing"}
-    irrelevant = supplied & forbidden
-    if args.experiment != "transfer" and args.chain_length is not None:
-        irrelevant.add("--chain-length")
-    if irrelevant:
-        parser.error(f"options not applicable to {args.experiment}: {', '.join(sorted(irrelevant))}")
+    if args.reference_time_ns != 62.5 or args.reference_distance != 5.:
+        parser.error("paper timing is fixed at 62.5 ns / 5 edges; noise calibration remains 125 ns")
+    if args.num_steps is not None and args.num_steps < 2:
+        parser.error("num-steps must be >=2")
+    if args.select_only and args.experiment != "real-case-study":
+        parser.error("--select-only requires --experiment real-case-study")
+    reports = {}
     try:
-        noise = NoiseConfig(t1_ns=args.t1_us * 1000, calibration_time_ns=args.reference_time_ns,
-                            calibration_fidelity=args.reference_fidelity,
-                            solver=args.solver, trajectories=args.trajectories,
-                            min_trajectories=args.min_trajectories, seed=args.seed, atol=args.atol, rtol=args.rtol,
-                            confidence=args.confidence, master_max_dim=args.master_max_dim)
-        if not math.isfinite(args.t1_us):
-            raise ValueError("--t1-us must be finite and positive; use --ideal to disable all noise")
-        # 标定字段独立于保存时序；仅优化扫描显式冻结 gamma。 Calibration never follows source-plan timing.
-        if not args.ideal:
-            calibration_reference(noise)
-        budgets = {"num_steps": args.num_steps, "max_dimension": args.max_dimension,
-                   "max_intervals": args.max_intervals, "max_state_mb": args.max_state_mb}
-        validate_budgets(**budgets)
-        output = args.output_dir or DEFAULT_OUTPUT_ROOT
-        routing = args.routing_root or DEFAULT_ROUTING_ROOT
-        shared = {"noise": noise, "ideal": args.ideal, "reference_fidelity": args.reference_fidelity,
-                  "coupling_policy": args.coupling_policy}
-        if args.experiment == "transfer":
-            config = SimulationConfig(chain_length=args.chain_length, pairs=args.pairs, g_max=args.g_max,
-                                      num_steps=args.num_steps, segments=args.segments,
-                                      max_segment_steps=args.max_segment_steps, beam_width=args.beam_width,
-                                      reference_time_ns=args.reference_time_ns, reference_distance=args.reference_distance,
-                                      **shared)
-            plan = ce.plan_transfer(config)
-            resources = estimate_resources(math.comb(config.chain_length, len(config.pairs)), len(config.pairs),
-                                           len(plan.interval_durations), len(plan.primitives), config.num_steps,
-                                           config.chain_length, noise, plan.route, args.ideal)
-            reason = resource_exclusion(resources, args.max_dimension, args.max_intervals, args.max_state_mb)
-            if reason:
-                raise ValueError(f"transfer: {reason}")
-            started = time.perf_counter()
-            result, times, target, source, fidelity = run_simulation(config)
-            summary = result_to_jsonable(result)
-            summary.update(noise_summary(result.noisy_fidelities, result.noisy_standard_errors,
-                                         result.noisy_ci_lower, result.noisy_ci_upper, result.noise))
-            if args.output_dir is not None:
-                summary = write_outputs(fresh_output(output, "transfer", (DEFAULT_ROUTING_ROOT,)),
-                                        result, times, target, source, fidelity)
-            summary["runtime_seconds"] = time.perf_counter() - started
-            summary["resources"] = resources
-            if "output_dir" in summary:
-                write_json(Path(summary["output_dir"]) / "summary.json", summary)
-            print(json.dumps(summary, indent=2, allow_nan=False))
-            return 0 if summary["status"] == "complete" else 1
-        reports = {}
-        if args.experiment in {"compiler", "all"}:
-            reports["compiler"] = run_compiler(output, routing, scan_only=args.scan_only,
-                compiler_manifest=args.compiler_manifest, cases_per_class=args.cases_per_class,
-                min_excitations=args.min_excitations, max_excitations=args.max_excitations,
-                min_moving=args.min_moving, programs=args.programs, **budgets, **shared)
-        if args.experiment in {"single-chain", "all"}:
-            reports["single_chain"] = run_single_chain(output, parse_lengths(args.lengths), args.g_max,
-                protected=(routing,), reference_time_ns=args.reference_time_ns, existing=args.existing, **budgets, **shared)
-        if args.experiment == "optimize":
-            reports["optimize"] = run_optimization(output, noise=noise, reference_time_ns=args.reference_time_ns,
-                                                   reference_fidelity=args.reference_fidelity, **budgets)
-    except (ValueError, OSError) as exc:
-        parser.error(str(exc))
-    compact = {name: {key: report[key] for key in ("status", "output_dir", "census", "eligible_class_counts", "selected_class_counts",
-                "missing_classes", "class_shortfall", "eligible_stratum_counts", "selected_stratum_counts",
-                "missing_strata", "stratum_shortfall", "program_filter", "max_numerical_chain_length",
-                "best_candidate_after_precision_check") if key in report} for name, report in reports.items()}
-    print(json.dumps(compact, indent=2, allow_nan=False))
-    return 0 if all(report["status"] in {"complete", "scan_complete"} for report in reports.values()) else 1
+        if args.experiment in (None, "maximum-chain-length", "single-chain"):
+            reports["maximum_chain_length"] = run_single_chain(
+                args.output_root, args.lengths, None, num_steps=args.num_steps or 401,
+                reference_time_ns=62.5, noise=NoiseConfig(calibration_time_ns=125.),
+                output_name="maximum_chain_length", figure_root=args.figure_root)
+        if args.experiment in (None, "real-case-study"):
+            reports["real_case_study"] = run_real_case_study(
+                args.output_root, args.manifest, args.num_steps or 101, args.select_only, args.figure_root)
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
+    print(json.dumps({name: {key: report[key] for key in ("status", "output_dir")}
+                      for name, report in reports.items()}, indent=2))
+    return int(any(report["status"] not in ("complete", "scan_complete") for report in reports.values()))
 
 
 if __name__ == "__main__":

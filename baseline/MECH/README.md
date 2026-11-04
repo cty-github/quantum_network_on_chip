@@ -1,7 +1,24 @@
 # MECH
 
+## Sensate project workflow / 项目评估入口
 
-## Dependencies
+Run the integrated baseline from the project root:
+
+```bash
+python evaluate/run_mech_routing.py --experiment all
+python evaluate/plot_result_figures.py
+```
+
+Baseline data is written to `evaluate/result/baseline_mech/<experiment>/`;
+project figures are written to `evaluate/figure/`. See
+[Evaluation Workflow](../../evaluate/evaluate.md) for supported experiment axes
+and model constraints.
+
+The notebook instructions below describe the standalone MECH experiments and
+their table/figure numbering, not the Sensate evaluation outputs. Run these
+notebooks from `baseline/MECH/` so their relative data paths resolve correctly.
+
+## Standalone notebook dependencies
 * **python >= 3.9.6**
 * **numpy == 1.23.5**
 * **matplotlib == 3.7.2**
@@ -12,10 +29,10 @@
 
 ## How to Run
 #### Open the following jupyter notebook files to reproduce experimental data of baseline and MECH for corresponding table and figures.
-* Qiskit_experiements.ipynb (Table 2, Fig. 12,13,14,15,16)
-    * You may downgrade from `optimization_level=3` to `optimization_level=2` to obtain similar results much faster
-* MECH_experiemnts.ipynb (Table 2, Fig. 12,13,14,16)
-* MECH_experiemnts_customized.ipynb (Fig. 15)
+* Qiskit_experiments.ipynb (Table 2, Fig. 12,13,14,15,16)
+    * You may select `optimization_level=2` instead of `optimization_level=3` for a faster run; validate the resulting metrics
+* MECH_experiments.ipynb (Table 2, Fig. 12,13,14,16)
+* MECH_experiments_customization.ipynb (Fig. 15)
 
 #### The experimental data will be automatically saved to `./baseline_data` and `./exp_data`. 
 * The paths can be changed at the beginning of the jupyter notebooks above
@@ -24,8 +41,8 @@
 
 #### Then, open the following jupyter notebook files to read from the saved data and generate the table and plots automatically.
 * MECH_main_table.ipynb (Table 2)
-* MECH_line_plot_drawing.ipynb (Fig. 12, 13)
-* MECH_bar_plot_drawing.ipynb (Fig. 14, 15, 16)
+* MECH_line_plot.ipynb (Fig. 12, 13)
+* MECH_bar_plot.ipynb (Fig. 14, 15, 16)
 
 ## What to Run
 #### 1. Experimental setup for baseline
@@ -100,17 +117,17 @@ Fig. 16
 #### 3. Plotting
 
 Open MECH_main_table.ipynb (Table 2)
-* `baseline_mode = 'level_3' or 'level_2' or 'sabre'` based on your previous choice
+* `baseline_mode = 'level_3' or 'level_2' or 'sabre'` matching the selected experiment configuration
 * `baseline_data_path = 'baseline_data'`
 * `exp_data_path = 'exp_data'`
 
-Open MECH_line_plot_drawing.ipynb (Fig. 12, 13)
-* `baseline_mode = 'level_3' or 'level_2' or 'sabre'` based on your previous choice
+Open MECH_line_plot.ipynb (Fig. 12, 13)
+* `baseline_mode = 'level_3' or 'level_2' or 'sabre'` matching the selected experiment configuration
 * `baseline_data_path = 'baseline_data'`
 * `exp_data_path = 'exp_data'`
 
-Open MECH_bar_plot_drawing.ipynb (Fig. 14, 15, 16)
-* `baseline_mode = 'level_3' or 'level_2' or 'sabre'` based on your previous choice
+Open MECH_bar_plot.ipynb (Fig. 14, 15, 16)
+* `baseline_mode = 'level_3' or 'level_2' or 'sabre'` matching the selected experiment configuration
 * `baseline_data_path = 'baseline_data'`
 * `exp_data_path = 'exp_data'`
 

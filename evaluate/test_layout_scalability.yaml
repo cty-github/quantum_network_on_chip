@@ -16,7 +16,7 @@ defaults:
   # RL is inference-only here. Train first with evaluate/train_layout_model.py,
   # then point rl_model_path at the resulting model.zip when design_strategy includes rl.
   # rl_patience: 5
-  rl_model_path: ./result/layout_models/layout-rl-1000x200_seed42/model.zip
+  rl_model_path: ./result/layout_models/model_checkpoint/checkpoint.zip
   # rl_estimate_workers: 1
   # rl_score_seed: null
   # rl_seed: null
@@ -49,7 +49,8 @@ experiments:
         # greedy,
         rl,
         ]
-      package_size_to_test: [40, 60, 80, 100, 120]
+      package_size_to_test: [40, 60, 80, 100, 120, 140, 160, 180]
+      # package_size_to_test: [140, 160, 180]
 
   package_shape:
     # exp_dir: ./result/layout_scalability/package_shape

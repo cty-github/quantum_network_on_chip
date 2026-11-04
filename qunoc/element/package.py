@@ -1985,7 +1985,7 @@ class Package:
         Returns:
             tuple[plt.Figure, plt.Axes]: The figure of the package graph.
         """
-        if self.node_num > 22500:
+        if self.node_num > 32400:
             raise OverflowError()
         fig = plt.figure(figsize=self.package_size)
         ax = fig.add_subplot(1, 1, 1)

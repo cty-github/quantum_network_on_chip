@@ -22,7 +22,7 @@ from scipy.stats import poisson
 if TYPE_CHECKING:
     from .chain_evolution import TransferPlan
 
-NOISE_MODEL_VERSION = "hamiltonian-lindblad-v2"
+NOISE_MODEL_VERSION = "hamiltonian-nn-lindblad-v3"
 BASELINE_T1_NS = 141500.0
 MAX_MASTER_DIM = 128
 MAX_SLATER_SITES = 512
@@ -191,6 +191,8 @@ def _interval_edges(plan: TransferPlan) -> tuple[tuple[tuple[int, int, float], .
             primitive = plan.primitives[index]
             left, right = primitive.sites
             if primitive.kind == "direct-xy":
+                if abs(left - right) != 1:
+                    raise ValueError("strict NN noise requires adjacent direct edges")
                 edges.append((left, right, primitive.effective_g_rad_per_ns))
             elif primitive.kind == "pst-segment":
                 length = right - left + 1
@@ -242,7 +244,8 @@ def _direct_log_probabilities(plan: TransferPlan, times: np.ndarray, gamma: floa
     """
     logs = np.zeros(len(times))
     for primitive in plan.primitives:
-        if primitive.kind != "direct-xy" or primitive.start_time_ns != 0:
+        if (primitive.kind != "direct-xy" or primitive.start_time_ns != 0
+                or abs(primitive.sites[0] - primitive.sites[1]) != 1):
             raise ValueError("independent-pair backend requires simultaneous disjoint direct edges")
         t = np.minimum(times, primitive.duration_ns)
         coupling = primitive.effective_g_rad_per_ns
@@ -497,7 +500,7 @@ def _cached_evaluate(plan: TransferPlan, grid: tuple[float, ...], noise: NoiseCo
     for name in ("t1_ns", "calibration_t1_ns"):
         if math.isinf(parameters[name]):
             parameters[name] = None
-    metadata = {"model_version": version, "parameters": parameters, "reference_fit": reference,
+    metadata = {"model_version": version, "topology": "open-nearest-neighbor-xy", "parameters": parameters, "reference_fit": reference,
                 "solver": solver, "uncertainty": uncertainty, "excitation_count": k,
                 "converged": bool(diagnostics["precision_met"]), "confidence": noise.confidence,
                 "sampling_uncertainty_only": True,
@@ -653,14 +656,14 @@ def noise_self_test() -> dict[str, object]:
     assert alternate["ci_lower"][-1] <= baseline["fidelities"][-1] <= alternate["ci_upper"][-1]
     checks.append("bounded 95% MC intervals, unmet-budget flag, deterministic seeds, grid-independent completion")
 
-    direct = plan_transfer(SimulationConfig(9, ((0, 8), (1, 2), (4, 4))))
+    direct = plan_transfer(SimulationConfig(5, ((0, 1), (2, 3), (4, 4))))
     direct_grid = np.linspace(0, direct.transfer_time_ns, 11)
     direct_exact = evaluate_plan_noise(direct, direct_grid)
     direct_master = evaluate_plan_noise(direct, direct_grid, NoiseConfig(solver="master"))
     assert np.allclose(direct_exact["fidelities"], direct_master["fidelities"], atol=2e-8)
     direct_loss = evaluate_plan_noise(direct, [direct.transfer_time_ns], NoiseConfig(gamma_phi_ns=0))
     assert abs(direct_loss["log_fidelities"][-1] + 3 * direct.transfer_time_ns / BASELINE_T1_NS) < 1e-12
-    checks.append("independent long spin pairs match master; idle and already-finished residents keep losing")
+    checks.append("independent adjacent spin pairs match master; idle and already-finished residents keep losing")
 
     full = plan_transfer(SimulationConfig(3, ((0, 2), (1, 1), (2, 0)), ordered=True))
     full_noise = evaluate_plan_noise(full, [full.transfer_time_ns])
@@ -670,10 +673,10 @@ def noise_self_test() -> dict[str, object]:
     assert math.isfinite(underflow["metadata"]["uncertainty"]["log_ci_lower"])
     checks.append("full occupancy invariant and underflow-safe relaxation/log confidence bounds")
     simulated = simulate_transfer([0, 1], [1, 3], 4)
-    estimated = estimate_transfer([0, 1], [1, 3], 4, ordered=False)
+    estimated = estimate_transfer([0, 1], [1, 3], 4)
     assert simulated["fidelity"] == estimated["fidelity"]
-    fast = estimate_transfer([0], [8], 9, coupling_policy="cap-limited-fast")
-    slow = estimate_transfer([0], [8], 9)
+    fast = estimate_transfer([0], [2], 3, coupling_policy="cap-limited-fast")
+    slow = estimate_transfer([0], [2], 3)
     assert fast["transfer_time_ns"] < slow["transfer_time_ns"]
     checks.append("public API completion agreement and cap-limited-fast changes actual timing")
     longest = build_single_chain_plan(80)

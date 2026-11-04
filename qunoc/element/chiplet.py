@@ -275,14 +275,14 @@ class OperationConfig:
             raise ValueError("eqst_model must be 'legacy' or 'hamiltonian'")
         settings = {
             "model": model,
-            "version": "hamiltonian-lindblad-v2" if model == "hamiltonian" else "legacy-v1",
+            "version": "hamiltonian-nn-lindblad-v3" if model == "hamiltonian" else "legacy-v1",
             "reference_time_ns": getattr(self, "eqst_reference_time_ns", 125),
             "reference_distance": getattr(self, "eqst_reference_distance", 5),
             "g_max": getattr(self, "eqst_g_max", 3 * math.pi / 250),
             "max_segment_steps": getattr(self, "eqst_max_segment_steps", 10),
             "beam_width": getattr(self, "eqst_beam_width", 128),
             "coupling_policy": getattr(self, "eqst_coupling_policy", "preserve-request"),
-            "noise_model_version": "hamiltonian-lindblad-v2",
+            "noise_model_version": "hamiltonian-nn-lindblad-v3",
             "t1_ns": getattr(self, "eqst_t1_ns", 141500.0),
             "gamma_phi_ns": getattr(self, "eqst_gamma_phi_ns", None),
             # Hardware sensitivity never changes the reference used to fit gamma.

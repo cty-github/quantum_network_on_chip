@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Automatic XY routing / 自动 XY 路由，固定激发数占据态模拟。
 
-Disjoint moving endpoints use simultaneous direct XY edges. Any shared endpoint
-sends the entire task through contiguous PST mirrors (greedy + beam heuristic).
+All hopping is strictly nearest-neighbor. Compatible site-disjoint request intervals
+use simultaneous PST mirrors; overlaps or displaced residents use the conflict planner.
 Time is in ns, couplings in rad/ns. N=6, k=1, 125 ns, F=0.992 calibrates
 uniform T1 plus genuine local pure dephasing on the true nearest-neighbor chain.
 Requested sqrt(distance) timings remain a design rule, with physical cap limits.
@@ -62,8 +62,8 @@ class SimulationConfig:
     reference_distance: float = REFERENCE_DISTANCE
     reference_fidelity: float = REFERENCE_FIDELITY
     ideal: bool = False
-    # 独立数值接口保留占据目标；估计接口默认要求标签逐一到达。 Legacy occupation default.
-    ordered: bool = False
+    # 默认逐对到达；显式 False 仅保留旧占据模式。 Paired goals by default; False opts into occupation-only.
+    ordered: bool = True
     noise: NoiseConfig = NoiseConfig()
     coupling_policy: str = "preserve-request"
 
@@ -158,7 +158,10 @@ class TransferPlan:
         return {
             "model_version": MODEL_VERSION, "ordered": self.config.ordered,
             "coupling_policy": self.config.coupling_policy,
-            "planner": self.planner, "pairs_are_disjoint": self.route == "direct-xy",
+            "planner": self.planner, "pairs_are_disjoint": are_disjoint_edges(self.config.active_pairs),
+            "request_class": request_class(self.config.pairs),
+            "intervals_are_compatible": are_compatible_pst_requests(self.config.pairs),
+            "topology": "open-nearest-neighbor-xy",
             "direct_pairs": self.direct_pairs, "segment_stages": self.segment_stages,
             "manual_segments": self.config.segments is not None,
             "stage_count": len(self.stage_durations),
@@ -220,6 +223,23 @@ def are_disjoint_edges(edges: Sequence[Pair]) -> bool:
     return len(sites) == len(set(sites))
 
 
+def are_compatible_pst_requests(pairs: Sequence[Pair]) -> bool:
+    """Check concurrent closed intervals and all residents / 检查并行闭区间及全部居民。
+
+    Input: paired resident positions; output: safe one-stage compatibility.
+    输入为居民源目标对；输出为安全单阶段兼容性。
+    """
+    intervals = tuple(sorted(tuple(sorted((s, t))) for s, t in pairs if s != t))
+    if any(left <= previous_right for (_, previous_right), (left, _) in zip(intervals, intervals[1:])):
+        return False
+    return apply_segment_stage_labeled(tuple(s for s, _ in pairs), intervals) == tuple(t for _, t in pairs)
+
+
+def request_class(pairs: Sequence[Pair]) -> str:
+    """Classify full resident requests / 按全部居民请求分类；返回稳定类别名。"""
+    return "nonconflicting" if are_compatible_pst_requests(pairs) else "conflicting"
+
+
 def validate_config(config: SimulationConfig) -> None:
     """功能 / Purpose: Validate requests and controls / 校验请求与控制参数。
 
@@ -259,8 +279,6 @@ def validate_config(config: SimulationConfig) -> None:
     if not isinstance(config.ordered, bool):
         raise ValueError("ordered must be a boolean")
     if config.segments is not None:
-        if are_disjoint_edges(config.active_pairs):
-            raise ValueError("--segments is only used for conflicting pairs; disjoint pairs use direct XY")
         validate_segment_stages(config.chain_length, config.segments)
 
 
@@ -286,6 +304,8 @@ def build_edge_hamiltonian(
     输入 / Inputs: Basis, index, directed (u,v,J) edges / 占据基底、索引、含耦合的边。
     输出 / Outputs: Hermitian CSR matrix; conjugate reverse hops / 厄米稀疏矩阵，反向耦合共轭。
     """
+    if any(abs(left - right) != 1 for left, right, _ in edges):
+        raise ValueError("strict NN Hamiltonian requires adjacent edge endpoints")
     rows: list[int] = []
     cols: list[int] = []
     data: list[complex] = []
@@ -705,7 +725,7 @@ def calibrated_target_fidelities(
 def plan_transfer(config: SimulationConfig) -> TransferPlan:
     """功能 / Purpose: Share an immutable matrix-free transfer schedule / 共享不可变无矩阵传输方案。
 
-    输入 / Inputs: SimulationConfig; ordered=False preserves occupation behavior / 模拟配置，ordered=False 保留占据行为。
+    输入 / Inputs: SimulationConfig; explicit ordered=False opts into occupation goals (holds stay paired) / 显式 False 采用占据目标，静止仍逐对约束。
     输出 / Outputs: Content-cached frozen plan without basis/matrix/profile arrays / 按内容缓存的冻结方案，不生成基底、矩阵或剖面数组。
     Sampling density is irrelevant to planning and canonicalized to two / 采样密度不影响规划，缓存统一为二。
     """
@@ -731,18 +751,24 @@ def _cached_transfer_plan(config: SimulationConfig) -> TransferPlan:
     输入 / Inputs: Canonical immutable validated config / 已校验的规范化不可变配置。
     输出 / Outputs: Immutable primitives, independent shutoffs and resident displacement / 不可变操作、独立关断及居民位移。
     """
-    disjoint = are_disjoint_edges(config.active_pairs)
+    compatible = are_compatible_pst_requests(config.pairs)
+    # 静止居民是逐对约束，不能以占据相同掩盖交换。 Holds remain labeled constraints.
+    ordered_goal = config.ordered or any(s == t for s, t in config.pairs)
+    disjoint = (compatible and config.segments is None
+                and all(abs(s - t) == 1 for s, t in config.active_pairs))
     stages: Stages = ()
-    planner = "direct" if config.active_pairs else "identity"
-    if not disjoint:
-        if config.segments is not None:
-            stages, planner = config.segments, "manual"
-        else:
-            stages, planner = _auto_pst_plan(
-                config.sources, config.targets, config.chain_length,
-                config.max_segment_steps, config.beam_width, config.ordered)
-        if stages:
-            validate_segment_stages(config.chain_length, stages)
+    planner = "direct-adjacent" if config.active_pairs else "identity"
+    if config.segments is not None:
+        stages, planner = config.segments, "manual"
+    elif compatible and not disjoint:
+        stages = (tuple(sorted(tuple(sorted(pair)) for pair in config.active_pairs)),)
+        planner = "parallel-disjoint-pst"
+    elif not compatible:
+        stages, planner = _auto_pst_plan(
+            config.sources, config.targets, config.chain_length,
+            config.max_segment_steps, config.beam_width, ordered_goal)
+    if stages:
+        validate_segment_stages(config.chain_length, stages)
 
     stage_durations, stage_requested_durations, interval_durations = [], [], []
     interval_indices = []
@@ -790,8 +816,8 @@ def _cached_transfer_plan(config: SimulationConfig) -> TransferPlan:
         elapsed += previous
         labeled_path.append(config.targets if disjoint else
                             apply_segment_stage_labeled(labeled_path[-1], stage))
-    if not mapping_matches(labeled_path[-1], config.targets, config.ordered):
-        goal_type = "paired targets" if config.ordered else "target occupation"
+    if not mapping_matches(labeled_path[-1], config.targets, ordered_goal):
+        goal_type = "paired targets" if ordered_goal else "target occupation"
         raise ValueError(f"PST segments do not map source positions to {goal_type}: "
                          f"{labeled_path[-1]} != {config.targets}")
     return TransferPlan(
@@ -852,6 +878,8 @@ def estimate_transfer(
         "effective_distance_edges": plan.effective_distance_edges,
         "log_fidelity": log_fidelity, "neglog_fidelity": -log_fidelity,
         "model_version": MODEL_VERSION, "plan": plan,
+        "route": plan.route, "request_class": request_class(config.pairs),
+        "topology": "open-nearest-neighbor-xy",
         "fidelity": noisy["fidelities"][-1], "noise": noisy["metadata"],
     }
 
@@ -859,7 +887,7 @@ def estimate_transfer(
 def run_simulation(config: SimulationConfig) -> tuple[SimulationResult, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """功能 / Purpose: Evolve the same immutable plan used by estimation / 演化与估计共用的不可变方案。
 
-    输入 / Inputs: SimulationConfig, occupation-only unless ordered=True / 模拟配置，默认占据目标，可指定逐对目标。
+    输入 / Inputs: SimulationConfig, paired goals by default / 模拟配置，默认逐对目标。
     输出 / Outputs: Result, ns times, ideal amplitudes/probabilities / 摘要、纳秒时间、理想振幅及概率。
     Numerical probability is occupation-only even for ordered plans / 即使方案有序，数值概率仍仅验证占据。
     """
@@ -928,7 +956,7 @@ def simulate_transfer(
 
 
 def build_single_chain_plan(
-    length: int, g_max: float = DEFAULT_G_MAX_RAD_PER_NS, *, noise: NoiseConfig | None = None,
+    length: int, g_max: float | None = DEFAULT_G_MAX_RAD_PER_NS, *, noise: NoiseConfig | None = None,
     coupling_policy: str = "preserve-request", reference_time_ns: float = REFERENCE_TIME_NS,
     reference_fidelity: float = REFERENCE_FIDELITY, ideal: bool = False,
 ) -> TransferPlan:
@@ -936,8 +964,8 @@ def build_single_chain_plan(
 
     Inputs / 输入: N>=2, peak edge coupling rad/ns, noise/reference controls / 链长、峰值耦合及噪声参考控制。
     Outputs / 输出: Explicit one-primitive PST plan, never automatic direct XY / 显式单操作 PST 方案，不走自动直接边。
-    The single-chain protocol always fills the peak cap; policy labels only apply to general routing.
-    单链协议始终使用峰值上限，策略标签仅影响一般路由。
+    Finite caps retain fixed-peak timing; no cap uses the requested sqrt-distance timing.
+    有限上限保留固定峰值时序；无上限按请求的距离平方根时序运行。
     """
     if isinstance(length, bool) or not isinstance(length, (int, np.integer)) or length < 2:
         raise ValueError("single-chain length must be an integer at least two")
@@ -946,15 +974,16 @@ def build_single_chain_plan(
                               coupling_policy=coupling_policy, reference_time_ns=reference_time_ns,
                               reference_fidelity=reference_fidelity, ideal=ideal)
     validate_config(config)
-    if g_max is None:
-        raise ValueError("single-chain fixed-peak protocol requires g_max")
     profile = math.sqrt((length // 2) * ((length + 1) // 2))
-    g = g_max / profile
-    duration = math.pi / (2 * g)
     requested = reference_time_ns * math.sqrt((length - 1) / REFERENCE_DISTANCE)
+    # Uncapped peak is a required control, not a hardware limit / 无上限峰值是所需控制量而非硬件上限。
+    g = math.pi / (2 * requested) if g_max is None else g_max / profile
+    duration = requested if g_max is None else math.pi / (2 * g)
+    peak = g * profile if g_max is None else g_max
     primitive = TransferPrimitive(0, "pst-segment", (0, length - 1), length - 1, length - 1,
-                                  requested, duration, 0.0, duration, g, g_max, duration > requested)
-    return TransferPlan(config=config, route="pst-segments", planner="single-chain-fixed-peak",
+                                  requested, duration, 0.0, duration, g, peak, duration > requested)
+    planner = "single-chain-uncapped-request" if g_max is None else "single-chain-fixed-peak"
+    return TransferPlan(config=config, route="pst-segments", planner=planner,
                         direct_pairs=(), segment_stages=(((0, length - 1),),), primitives=(primitive,),
                         stage_durations=(duration,), stage_requested_durations=(requested,),
                         interval_durations=(duration,), interval_primitive_indices=((0,),),

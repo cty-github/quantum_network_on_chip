@@ -34,6 +34,7 @@ from matplotlib.ticker import FuncFormatter
 # ----------------------------- configuration -----------------------------
 
 PACKAGE_SIZES = [40, 60, 80, 100, 120]
+LAYOUT_PACKAGE_SIZES = list(range(40, 181, 20))
 QUANTUM_PROGRAMS = ["vqe", "qaoa", "bv", "s_ghz"]
 LAYOUT_STRATEGIES = ["template", "heuristic", "greedy", "rl"]
 PRIMARY_LAYOUT_STRATEGY = "rl"
@@ -73,6 +74,25 @@ SCALABILITY_SPECS = {
         "title": "Coupler sparsity",
     },
 }
+
+# 布局扫描独立于路由配置。 / Keep layout sweeps independent of routing grids.
+LAYOUT_SCALABILITY_SPECS = {
+    "package_size": {
+        "csv": "package_size/output.csv",
+        "axis": "PackageSize",
+        "order": LAYOUT_PACKAGE_SIZES,
+        "xlabel": "Package size",
+        "tick_labels": [f"{size}×{size}" for size in LAYOUT_PACKAGE_SIZES],
+        "title": "Package size",
+    },
+    **{name: dict(spec) for name, spec in SCALABILITY_SPECS.items()},
+}
+LAYOUT_SCALABILITY_SPECS["package_shape"].update(
+    order=[1000, 500, 250, 200, 125, 100],
+    tick_labels=["1000×10", "500×20", "250×40", "200×50", "125×80", "100×100"],
+    xlabel="Package shape",
+)
+
 
 # Palette used throughout plot_results.ipynb.
 COLORS = {
@@ -180,8 +200,8 @@ COMBINED_SCALABILITY_STYLE = {
         },
         "routing": {
             "geometry": {"fidelity_improvement": None, "circuit_speedup": None},
-            "inter_fidelity": {"fidelity_improvement": (2, 3), "circuit_speedup": (2.5, 5)},
-            "chiplet_sparsity": {"fidelity_improvement": (2.3, 2.9), "circuit_speedup": (1, 5)},
+            "inter_fidelity": {"fidelity_improvement": (1, 3.5), "circuit_speedup": (2, 8.5)},
+            "chiplet_sparsity": {"fidelity_improvement": (1, 3.5), "circuit_speedup": (2, 8.5)},
         },
     },
 }
@@ -367,43 +387,27 @@ def plot_line(ax: Axes, x, y, key: str, label: str | None = None, dashed: bool =
 
 # ----------------------------- data loaders -----------------------------
 
+def load_layout_scalability(eval_result_dir: Path, name: str) -> pd.DataFrame:
+    spec = LAYOUT_SCALABILITY_SPECS[name]
+    axis = spec["axis"]
+    values = ["Fidelity", "FideStd", "Score"]
+    keys = {"DesignStrategy": LAYOUT_STRATEGIES, axis: spec["order"]}
+    df = read_csv(eval_result_dir / "layout_scalability" / spec["csv"])
+    if not df.empty:
+        numeric_axis = all(isinstance(v, (int, float)) for v in spec["order"])
+        df = coerce_numeric(df, ([axis] if numeric_axis else []) + values)
+        # 重跑记录取最后一条，不混合历史结果。 / Use the last persisted rerun per case.
+        df = last_by(df, ["DesignStrategy", axis])
+        df = df[df["DesignStrategy"].isin(LAYOUT_STRATEGIES)]
+    return complete_grid(df, keys, values)
+
+
 def load_layout_package_size(eval_result_dir: Path) -> pd.DataFrame:
-    path = eval_result_dir / "layout_scalability/package_size/output.csv"
-    df = read_csv(path)
-    if df.empty:
-        return complete_grid(
-            pd.DataFrame(),
-            {"DesignStrategy": LAYOUT_STRATEGIES, "PackageSize": PACKAGE_SIZES},
-            ["Fidelity", "FideStd", "Score"],
-        )
-    df = coerce_numeric(df, ["PackageSize", "Fidelity", "FideStd", "Score"])
-    df = last_by(df, ["DesignStrategy", "PackageSize"])
-    df = df[df["DesignStrategy"].isin(LAYOUT_STRATEGIES)]
-    return complete_grid(
-        df,
-        {"DesignStrategy": LAYOUT_STRATEGIES, "PackageSize": PACKAGE_SIZES},
-        ["Fidelity", "FideStd", "Score"],
-    )
+    return load_layout_scalability(eval_result_dir, "package_size")
 
 
 def load_layout_package_shape(eval_result_dir: Path) -> pd.DataFrame:
-    path = eval_result_dir / "layout_scalability/package_shape/output.csv"
-    package_x_lengths = [1000, 500, 250, 200, 125, 100]
-    df = read_csv(path)
-    if df.empty:
-        return complete_grid(
-            pd.DataFrame(),
-            {"DesignStrategy": LAYOUT_STRATEGIES, "PackageXLength": package_x_lengths},
-            ["Fidelity", "FideStd", "Score"],
-        )
-    df = coerce_numeric(df, ["PackageXLength", "Fidelity", "FideStd", "Score"])
-    df = last_by(df, ["DesignStrategy", "PackageXLength"])
-    df = df[df["DesignStrategy"].isin(LAYOUT_STRATEGIES)]
-    return complete_grid(
-        df,
-        {"DesignStrategy": LAYOUT_STRATEGIES, "PackageXLength": package_x_lengths},
-        ["Fidelity", "FideStd", "Score"],
-    )
+    return load_layout_scalability(eval_result_dir, "package_shape")
 
 
 def load_routing_package_size(eval_result_dir: Path) -> pd.DataFrame:
@@ -473,10 +477,10 @@ def load_mech_scalability(root: Path, name: str, spec: dict) -> pd.DataFrame:
     """Load MECH CSVs, deriving any available package-shape JSON results."""
     axis = spec["axis"]
     values = ["CircuitDuration", "GateFidelity"]
-    result_dir = root / "evaluate" / "result" / "mechbaseline" / name
+    result_dir = root / "evaluate" / "result" / "baseline_mech" / name
     path = result_dir / "output.csv"
     if not path.exists():
-        result_dir = root / "result/routing_scalability/mech_baseline" / name
+        result_dir = root / "result/routing_scalability/baseline_mech" / name
         path = result_dir / "output.csv"
     df = read_csv(path)
 
@@ -558,7 +562,7 @@ def read_optional_ablation_csv(evaluate_dir: Path) -> pd.DataFrame:
 def load_ablation(evaluate_dir: Path, eval_result_dir: Path, quantum_program: str) -> pd.DataFrame:
     """Load routing ablation data.
 
-    Canonical inputs are read from result/mechbaseline/package_size,
+    Canonical inputs are read from result/baseline_mech/package_size,
     result/routing_scalability/package_size and result/ablation/package_size.
     Historical main_exp.csv remains a fallback for old result directories.
     """
@@ -649,9 +653,9 @@ def load_ablation(evaluate_dir: Path, eval_result_dir: Path, quantum_program: st
 
 
 def load_mech_operation_json(root: Path, quantum_program: str) -> pd.DataFrame:
-    baseline_dir = root / "evaluate" / "result" / "mechbaseline" / "package_size"
+    baseline_dir = root / "evaluate" / "result" / "baseline_mech" / "package_size"
     if not baseline_dir.exists():
-        baseline_dir = root / "result/routing_scalability/mech_baseline/package_size"
+        baseline_dir = root / "result/routing_scalability/baseline_mech/package_size"
     rows = []
     for size in PACKAGE_SIZES:
         path = baseline_dir / f"{size}_mech_{quantum_program}.json"
@@ -737,26 +741,29 @@ def build_overall_results_csv(root: Path, eval_result_dir: Path) -> pd.DataFrame
 
 
 def build_layout_scalability_csv(eval_result_dir: Path) -> pd.DataFrame:
-    package_size = load_layout_package_size(eval_result_dir)
     rows = []
-    for strategy in ["rl", "greedy", "heuristic", "template"]:
-        subset = package_size[package_size["DesignStrategy"].eq(strategy)].copy()
-        subset["PackageSize"] = pd.Categorical(subset["PackageSize"], categories=PACKAGE_SIZES, ordered=True)
-        subset = subset.sort_values("PackageSize")
-        for _, row in subset.iterrows():
-            rows.append(
-                {
+    for name, spec in LAYOUT_SCALABILITY_SPECS.items():
+        data = load_layout_scalability(eval_result_dir, name)
+        axis = spec["axis"]
+        labels = dict(zip(spec["order"], spec["tick_labels"]))
+        for strategy in ["rl", "greedy", "heuristic", "template"]:
+            subset = data[data["DesignStrategy"].eq(strategy)]
+            for _, row in subset.iterrows():
+                rows.append({
                     "Figure": "layout_scalability",
-                    "Panel": "layout_score_and_fidelity",
+                    "Panel": "layout_score_and_fidelity" if name == "package_size" else f"{name}_layout_score",
+                    "Sweep": name,
+                    "AxisColumn": axis,
+                    "AxisValue": row[axis],
+                    "AxisLabel": labels[row[axis]].replace("\n", " "),
                     "DesignStrategy": strategy,
-                    "DesignStrategyLabel": DISPLAY_NAME.get(strategy, strategy),
-                    "PackageSize": int(row["PackageSize"]),
-                    "PackageLabel": f"{int(row['PackageSize'])}x{int(row['PackageSize'])}",
+                    "DesignStrategyLabel": DISPLAY_NAME[strategy],
+                    "PackageSize": int(row[axis]) if name == "package_size" else np.nan,
+                    "PackageLabel": f"{int(row[axis])}x{int(row[axis])}" if name == "package_size" else None,
                     "Score": row.get("Score", np.nan),
                     "Fidelity": row.get("Fidelity", np.nan),
                     "FideStd": row.get("FideStd", np.nan),
-                }
-            )
+                })
     return pd.DataFrame(rows)
 
 
@@ -1047,17 +1054,18 @@ def plot_overall(root: Path, evaluate_dir: Path, eval_result_dir: Path, out_dir:
 
 
 def plot_layout_scalability(eval_result_dir: Path, out_dir: Path, formats: list[str]) -> None:
-    """Plot package-size layout scalability for score, fidelity, and fidelity std."""
+    """Plot layout size metrics and four score sweeps in a 3 × 2 figure."""
     package_size = load_layout_package_size(eval_result_dir)
     strategies = ["rl", "greedy", "heuristic", "template"]
-    x = np.arange(len(PACKAGE_SIZES))
+    x = np.arange(len(LAYOUT_PACKAGE_SIZES))
     bar_width = 0.18
 
-    fig, (score_ax, fidelity_ax) = plt.subplots(1, 2, figsize=(14, 5.2))
+    fig, axes = plt.subplots(3, 2, figsize=(16, 15))
+    score_ax, fidelity_ax = axes[0]
 
     for strategy in strategies:
         subset = package_size[package_size["DesignStrategy"].eq(strategy)].copy()
-        subset["PackageSize"] = pd.Categorical(subset["PackageSize"], categories=PACKAGE_SIZES, ordered=True)
+        subset["PackageSize"] = pd.Categorical(subset["PackageSize"], categories=LAYOUT_PACKAGE_SIZES, ordered=True)
         subset = subset.sort_values("PackageSize")
         score = pd.to_numeric(subset["Score"], errors="coerce").to_numpy(dtype=float)
         plot_line(score_ax, x, score, strategy)
@@ -1066,7 +1074,7 @@ def plot_layout_scalability(eval_result_dir: Path, out_dir: Path, formats: list[
     score_ax.set_xlabel("Package size")
     score_ax.set_ylabel("Package score")
     score_ax.set_xticks(x)
-    score_ax.set_xticklabels([f"{size}×{size}" for size in PACKAGE_SIZES])
+    score_ax.set_xticklabels([f"{size}×{size}" for size in LAYOUT_PACKAGE_SIZES])
     score_ax.set_ylim(bottom=0)
     style_axis(score_ax)
 
@@ -1077,7 +1085,7 @@ def plot_layout_scalability(eval_result_dir: Path, out_dir: Path, formats: list[
     fidelity_labels = []
     for index, strategy in enumerate(strategies):
         subset = package_size[package_size["DesignStrategy"].eq(strategy)].copy()
-        subset["PackageSize"] = pd.Categorical(subset["PackageSize"], categories=PACKAGE_SIZES, ordered=True)
+        subset["PackageSize"] = pd.Categorical(subset["PackageSize"], categories=LAYOUT_PACKAGE_SIZES, ordered=True)
         subset = subset.sort_values("PackageSize")
         fidelity = pd.to_numeric(subset["Fidelity"], errors="coerce").to_numpy(dtype=float)
         fidelity_std = pd.to_numeric(subset["FideStd"], errors="coerce").to_numpy(dtype=float)
@@ -1112,9 +1120,9 @@ def plot_layout_scalability(eval_result_dir: Path, out_dir: Path, formats: list[
     fidelity_ax.set_ylabel("Avg. fidelity")
     std_ax.set_ylabel("Fidelity std")
     fidelity_ax.set_xticks(x)
-    fidelity_ax.set_xticklabels([f"{size}×{size}" for size in PACKAGE_SIZES])
-    fidelity_ax.set_ylim(0.35, 0.88)
-    std_ax.set_ylim(0, 0.30)
+    fidelity_ax.set_xticklabels([f"{size}×{size}" for size in LAYOUT_PACKAGE_SIZES])
+    _auto_zero_ylim(fidelity_ax, package_size["Fidelity"])
+    _auto_zero_ylim(std_ax, package_size["FideStd"])
     style_axis(fidelity_ax)
     std_ax.grid(False)
     std_ax.tick_params(axis="both", colors=COLORS["ink"])
@@ -1123,13 +1131,42 @@ def plot_layout_scalability(eval_result_dir: Path, out_dir: Path, formats: list[
         spine.set_color(COLORS["ink"])
         spine.set_linewidth(1.0)
 
+    for ax, panel, name in zip(
+        axes[1:].flat, "cdef", ["package_shape", "geometry", "inter_fidelity", "chiplet_sparsity"]
+    ):
+        spec = LAYOUT_SCALABILITY_SPECS[name]
+        data = load_layout_scalability(eval_result_dir, name)
+        positions = np.arange(len(spec["order"]))
+        for index, strategy in enumerate(strategies):
+            subset = data[data["DesignStrategy"].eq(strategy)].set_index(spec["axis"]).reindex(spec["order"])
+            score = subset["Score"].to_numpy(dtype=float)
+            if name == "geometry":
+                ax.bar(
+                    positions + (index - 1.5) * bar_width, score, bar_width,
+                    color=SERIES_COLOR[strategy], edgecolor=COLORS["ink"],
+                    linewidth=0.5, label=DISPLAY_NAME[strategy],
+                )
+                plot_nan_hint(ax, score)
+            else:
+                plot_line(ax, positions, score, strategy)
+        ax.set_title(f"({panel}) {spec['title']}: layout score")
+        ax.set_xlabel(spec["xlabel"])
+        ax.set_ylabel("Package score")
+        ax.set_xticks(positions)
+        ax.set_xticklabels(spec["tick_labels"])
+        _auto_zero_ylim(ax, data["Score"])
+        style_axis(ax)
+
+    # 八个尺寸标签略微旋转以避免重叠。 / Rotate the eight size labels for readability.
+    for ax in (score_ax, fidelity_ax):
+        ax.tick_params(axis="x", labelrotation=30)
     strategy_handles, strategy_labels = score_ax.get_legend_handles_labels()
-    line_handle = Line2D([0], [0], color=COLORS["ink"], marker="o", markersize=8, linewidth=2, label="Line: score / avg. fidelity")
+    line_handle = Line2D([0], [0], color=COLORS["ink"], marker="o", markersize=8, linewidth=2, label="Line: avg. fidelity")
     bar_handle = Patch(facecolor=COLORS["light_gray"], edgecolor=COLORS["ink"], label="Bar: fidelity std")
     fig.legend(
-        strategy_handles + [line_handle, bar_handle],
-        strategy_labels + ["Line: score / avg. fidelity", "Bar: fidelity std"],
-        ncol=3,
+        strategy_handles,
+        strategy_labels,
+        ncol=4,
         loc="upper center",
         bbox_to_anchor=(0.5, 0.98),
         frameon=True,
@@ -1139,7 +1176,8 @@ def plot_layout_scalability(eval_result_dir: Path, out_dir: Path, formats: list[
         columnspacing=1.3,
         handlelength=1.5,
     )
-    fig.subplots_adjust(left=0.08, right=0.92, bottom=0.18, top=0.76, wspace=0.45)
+    fidelity_ax.legend(handles=[line_handle, bar_handle], loc="lower left", fontsize=11)
+    fig.subplots_adjust(left=0.08, right=0.92, bottom=0.07, top=0.92, wspace=0.40, hspace=0.50)
     save_figure(fig, out_dir, "layout_scalability", formats)
 
 
@@ -1724,9 +1762,231 @@ def plot_ablation(root: Path, evaluate_dir: Path, eval_result_dir: Path, out_dir
     save_figure(fig, out_dir, f"ablation_{quantum_program}", formats)
 
 
+# Hamiltonian data-only plotting / Hamiltonian 数据重绘，不触发模拟。
+
+ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_DATA_ROOT = ROOT / "evaluate/result/hamiltonian_simulation"
+DEFAULT_FIGURE_ROOT = ROOT / "evaluate/figure/hamiltonian_simulation"
+
+def style_hamiltonian_axis(ax) -> None:
+    """Purpose / 功能: Apply light single-series chart styling / 设置浅色单系列图样式。
+
+    Inputs / 输入: Matplotlib axis / 绘图轴。
+    Outputs / 输出: None; mutates axis / 无；修改轴样式。
+    """
+    ax.set_facecolor("#fcfcfb")
+    ax.grid(axis="y", color="#e1e0d9", linewidth=0.7)
+    ax.set_axisbelow(True)
+    ax.spines[["top", "right"]].set_visible(False)
+    for spine in ("left", "bottom"):
+        ax.spines[spine].set_color("#c3c2b7")
+
+
+def write_probability_plot(path: Path, times, ideal, noisy, lower, upper, title: str, noise: dict) -> None:
+    """Purpose / 功能: Compare ideal and dynamical noise with uncertainty / 对比理想与动力学噪声及区间。
+
+    Inputs / 输入: File stem, aligned curves, title and solver / 文件前缀、对齐曲线、标题及求解器。
+    Outputs / 输出: Light PNG/PDF; CSV is supplied by caller / 浅色图像；调用方提供 CSV。
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    # Palette validated with dataviz, 2026-10-22; styles also encode identity / 已校验配色并用线型区分。
+    with plt.rc_context({"font.family": "DejaVu Sans", "font.size": 10, "text.color": "#0b0b0b",
+                         "axes.labelcolor": "#52514e", "xtick.color": "#52514e", "ytick.color": "#52514e"}):
+        fig, ax = plt.subplots(figsize=(8.2, 4.9), constrained_layout=True, facecolor="#fcfcfb")
+        style_hamiltonian_axis(ax)
+        parameters = noise.get("parameters", {})
+        noise_disabled = parameters.get("relaxation_disabled", False) and parameters.get("pure_dephasing_disabled", False)
+        ax.plot(times, noisy, color="#2a78d6", linewidth=2,
+                label="Noise disabled (ideal control)" if noise_disabled else "T1 + pure-dephasing dynamics")
+        ax.plot(times, ideal, color="#eb6834", linewidth=2, linestyle="--", label="Ideal coherent evolution")
+        if np.any(np.asarray(upper) > np.asarray(lower)):
+            confidence = noise.get("confidence", noise.get("parameters", {}).get("confidence", 0.95))
+            ax.fill_between(times, lower, upper, color="#2a78d6", alpha=0.16,
+                            label=f"{100 * confidence:g}% pointwise confidence interval")
+        for values, color, label, offset in ((ideal, "#eb6834", "Ideal", 15),
+                                              (noisy, "#2a78d6", "Noisy", -32)):
+            ax.plot(times[-1], values[-1], "o", color=color, markersize=8,
+                    markeredgewidth=2, markeredgecolor="#fcfcfb")
+            ax.annotate(f"{label}: {values[-1]:.6f}", (times[-1], values[-1]), xytext=(-12, offset),
+                        textcoords="offset points", ha="right", color="#0b0b0b",
+                        bbox={"facecolor": "#fcfcfb", "edgecolor": "none", "pad": 1})
+        ax.set(title=title, xlabel="Time (ns)", ylabel="Target occupation probability",
+               xlim=(0, max(float(times[-1]) * 1.04, 1)), ylim=(-0.025, 1.15))
+        ax.legend(loc="upper left", frameon=False)
+        ax.text(0.03, 0.70, f"Completion: {times[-1]:.3f} ns\n"
+                f"Solver: {noise.get('solver', 'unspecified')}\n"
+                f"Completion precision: {'converged' if noise.get('converged', False) else 'NOT CONVERGED'}",
+                transform=ax.transAxes, va="top", color="#52514e")
+        for suffix in (".png", ".pdf"):
+            fig.savefig(path.with_suffix(suffix), dpi=180)
+        plt.close(fig)
+
+
+def write_length_plot(output: Path, rows: list[dict], g_max: float | None) -> None:
+    """Purpose / 功能: Compare latency and noisy completion / 比较时延及有噪完成概率。
+
+    Inputs / 输入: Directory, case rows, peak coupling (API compatibility) / 目录、案例行及峰值耦合（接口兼容）。
+    Outputs / 输出: Separate latency/probability panels, PNG/PDF/SVG / 独立时延与概率面板。
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    # Explicit paper styling / 论文指定样式；仅影响链长汇总图。
+    with plt.rc_context({"font.family": "DejaVu Sans", "font.size": 16,
+                         "axes.labelsize": 16, "axes.titlesize": 16,
+                         "xtick.labelsize": 16, "ytick.labelsize": 16,
+                         "legend.fontsize": 16, "text.color": "black", "svg.fonttype": "none"}):
+        fig, axes = plt.subplots(1, 2, figsize=(14, 4), constrained_layout=True, facecolor="#fcfcfb")
+        x = [r["chain_length"] for r in rows]
+        for ax in axes:
+            style_hamiltonian_axis(ax)
+            ax.set_xlabel("Chain length")
+            ax.tick_params(colors="black", labelsize=16)
+            ax.xaxis.label.set_color("black")
+            ax.yaxis.label.set_color("black")
+            for spine in ax.spines.values():
+                spine.set_visible(True)
+                spine.set_color("black")
+                spine.set_linewidth(2)
+        axes[0].plot(x, [r["final_time_ns"] for r in rows], color="#264B49", linewidth=4,
+                     marker="o", markersize=6, markeredgewidth=0.8, markeredgecolor="black")
+        axes[0].set(ylabel="Transfer latency (ns)", ylim=(0, None))
+        axes[1].plot(x, [r["noisy_final_fidelity"] for r in rows], color="#A79B73", linewidth=4,
+                     marker="o", markersize=6, markeredgewidth=0.8, markeredgecolor="black")
+        axes[1].fill_between(x, [r["noisy_final_ci_lower"] for r in rows],
+                            [r["noisy_final_ci_upper"] for r in rows], color="#A79B73", alpha=0.16)
+        axes[1].set(ylabel="Target occupation probability", ylim=(0.97, 1.0))
+        for suffix in ("png", "pdf", "svg"):
+            fig.savefig(output / f"maximum_chain_length.{suffix}", dpi=180, transparent=True)
+        plt.close(fig)
+
+
+def write_optimization_plot(output: Path, rows: list[dict]) -> None:
+    """Purpose / 功能: Show projected hardware sensitivity and latency / 展示预测硬件敏感性及时延。
+
+    Inputs / 输入: Directory and complete grid rows / 目录与全部扫描行。
+    Outputs / 输出: Two-panel plot, paired with full CSV / 双面板图及配套完整 CSV。
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    t1_values = sorted({r["t1_us"] for r in rows})
+    with plt.rc_context({"font.family": "DejaVu Sans", "font.size": 10, "text.color": "#0b0b0b"}):
+        fig, axes = plt.subplots(1, 2, figsize=(11.8, 4.8), constrained_layout=True, facecolor="#fcfcfb")
+        for ax in axes:
+            style_hamiltonian_axis(ax)
+            ax.set_xlabel("Peak J/(2π) (MHz)")
+        for t1, color, marker in zip(t1_values, ("#2a78d6", "#eb6834", "#1baf7a"), ("o", "s", "^"), strict=True):
+            points = sorted((r for r in rows if r["t1_us"] == t1), key=lambda r: r["peak_coupling_mhz"])
+            x = [r["peak_coupling_mhz"] for r in points]
+            y = [r["noisy_final_fidelity"] for r in points]
+            axes[1].plot(x, y, color=color, marker=marker, markersize=8, linewidth=2,
+                         markeredgewidth=2, markeredgecolor="#fcfcfb", label=f"T1 = {t1:g} μs")
+            axes[1].fill_between(x, [r["noisy_final_ci_lower"] for r in points],
+                                [r["noisy_final_ci_upper"] for r in points], color=color, alpha=0.12)
+        baseline_t1 = [r for r in rows if r["t1_us"] == t1_values[0]]
+        axes[0].plot([r["peak_coupling_mhz"] for r in baseline_t1], [r["final_time_ns"] for r in baseline_t1],
+                     color="#2a78d6", marker="o", markersize=8, linewidth=2,
+                     markeredgewidth=2, markeredgecolor="#fcfcfb")
+        axes[0].set(ylabel="Transfer latency (ns)", ylim=(0, None))
+        old = rows[0]["historical_distance_envelope_final"]
+        axes[1].axhline(1, color="#52514e", linestyle="--", linewidth=1, label="Historical ideal (no noise)")
+        axes[1].axhline(old, color="#898781", linestyle=":", linewidth=1,
+                       label="Historical distance envelope (NOT dynamics)")
+        axes[1].set(ylabel="Target occupation probability", ylim=(min(old, min(r["noisy_final_ci_lower"] for r in rows)) - .055, 1.025))
+        axes[1].legend(loc="lower right", fontsize=8, frameon=False)
+        fig.suptitle(f"N = {rows[0]['chain_length']} single-excitation sensitivity · PROJECTED hardware\n"
+                     "Baseline-fitted dephasing held fixed; no stronger-coupling hardware-error model")
+        for suffix in ("png", "pdf"):
+            fig.savefig(output / f"optimization.{suffix}", dpi=180)
+        plt.close(fig)
+
+
+def write_real_case_plot(output, rows, figure_root):
+    """Noisy occupation only, with uncertainty / 只画含噪占据概率及区间。"""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+    # User-fixed colors; rows and explicit labels redundantly encode class.
+    # 用户固定配色；行位置和文字冗余标记类别，黑描边增强浅色可读性。
+    with plt.rc_context({"font.size": 16, "font.family": "DejaVu Sans",
+                         "axes.titlesize": 16, "axes.labelsize": 16,
+                         "xtick.labelsize": 16, "ytick.labelsize": 16,
+                         "legend.fontsize": 16, "legend.title_fontsize": 16,
+                         "figure.titlesize": 16, "figure.labelsize": 16,
+                         "axes.linewidth": 2, "text.color": "black", "svg.fonttype": "none"}):
+        fig, axes = plt.subplots(2, 3, figsize=(16, 8), sharey=True)
+        fig.subplots_adjust(left=.07, right=.985, bottom=.12, top=.91, hspace=.59, wspace=.23)
+        for index, (ax, row) in enumerate(zip(axes.flat, rows)):
+            for spine in ax.spines.values():
+                spine.set(color="black", linewidth=2)
+            ax.tick_params(width=2, colors="black")
+            color = "#264B49" if row["class"] == "nonconflicting" else "#A79B73"
+            pairs = ", ".join(f"{s}→{t}" for s, t in zip(row["sources"], row["targets"]))
+            ax.set_title(f"({chr(97+index)}) {row['class'].capitalize()} · k={len(row['sources'])}, N={row['chain_length']}\n{pairs}", fontsize=16, pad=13)
+            ax.set_ylim(0, 1.01)
+            ax.set_xlabel("Time (ns)")
+            if index % 3 == 0:
+                ax.set_ylabel("Target occupation probability")
+            if row["status"] == "failed":
+                ax.text(.5, .5, "SIMULATION FAILED\nSee summary.json", ha="center", transform=ax.transAxes)
+                continue
+            curve = np.genfromtxt(output / row["directory"] / "fidelity.csv", delimiter=",", names=True)
+            times, values = curve["time_ns"], curve["noisy_target_fidelity"]
+            ax.fill_between(times, curve["noisy_ci_lower"], curve["noisy_ci_upper"], color=color, alpha=.22)
+            ax.plot(times, values, color=color, linewidth=2, marker="o", markersize=3.5,
+                    markeredgecolor="black", markeredgewidth=.45, markevery=max(1, len(times)//15))
+            ax.set_xlim(0, times[-1])
+            status = "" if row["status"] == "complete" else " · NOT CONVERGED"
+            ax.text(.03, .95, f"Final = {values[-1]:.4f}{status}", va="top", transform=ax.transAxes, fontsize=16)
+        for extension in ("png", "pdf", "svg"):
+            fig.savefig(figure_root / f"real_case_study.{extension}", transparent=True, dpi=200)
+        plt.close(fig)
+
+
+def plot_hamiltonian_main(argv=None):
+    """Replot selected saved reports / 从选定的保存报告重绘。"""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--experiment", choices=("maximum-chain-length", "real-case-study"))
+    parser.add_argument("--data-root", type=Path, default=DEFAULT_DATA_ROOT)
+    parser.add_argument("--figure-root", type=Path, default=DEFAULT_FIGURE_ROOT)
+    args = parser.parse_args(argv)
+    data_root, figure_root = args.data_root.resolve(), args.figure_root.resolve()
+    if (figure_root == data_root or figure_root.is_relative_to(data_root)
+            or data_root.is_relative_to(figure_root)
+            or figure_root.is_relative_to(ROOT / "evaluate/result")):
+        parser.error("figure-root must be separate from data-root and evaluate/result")
+    # Reject linked artifacts before overwriting figures / 覆盖图像前拒绝链接工件。
+    for path in (args.figure_root, *args.figure_root.parents):
+        if path.is_symlink():
+            parser.error("figure-root must not contain symlinks")
+    if args.figure_root.exists():
+        for path in args.figure_root.rglob("*"):
+            if path.is_symlink() or (path.is_file() and path.stat().st_nlink > 1):
+                parser.error("figure-root must not contain linked artifacts")
+    args.figure_root.mkdir(parents=True, exist_ok=True)
+    for experiment in ((args.experiment,) if args.experiment else ("maximum-chain-length", "real-case-study")):
+        output = args.data_root / experiment.replace("-", "_")
+        try:
+            report = json.loads((output / "summary.json").read_text())
+            if experiment == "maximum-chain-length":
+                write_length_plot(args.figure_root, report["cases"], report["requested_settings"]["g_max_rad_per_ns"])
+            else:
+                write_real_case_plot(output, report["selected_cases"], args.figure_root)
+        except (OSError, ValueError, KeyError) as error:
+            parser.error(str(error))
+    return 0
+
+
 # ----------------------------- entry point -----------------------------
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv=None) -> argparse.Namespace:
     default_root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description="Generate evaluation figures from existing CSV/JSON results.")
     parser.add_argument("--root", type=Path, default=default_root, help="Repository root directory.")
@@ -1735,11 +1995,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ablation-quantum-program", choices=QUANTUM_PROGRAMS, default="qaoa", help="Quantum program used for ablation operation decomposition.")
     parser.add_argument("--skip-csv", action="store_true", help="Do not export per-figure CSV data tables.")
     parser.add_argument("--only-csv", action="store_true", help="Export per-figure CSV data tables without rendering figures.")
-    return parser.parse_args()
+    parser.add_argument("--experiment", choices=("maximum-chain-length", "real-case-study", "hamiltonian"),
+                        help="Render selected Hamiltonian figures only; hamiltonian renders both.")
+    parser.add_argument("--data-root", type=Path, default=None, help="Hamiltonian data root.")
+    parser.add_argument("--figure-root", type=Path, default=None, help="Hamiltonian figure root.")
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv=None):
+    args = parse_args(argv)
+    if args.experiment is not None:
+        options = [] if args.experiment == "hamiltonian" else ["--experiment", args.experiment]
+        data = args.data_root or args.root / "evaluate/result/hamiltonian_simulation"
+        figures = args.figure_root or args.output_dir or args.root / "evaluate/figure/hamiltonian_simulation"
+        return plot_hamiltonian_main(options + ["--data-root", str(data), "--figure-root", str(figures)])
+    if args.data_root is not None or args.figure_root is not None:
+        raise ValueError("--data-root/--figure-root require --experiment for Hamiltonian plotting")
     root = args.root.resolve()
     evaluate_dir = root / "evaluate"
     eval_result_dir = evaluate_dir / "result"
