@@ -357,7 +357,7 @@ evaluate/
 ├── result/hamiltonian_simulation/
 │   ├── maximum_chain_length/       # JSON/CSV、各链长曲线数据
 │   └── real_case_study/            # 来源、六案例映射、JSON/CSV曲线数据
-└── figure/hamiltonian_simulation/
+└── figure/
     ├── maximum_chain_length.png/.pdf/.svg
     └── real_case_study.png/.pdf/.svg
 ```
@@ -369,14 +369,10 @@ evaluate/
 ### 5.3 仅重新绘图
 
 绘图实现统一集中在 **`evaluate/plot_result_figures.py`**，可调整图大小、字体、配色、marker和导出样式。
-无参数时绘制系统级实验结果；Hamiltonian 图使用下列选项。
 
 ```bash
-# 读取已保存的数据，重新绘制两图，不运行 Hamiltonian 演化
-python evaluate/plot_result_figures.py --experiment hamiltonian
-
-python evaluate/plot_result_figures.py --experiment maximum-chain-length
-python evaluate/plot_result_figures.py --experiment real-case-study
+# 读取已保存的数据，重新绘制全部图片，不运行 Hamiltonian 演化
+python evaluate/plot_result_figures.py
 ```
 
 **与系统重统计的区别：**以上两个实验分别验证单链与选定批次的占据演化；
@@ -391,20 +387,24 @@ Use the unified plotting entry:
 python evaluate/plot_result_figures.py
 ```
 
-Figures are written under `evaluate/figure/` by default, at the same level as `evaluate/result/`.
+Figures are written directly under `evaluate/figure/` by default, at the same level as `evaluate/result/`, including Hamiltonian figures.
 
-## Generated files
+The default system-level outputs are:
 
-Generated local runtime files should not be committed:
+| Figure / 图名 | Content / 内容 |
+| --- | --- |
+| `layout_scalability_main` | Package-size layout score and fidelity / 尺寸扫描的布局分数与保真度 |
+| `layout_scalability_rest` | Layout scores for shape, topology, fidelity and sparsity / 其余四项布局分数扫描 |
+| `routing_scalability_main` | MECH versus QuNoC across package sizes / 尺寸扫描的路由对比 |
+| `routing_scalability_rest` | Combined package-shape and routing sweeps / 形状及其余路由扫描组合图 |
+| `ablation_<program>` | Routing-method ablation and operation counts / 路由消融与操作计数 |
 
-- `evaluate/result/`
-- `evaluate/figure/`
-- `demo/result/`
-- `logs/`
-- `evaluate/logs/`
-- `*.log`
-- `*.console.log`
-- `__pycache__/`
-- `.pytest_cache/`
+Each figure is saved as PDF, PNG and SVG with a same-stem CSV of its plotted source data by default. System-level plotting retains the explicit `--formats`, `--skip-csv` and `--only-csv` overrides. Layout main/rest tables contain their respective sweeps. Standalone `package_shape_scalability` and `routing_scalability` figures are not generated.
 
-The `tests/` directory is source and should remain separate from `qunoc/`.
+Hamiltonian CSVs are exported beside their figures, without modifying experiment sources under `result/`: `maximum_chain_length.csv` contains per-length metrics and confidence bounds; `real_case_study.csv` contains time-resolved curves with case identifiers. Probability and optimization plots also export their plotted data with PDF/PNG/SVG files.
+
+Each figure's plotting function in `plot_result_figures.py` starts with a local `style` configuration for canvas size, fonts, spacing and mark sizes. Shared data-loading logic and the common palette remain separate from these per-figure settings.
+
+The same command also renders `maximum_chain_length` and `real_case_study` from saved Hamiltonian reports. The `--experiment` switch is not supported. The `--formats`, `--skip-csv` and `--only-csv` options apply to all seven figure groups.
+
+Use `--output-dir` to select a different figure directory; Hamiltonian rendering also accepts `--figure-root`. Existing figures in older subdirectories are not moved or deleted automatically.

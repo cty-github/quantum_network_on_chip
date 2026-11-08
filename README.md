@@ -1,1 +1,1 @@
-# Sensate: Orchestrating Quantum Chiplets for Quantum Network-on-Chip Based on Enhanced Quantum State Transfer
+# Sensate: RL-assisted Optimization of Quantum Chiplet under Network-on-Chip with Perfect State Transfer
