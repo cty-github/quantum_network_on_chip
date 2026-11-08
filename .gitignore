@@ -1,15 +1,11 @@
 *.pyc
 *.pkl
 *.log
-*.console.log
 .vscode
 __pycache__
-.pytest_cache/
-setup.py
-test.py
-Dockerfile
 result
 figure
 logs
 backup
+demo
 paper
