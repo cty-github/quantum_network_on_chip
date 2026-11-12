@@ -1762,10 +1762,10 @@ def write_real_case_plot(output, rows, figure_root, *,
                          formats: Iterable[str] = ("png", "pdf", "svg"), export_csv: bool = True):
     """Noisy occupation only, with uncertainty / 只画含噪占据概率及区间。"""
     style = {
-        "figsize": (16, 8), "title_fontsize": 16, "label_fontsize": 16,
+        "figsize": (14, 7), "title_fontsize": 16, "label_fontsize": 16,
         "tick_fontsize": 16, "legend_fontsize": 16, "text_fontsize": 16,
         "line_width": 2, "marker_size": 3.5, "marker": "o", "title_pad": 13,
-        "subplot_adjust": dict(left=.07, right=.985, bottom=.12, top=.91, hspace=.59, wspace=.23),
+        "subplot_adjust": dict(left=.07, right=.985, bottom=.12, top=.91, hspace=.59, wspace=.12),
     }
     import matplotlib
     matplotlib.use("Agg")
